@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.video-editing/schemas/media-inventory.v1.json",
+  "title": "Media Inventory v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "generated_at", "source_root", "assets"],
+  "properties": {
+    "schema_version": {"const": "media-inventory.v1"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "source_root": {"type": "string"},
+    "assets": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/asset"}
+    }
+  },
+  "$defs": {
+    "asset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["asset_id", "filename", "source_path", "sha256", "size_bytes", "duration_seconds", "format_names", "video", "audio", "derived"],
+      "properties": {
+        "asset_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]*$"},
+        "filename": {"type": "string"},
+        "source_path": {"type": "string"},
+        "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "size_bytes": {"type": "integer", "minimum": 0},
+        "duration_seconds": {"type": "number", "exclusiveMinimum": 0},
+        "format_names": {"type": "array", "items": {"type": "string"}},
+        "bit_rate": {"type": ["integer", "null"], "minimum": 0},
+        "video": {"$ref": "#/$defs/videoStream"},
+        "audio": {"anyOf": [{"$ref": "#/$defs/audioStream"}, {"type": "null"}]},
+        "derived": {"$ref": "#/$defs/derived"}
+      }
+    },
+    "videoStream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["codec", "width", "height", "pixel_format", "average_frame_rate", "rotation_degrees"],
+      "properties": {
+        "codec": {"type": "string"},
+        "width": {"type": "integer", "minimum": 1},
+        "height": {"type": "integer", "minimum": 1},
+        "pixel_format": {"type": ["string", "null"]},
+        "average_frame_rate": {"type": "string"},
+        "rotation_degrees": {"type": "integer"}
+      }
+    },
+    "audioStream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["codec", "sample_rate", "channels", "channel_layout"],
+      "properties": {
+        "codec": {"type": "string"},
+        "sample_rate": {"type": "integer", "minimum": 1},
+        "channels": {"type": "integer", "minimum": 1},
+        "channel_layout": {"type": ["string", "null"]}
+      }
+    },
+    "derived": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["analysis_path", "scene_index_path", "keyframe_directory", "contact_sheet_path", "probe_path"],
+      "properties": {
+        "analysis_path": {"type": "string"},
+        "scene_index_path": {"type": "string"},
+        "keyframe_directory": {"type": "string"},
+        "contact_sheet_path": {"type": "string"},
+        "probe_path": {"type": "string"}
+      }
+    }
+  }
+}

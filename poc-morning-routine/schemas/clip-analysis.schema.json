@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.video-editing/schemas/clip-analysis.v1.json",
+  "title": "Clip Analysis v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "generated_at", "asset_id", "technical", "scenes", "keyframes", "audio_analysis", "transcript", "semantic_observations", "warnings"],
+  "properties": {
+    "schema_version": {"const": "clip-analysis.v1"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "asset_id": {"type": "string"},
+    "technical": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["duration_seconds", "width", "height", "average_frame_rate", "has_audio"],
+      "properties": {
+        "duration_seconds": {"type": "number", "exclusiveMinimum": 0},
+        "width": {"type": "integer", "minimum": 1},
+        "height": {"type": "integer", "minimum": 1},
+        "average_frame_rate": {"type": "string"},
+        "has_audio": {"type": "boolean"}
+      }
+    },
+    "scenes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["scene_id", "start_seconds", "end_seconds", "duration_seconds", "boundary_score"],
+        "properties": {
+          "scene_id": {"type": "string"},
+          "start_seconds": {"type": "number", "minimum": 0},
+          "end_seconds": {"type": "number", "exclusiveMinimum": 0},
+          "duration_seconds": {"type": "number", "exclusiveMinimum": 0},
+          "boundary_score": {"type": ["number", "null"], "minimum": 0, "maximum": 1}
+        }
+      }
+    },
+    "keyframes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["timestamp_seconds", "path", "selection_reason"],
+        "properties": {
+          "timestamp_seconds": {"type": "number", "minimum": 0},
+          "path": {"type": "string"},
+          "selection_reason": {"enum": ["uniform", "scene_midpoint", "uniform_and_scene_midpoint"]}
+        }
+      }
+    },
+    "audio_analysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "mean_volume_db", "max_volume_db", "silence_threshold_db", "silence_intervals"],
+      "properties": {
+        "status": {"enum": ["completed", "no_audio", "failed"]},
+        "mean_volume_db": {"type": ["number", "null"]},
+        "max_volume_db": {"type": ["number", "null"]},
+        "silence_threshold_db": {"type": "number"},
+        "silence_intervals": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["start_seconds", "end_seconds", "duration_seconds"],
+            "properties": {
+              "start_seconds": {"type": "number", "minimum": 0},
+              "end_seconds": {"type": "number", "minimum": 0},
+              "duration_seconds": {"type": "number", "minimum": 0}
+            }
+          }
+        }
+      }
+    },
+    "transcript": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "backend", "reason", "language", "segments"],
+      "properties": {
+        "status": {"enum": ["completed", "unavailable", "no_speech", "failed"]},
+        "backend": {"type": ["string", "null"]},
+        "reason": {"type": ["string", "null"]},
+        "language": {"type": ["string", "null"]},
+        "segments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["start_seconds", "end_seconds", "text"],
+            "properties": {
+              "start_seconds": {"type": "number", "minimum": 0},
+              "end_seconds": {"type": "number", "minimum": 0},
+              "text": {"type": "string"},
+              "speaker": {"type": ["string", "null"]}
+            }
+          }
+        }
+      }
+    },
+    "semantic_observations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["observation", "start_seconds", "end_seconds", "confidence", "source"],
+        "properties": {
+          "observation": {"type": "string"},
+          "start_seconds": {"type": "number", "minimum": 0},
+          "end_seconds": {"type": "number", "minimum": 0},
+          "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+          "source": {"enum": ["model", "detector", "asr", "ocr", "human"]}
+        }
+      }
+    },
+    "warnings": {"type": "array", "items": {"type": "string"}}
+  }
+}

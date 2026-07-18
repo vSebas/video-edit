@@ -1,0 +1,6 @@
+fastapi>=0.116,<1
+httpx>=0.28,<1
+jsonschema>=4.22,<5
+opentimelineio>=0.18,<0.19
+pytest>=8.3,<9
+uvicorn[standard]>=0.35,<1

@@ -1,0 +1,193 @@
+{
+  "schema_version": "edit-plan.v1",
+  "generated_at": "2026-07-18T05:12:13Z",
+  "benchmark_id": "morning-routine-vertical-short-v1",
+  "concept_id": "concept_chronological_routine",
+  "revision": 1,
+  "project": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 30,
+    "duration_seconds": 31.0,
+    "background_color": "#000000"
+  },
+  "tracks": [
+    {
+      "track_id": "v1",
+      "kind": "video",
+      "events": [
+        {
+          "event_id": "v01_hook_wave",
+          "asset_id": "img_0997",
+          "source_start_seconds": 1.5,
+          "source_end_seconds": 3.3,
+          "timeline_start_seconds": 0.0,
+          "duration_seconds": 1.8,
+          "playback_rate": 1.0,
+          "intent": "Open on direct eye contact and a wave as the visual hook.",
+          "observed_content": "Person eating at a table looks toward camera and waves.",
+          "confidence": 0.98,
+          "reframe": {"mode": "fit", "center_x": 0.5, "center_y": 0.5, "scale": 1.0, "rotation_degrees": 0, "manual_review": false},
+          "transition_out": {"type": "cut", "duration_seconds": 0.0},
+          "text": null,
+          "volume_db": null
+        },
+        {
+          "event_id": "v02_wake",
+          "asset_id": "img_0994",
+          "source_start_seconds": 4.8,
+          "source_end_seconds": 9.3,
+          "timeline_start_seconds": 1.8,
+          "duration_seconds": 4.5,
+          "playback_rate": 1.0,
+          "intent": "Establish the beginning of the morning with the wake-up beat.",
+          "observed_content": "Wake-up action in bedroom; stored pixels require a counterclockwise rotation.",
+          "confidence": 0.96,
+          "reframe": {"mode": "manual", "center_x": 0.5, "center_y": 0.5, "scale": 1.0, "rotation_degrees": -90, "manual_review": false},
+          "transition_out": {"type": "cut", "duration_seconds": 0.0},
+          "text": null,
+          "volume_db": null
+        },
+        {
+          "event_id": "v03_get_ready",
+          "asset_id": "img_0995",
+          "source_start_seconds": 3.5,
+          "source_end_seconds": 7.0,
+          "timeline_start_seconds": 6.3,
+          "duration_seconds": 3.5,
+          "playback_rate": 1.0,
+          "intent": "Continue the routine with a compact getting-ready action.",
+          "observed_content": "Person moves through the bedroom while getting ready.",
+          "confidence": 0.9,
+          "reframe": {"mode": "fit", "center_x": 0.5, "center_y": 0.5, "scale": 1.0, "rotation_degrees": 0, "manual_review": false},
+          "transition_out": {"type": "cut", "duration_seconds": 0.0},
+          "text": null,
+          "volume_db": null
+        },
+        {
+          "event_id": "v04_shoe_reveal",
+          "asset_id": "img_0996",
+          "source_start_seconds": 8.5,
+          "source_end_seconds": 11.3,
+          "timeline_start_seconds": 9.8,
+          "duration_seconds": 2.8,
+          "playback_rate": 1.0,
+          "intent": "Start the shoe beat on the clearest product/action reveal.",
+          "observed_content": "Shoe is presented and the preparation action begins.",
+          "confidence": 0.95,
+          "reframe": {"mode": "fit", "center_x": 0.5, "center_y": 0.5, "scale": 1.0, "rotation_degrees": 0, "manual_review": false},
+          "transition_out": {"type": "cut", "duration_seconds": 0.0},
+          "text": null,
+          "volume_db": null
+        },
+        {
+          "event_id": "v05_shoe_finish",
+          "asset_id": "img_0996",
+          "source_start_seconds": 53.0,
+          "source_end_seconds": 57.2,
+          "timeline_start_seconds": 12.6,
+          "duration_seconds": 4.2,
+          "playback_rate": 1.0,
+          "intent": "Resolve the shoe action and rise into the next activity.",
+          "observed_content": "Person finishes putting on the shoe and gets up.",
+          "confidence": 0.93,
+          "reframe": {"mode": "fit", "center_x": 0.5, "center_y": 0.5, "scale": 1.0, "rotation_degrees": 0, "manual_review": false},
+          "transition_out": {"type": "cut", "duration_seconds": 0.0},
+          "text": null,
+          "volume_db": null
+        },
+        {
+          "event_id": "v06_breakfast_fridge",
+          "asset_id": "img_0991",
+          "source_start_seconds": 15.4,
+          "source_end_seconds": 18.8,
+          "timeline_start_seconds": 16.8,
+          "duration_seconds": 3.4,
+          "playback_rate": 1.0,
+          "intent": "Introduce breakfast with a recognizable fridge action.",
+          "observed_content": "Person reaches into the refrigerator for food.",
+          "confidence": 0.96,
+          "reframe": {"mode": "fit", "center_x": 0.5, "center_y": 0.5, "scale": 1.0, "rotation_degrees": 0, "manual_review": false},
+          "transition_out": {"type": "cut", "duration_seconds": 0.0},
+          "text": null,
+          "volume_db": null
+        },
+        {
+          "event_id": "v07_breakfast_eat",
+          "asset_id": "img_0997",
+          "source_start_seconds": 0.0,
+          "source_end_seconds": 1.4,
+          "timeline_start_seconds": 20.2,
+          "duration_seconds": 1.4,
+          "playback_rate": 1.0,
+          "intent": "Pay off breakfast with a quick eating shot.",
+          "observed_content": "Person eats at a table before looking toward camera.",
+          "confidence": 0.96,
+          "reframe": {"mode": "fit", "center_x": 0.5, "center_y": 0.5, "scale": 1.0, "rotation_degrees": 0, "manual_review": false},
+          "transition_out": {"type": "cut", "duration_seconds": 0.0},
+          "text": null,
+          "volume_db": null
+        },
+        {
+          "event_id": "v08_scooter_ride",
+          "asset_id": "img_0999",
+          "source_start_seconds": 0.8,
+          "source_end_seconds": 9.4,
+          "timeline_start_seconds": 21.6,
+          "duration_seconds": 8.6,
+          "playback_rate": 1.0,
+          "intent": "Deliver the energetic out-the-door payoff with forward motion.",
+          "observed_content": "Person rides away on a scooter outdoors.",
+          "confidence": 0.97,
+          "reframe": {"mode": "fit", "center_x": 0.5, "center_y": 0.5, "scale": 1.0, "rotation_degrees": 0, "manual_review": false},
+          "transition_out": {"type": "cut", "duration_seconds": 0.0},
+          "text": null,
+          "volume_db": null
+        },
+        {
+          "event_id": "v09_scooter_button",
+          "asset_id": "img_0999",
+          "source_start_seconds": 15.0,
+          "source_end_seconds": 15.8,
+          "timeline_start_seconds": 30.2,
+          "duration_seconds": 0.8,
+          "playback_rate": 1.0,
+          "intent": "End on the short scooter-down reveal as a visual button.",
+          "observed_content": "A quick final scooter reveal closes the sequence.",
+          "confidence": 0.91,
+          "reframe": {"mode": "fit", "center_x": 0.5, "center_y": 0.5, "scale": 1.0, "rotation_degrees": 0, "manual_review": false},
+          "transition_out": {"type": "cut", "duration_seconds": 0.0},
+          "text": null,
+          "volume_db": null
+        }
+      ]
+    },
+    {
+      "track_id": "a1",
+      "kind": "audio",
+      "events": [
+        {"event_id": "a01_hook_wave", "asset_id": "img_0997", "source_start_seconds": 1.5, "source_end_seconds": 3.3, "timeline_start_seconds": 0.0, "duration_seconds": 1.8, "playback_rate": 1.0, "intent": "Retain natural synchronized production audio.", "observed_content": "Room tone and action sound.", "confidence": 1.0, "reframe": null, "transition_out": {"type": "cut", "duration_seconds": 0.0}, "text": null, "volume_db": 0.0},
+        {"event_id": "a02_wake", "asset_id": "img_0994", "source_start_seconds": 4.8, "source_end_seconds": 9.3, "timeline_start_seconds": 1.8, "duration_seconds": 4.5, "playback_rate": 1.0, "intent": "Retain natural synchronized production audio.", "observed_content": "Bedroom room tone and movement.", "confidence": 1.0, "reframe": null, "transition_out": {"type": "cut", "duration_seconds": 0.0}, "text": null, "volume_db": 0.0},
+        {"event_id": "a03_get_ready", "asset_id": "img_0995", "source_start_seconds": 3.5, "source_end_seconds": 7.0, "timeline_start_seconds": 6.3, "duration_seconds": 3.5, "playback_rate": 1.0, "intent": "Retain natural synchronized production audio.", "observed_content": "Bedroom movement and room tone.", "confidence": 1.0, "reframe": null, "transition_out": {"type": "cut", "duration_seconds": 0.0}, "text": null, "volume_db": 0.0},
+        {"event_id": "a04_shoe_reveal", "asset_id": "img_0996", "source_start_seconds": 8.5, "source_end_seconds": 11.3, "timeline_start_seconds": 9.8, "duration_seconds": 2.8, "playback_rate": 1.0, "intent": "Retain natural synchronized production audio with peak protection.", "observed_content": "Shoe handling sound.", "confidence": 1.0, "reframe": null, "transition_out": {"type": "cut", "duration_seconds": 0.0}, "text": null, "volume_db": -3.0},
+        {"event_id": "a05_shoe_finish", "asset_id": "img_0996", "source_start_seconds": 53.0, "source_end_seconds": 57.2, "timeline_start_seconds": 12.6, "duration_seconds": 4.2, "playback_rate": 1.0, "intent": "Retain natural synchronized production audio with peak protection.", "observed_content": "Shoe and movement sound.", "confidence": 1.0, "reframe": null, "transition_out": {"type": "cut", "duration_seconds": 0.0}, "text": null, "volume_db": -3.0},
+        {"event_id": "a06_breakfast_fridge", "asset_id": "img_0991", "source_start_seconds": 15.4, "source_end_seconds": 18.8, "timeline_start_seconds": 16.8, "duration_seconds": 3.4, "playback_rate": 1.0, "intent": "Retain natural synchronized production audio with peak protection.", "observed_content": "Refrigerator and kitchen sound.", "confidence": 1.0, "reframe": null, "transition_out": {"type": "cut", "duration_seconds": 0.0}, "text": null, "volume_db": -3.0},
+        {"event_id": "a07_breakfast_eat", "asset_id": "img_0997", "source_start_seconds": 0.0, "source_end_seconds": 1.4, "timeline_start_seconds": 20.2, "duration_seconds": 1.4, "playback_rate": 1.0, "intent": "Retain natural synchronized production audio.", "observed_content": "Eating and room tone.", "confidence": 1.0, "reframe": null, "transition_out": {"type": "cut", "duration_seconds": 0.0}, "text": null, "volume_db": 0.0},
+        {"event_id": "a08_scooter_ride", "asset_id": "img_0999", "source_start_seconds": 0.8, "source_end_seconds": 9.4, "timeline_start_seconds": 21.6, "duration_seconds": 8.6, "playback_rate": 1.0, "intent": "Retain natural synchronized production audio.", "observed_content": "Outdoor ambience and scooter movement.", "confidence": 1.0, "reframe": null, "transition_out": {"type": "cut", "duration_seconds": 0.0}, "text": null, "volume_db": 0.0},
+        {"event_id": "a09_scooter_button", "asset_id": "img_0999", "source_start_seconds": 15.0, "source_end_seconds": 15.8, "timeline_start_seconds": 30.2, "duration_seconds": 0.8, "playback_rate": 1.0, "intent": "Retain natural synchronized production audio.", "observed_content": "Outdoor ambience and final action sound.", "confidence": 1.0, "reframe": null, "transition_out": {"type": "cut", "duration_seconds": 0.0}, "text": null, "volume_db": 0.0}
+      ]
+    },
+    {
+      "track_id": "titles",
+      "kind": "title",
+      "events": [
+        {"event_id": "t01_hook", "asset_id": null, "source_start_seconds": null, "source_end_seconds": null, "timeline_start_seconds": 0.0, "duration_seconds": 1.8, "playback_rate": 1.0, "intent": "State the promise immediately.", "observed_content": null, "confidence": 1.0, "reframe": null, "transition_out": null, "text": "MY MORNING IN 31 SECONDS", "volume_db": null},
+        {"event_id": "t02_wake", "asset_id": null, "source_start_seconds": null, "source_end_seconds": null, "timeline_start_seconds": 1.8, "duration_seconds": 4.5, "playback_rate": 1.0, "intent": "Label the story beat.", "observed_content": null, "confidence": 1.0, "reframe": null, "transition_out": null, "text": "WAKE", "volume_db": null},
+        {"event_id": "t03_get_ready", "asset_id": null, "source_start_seconds": null, "source_end_seconds": null, "timeline_start_seconds": 6.3, "duration_seconds": 3.5, "playback_rate": 1.0, "intent": "Label the story beat.", "observed_content": null, "confidence": 1.0, "reframe": null, "transition_out": null, "text": "GET READY", "volume_db": null},
+        {"event_id": "t04_shoes", "asset_id": null, "source_start_seconds": null, "source_end_seconds": null, "timeline_start_seconds": 9.8, "duration_seconds": 7.0, "playback_rate": 1.0, "intent": "Label the story beat.", "observed_content": null, "confidence": 1.0, "reframe": null, "transition_out": null, "text": "SHOES", "volume_db": null},
+        {"event_id": "t05_breakfast", "asset_id": null, "source_start_seconds": null, "source_end_seconds": null, "timeline_start_seconds": 16.8, "duration_seconds": 4.8, "playback_rate": 1.0, "intent": "Label the story beat.", "observed_content": null, "confidence": 1.0, "reframe": null, "transition_out": null, "text": "BREAKFAST", "volume_db": null},
+        {"event_id": "t06_out_the_door", "asset_id": null, "source_start_seconds": null, "source_end_seconds": null, "timeline_start_seconds": 21.6, "duration_seconds": 9.4, "playback_rate": 1.0, "intent": "Label the final payoff beat.", "observed_content": null, "confidence": 1.0, "reframe": null, "transition_out": null, "text": "OUT THE DOOR", "volume_db": null}
+      ]
+    }
+  ]
+}

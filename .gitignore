@@ -1,0 +1,47 @@
+# Private or machine-local footage and experiment state
+/Crayotter/
+/FireRed-OpenStoryline/
+/.tmp/
+/runtime/
+
+# Third-party source is pinned in repos/README.md, not vendored
+/repos/*
+!/repos/README.md
+
+# Papers and model/runtime payloads
+/*.pdf
+*.gguf
+*.safetensors
+*.pth
+*.pt
+
+# Generated proof-of-concept artifacts. Keep only the small canonical examples.
+/poc-morning-routine/artifacts/*
+!/poc-morning-routine/artifacts/creative-concepts.json
+!/poc-morning-routine/artifacts/edit-plan.json
+!/poc-morning-routine/artifacts/media-inventory.json
+
+# Generated media and editor bundles
+*.mp4
+*.mov
+*.mkv
+*.webm
+*.wav
+*.mp3
+*.m4a
+*.jpg
+*.jpeg
+*.png
+*.opentake/
+
+# Local environments, caches, dependencies, and logs
+**/.venv/
+**/node_modules/
+**/__pycache__/
+**/.pytest_cache/
+*.pyc
+*.log
+*.tmp
+.env
+.env.*
+!.env.example

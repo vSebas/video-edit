@@ -1,0 +1,273 @@
+{
+  "schema_version": "media-inventory.v1",
+  "generated_at": "2026-07-18T04:07:25Z",
+  "source_root": "/home/saveas/Documents/video-editing/Crayotter/crayotter-data/user_temp",
+  "assets": [
+    {
+      "asset_id": "img_0991",
+      "filename": "IMG_0991.mp4",
+      "source_path": "../Crayotter/crayotter-data/user_temp/IMG_0991.mp4",
+      "sha256": "40e38fb83b07948d2bcec8f12d3eadd57f546c91a9a41f6d0d6c88e177b4f651",
+      "size_bytes": 14769227,
+      "duration_seconds": 30.271000,
+      "format_names": [
+        "mov",
+        "mp4",
+        "m4a",
+        "3gp",
+        "3g2",
+        "mj2"
+      ],
+      "bit_rate": 3903201,
+      "video": {
+        "codec": "h264",
+        "width": 1080,
+        "height": 1920,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "30/1",
+        "rotation_degrees": 0
+      },
+      "audio": {
+        "codec": "aac",
+        "sample_rate": 48000,
+        "channels": 2,
+        "channel_layout": "stereo"
+      },
+      "derived": {
+        "analysis_path": "artifacts/assets/img_0991/analysis.json",
+        "scene_index_path": "artifacts/assets/img_0991/scenes.json",
+        "keyframe_directory": "artifacts/assets/img_0991/keyframes",
+        "contact_sheet_path": "artifacts/assets/img_0991/contact-sheet.jpg",
+        "probe_path": "artifacts/assets/img_0991/probe.json"
+      }
+    },
+    {
+      "asset_id": "img_0993",
+      "filename": "IMG_0993.mp4",
+      "source_path": "../Crayotter/crayotter-data/user_temp/IMG_0993.mp4",
+      "sha256": "47c13039da64107c374553bc0132f15dc00aa2a5c60b27f6ab1e4b51f758d620",
+      "size_bytes": 14740351,
+      "duration_seconds": 17.800000,
+      "format_names": [
+        "mov",
+        "mp4",
+        "m4a",
+        "3gp",
+        "3g2",
+        "mj2"
+      ],
+      "bit_rate": 6624876,
+      "video": {
+        "codec": "h264",
+        "width": 1080,
+        "height": 1920,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "30/1",
+        "rotation_degrees": 0
+      },
+      "audio": {
+        "codec": "aac",
+        "sample_rate": 48000,
+        "channels": 2,
+        "channel_layout": "stereo"
+      },
+      "derived": {
+        "analysis_path": "artifacts/assets/img_0993/analysis.json",
+        "scene_index_path": "artifacts/assets/img_0993/scenes.json",
+        "keyframe_directory": "artifacts/assets/img_0993/keyframes",
+        "contact_sheet_path": "artifacts/assets/img_0993/contact-sheet.jpg",
+        "probe_path": "artifacts/assets/img_0993/probe.json"
+      }
+    },
+    {
+      "asset_id": "img_0994",
+      "filename": "IMG_0994.mp4",
+      "source_path": "../Crayotter/crayotter-data/user_temp/IMG_0994.mp4",
+      "sha256": "f7450e918ad7e606954e0d9835cc60b0730a48201b1b0b3aead300fab6c83ed6",
+      "size_bytes": 12059880,
+      "duration_seconds": 20.415000,
+      "format_names": [
+        "mov",
+        "mp4",
+        "m4a",
+        "3gp",
+        "3g2",
+        "mj2"
+      ],
+      "bit_rate": 4725889,
+      "video": {
+        "codec": "h264",
+        "width": 1920,
+        "height": 1080,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "30/1",
+        "rotation_degrees": 0
+      },
+      "audio": {
+        "codec": "aac",
+        "sample_rate": 48000,
+        "channels": 2,
+        "channel_layout": "stereo"
+      },
+      "derived": {
+        "analysis_path": "artifacts/assets/img_0994/analysis.json",
+        "scene_index_path": "artifacts/assets/img_0994/scenes.json",
+        "keyframe_directory": "artifacts/assets/img_0994/keyframes",
+        "contact_sheet_path": "artifacts/assets/img_0994/contact-sheet.jpg",
+        "probe_path": "artifacts/assets/img_0994/probe.json"
+      }
+    },
+    {
+      "asset_id": "img_0995",
+      "filename": "IMG_0995.mp4",
+      "source_path": "../Crayotter/crayotter-data/user_temp/IMG_0995.mp4",
+      "sha256": "837f7bf1932eb8633988a56682a949e54bb02b6e584a8081e6e5e68d5ad4ba80",
+      "size_bytes": 10196372,
+      "duration_seconds": 19.412000,
+      "format_names": [
+        "mov",
+        "mp4",
+        "m4a",
+        "3gp",
+        "3g2",
+        "mj2"
+      ],
+      "bit_rate": 4202090,
+      "video": {
+        "codec": "h264",
+        "width": 1080,
+        "height": 1920,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "30/1",
+        "rotation_degrees": 0
+      },
+      "audio": {
+        "codec": "aac",
+        "sample_rate": 48000,
+        "channels": 2,
+        "channel_layout": "stereo"
+      },
+      "derived": {
+        "analysis_path": "artifacts/assets/img_0995/analysis.json",
+        "scene_index_path": "artifacts/assets/img_0995/scenes.json",
+        "keyframe_directory": "artifacts/assets/img_0995/keyframes",
+        "contact_sheet_path": "artifacts/assets/img_0995/contact-sheet.jpg",
+        "probe_path": "artifacts/assets/img_0995/probe.json"
+      }
+    },
+    {
+      "asset_id": "img_0996",
+      "filename": "IMG_0996.mp4",
+      "source_path": "../Crayotter/crayotter-data/user_temp/IMG_0996.mp4",
+      "sha256": "f7c4a70bd9831783917635ca97c399a076858c84644b70cfa5452f9dfb50b974",
+      "size_bytes": 31367482,
+      "duration_seconds": 63.188000,
+      "format_names": [
+        "mov",
+        "mp4",
+        "m4a",
+        "3gp",
+        "3g2",
+        "mj2"
+      ],
+      "bit_rate": 3971321,
+      "video": {
+        "codec": "h264",
+        "width": 1080,
+        "height": 1920,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "30/1",
+        "rotation_degrees": 0
+      },
+      "audio": {
+        "codec": "aac",
+        "sample_rate": 48000,
+        "channels": 2,
+        "channel_layout": "stereo"
+      },
+      "derived": {
+        "analysis_path": "artifacts/assets/img_0996/analysis.json",
+        "scene_index_path": "artifacts/assets/img_0996/scenes.json",
+        "keyframe_directory": "artifacts/assets/img_0996/keyframes",
+        "contact_sheet_path": "artifacts/assets/img_0996/contact-sheet.jpg",
+        "probe_path": "artifacts/assets/img_0996/probe.json"
+      }
+    },
+    {
+      "asset_id": "img_0997",
+      "filename": "IMG_0997.mp4",
+      "source_path": "../Crayotter/crayotter-data/user_temp/IMG_0997.mp4",
+      "sha256": "d4f43ba8dfa5ed61707e36d64116d13e217a76d39111392bd22655890c51322a",
+      "size_bytes": 1962069,
+      "duration_seconds": 3.305000,
+      "format_names": [
+        "mov",
+        "mp4",
+        "m4a",
+        "3gp",
+        "3g2",
+        "mj2"
+      ],
+      "bit_rate": 4749334,
+      "video": {
+        "codec": "h264",
+        "width": 1080,
+        "height": 1920,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "30/1",
+        "rotation_degrees": 0
+      },
+      "audio": {
+        "codec": "aac",
+        "sample_rate": 48000,
+        "channels": 2,
+        "channel_layout": "stereo"
+      },
+      "derived": {
+        "analysis_path": "artifacts/assets/img_0997/analysis.json",
+        "scene_index_path": "artifacts/assets/img_0997/scenes.json",
+        "keyframe_directory": "artifacts/assets/img_0997/keyframes",
+        "contact_sheet_path": "artifacts/assets/img_0997/contact-sheet.jpg",
+        "probe_path": "artifacts/assets/img_0997/probe.json"
+      }
+    },
+    {
+      "asset_id": "img_0999",
+      "filename": "IMG_0999.mp4",
+      "source_path": "../Crayotter/crayotter-data/user_temp/IMG_0999.mp4",
+      "sha256": "f0c4bd8e82252b65f41f7e461338b408765b768abeba4dc03b8a27ef675ca80d",
+      "size_bytes": 9128478,
+      "duration_seconds": 15.849167,
+      "format_names": [
+        "mov",
+        "mp4",
+        "m4a",
+        "3gp",
+        "3g2",
+        "mj2"
+      ],
+      "bit_rate": 4607675,
+      "video": {
+        "codec": "h264",
+        "width": 1080,
+        "height": 1920,
+        "pixel_format": "yuv420p",
+        "average_frame_rate": "30000/1001",
+        "rotation_degrees": 0
+      },
+      "audio": {
+        "codec": "aac",
+        "sample_rate": 48000,
+        "channels": 2,
+        "channel_layout": "stereo"
+      },
+      "derived": {
+        "analysis_path": "artifacts/assets/img_0999/analysis.json",
+        "scene_index_path": "artifacts/assets/img_0999/scenes.json",
+        "keyframe_directory": "artifacts/assets/img_0999/keyframes",
+        "contact_sheet_path": "artifacts/assets/img_0999/contact-sheet.jpg",
+        "probe_path": "artifacts/assets/img_0999/probe.json"
+      }
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.video-editing/schemas/validation-report.v1.json",
+  "title": "Validation Report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "generated_at", "edit_plan_path", "valid", "errors", "warnings", "checks", "metrics"],
+  "properties": {
+    "schema_version": {"const": "validation-report.v1"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "edit_plan_path": {"type": "string"},
+    "valid": {"type": "boolean"},
+    "errors": {"type": "array", "items": {"$ref": "#/$defs/finding"}},
+    "warnings": {"type": "array", "items": {"$ref": "#/$defs/finding"}},
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["check_id", "status", "message"],
+        "properties": {
+          "check_id": {"type": "string"},
+          "status": {"enum": ["pass", "fail", "warning", "not_applicable"]},
+          "message": {"type": "string"}
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["planned_duration_seconds", "unique_source_seconds", "repeated_source_seconds", "event_count"],
+      "properties": {
+        "planned_duration_seconds": {"type": "number", "minimum": 0},
+        "unique_source_seconds": {"type": "number", "minimum": 0},
+        "repeated_source_seconds": {"type": "number", "minimum": 0},
+        "event_count": {"type": "integer", "minimum": 0}
+      }
+    }
+  },
+  "$defs": {
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "event_id"],
+      "properties": {
+        "code": {"type": "string"},
+        "message": {"type": "string"},
+        "event_id": {"type": ["string", "null"]}
+      }
+    }
+  }
+}
