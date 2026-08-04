@@ -16,6 +16,10 @@ services:
       VIDEO_EDITING_RUNTIME: /workspace/video-editing/runtime/projects
       VIDEO_EDITING_POC_ROOT: /workspace/video-editing/poc-morning-routine
       VIDEO_EDITING_SEMANTIC_SOURCE_ROOT: /workspace/video-editing/runtime/openstoryline
+      HF_HOME: /workspace/video-editing/runtime/model-cache
+      DASHSCOPE_API_KEY: "${DASHSCOPE_API_KEY:-}"
+      DASHSCOPE_BASE_URL: "${DASHSCOPE_BASE_URL:-}"
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
     volumes:
       - ./:/workspace/video-editing
     ports:

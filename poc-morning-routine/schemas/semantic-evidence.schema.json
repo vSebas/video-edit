@@ -27,7 +27,7 @@
       "additionalProperties": false,
       "required": ["adapter", "id", "model"],
       "properties": {
-        "adapter": {"const": "openstoryline"},
+        "adapter": {"enum": ["openstoryline", "owned-live-visual", "local-asr"]},
         "id": {"type": "string", "minLength": 1},
         "model": {"type": "string", "minLength": 1}
       }
@@ -117,6 +117,8 @@
           ,"reviewed_caption": {"type": ["string", "null"]}
           ,"review_note": {"type": ["string", "null"]}
           ,"reviewed_at": {"type": ["string", "null"], "format": "date-time"}
+          ,"model_confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1}
+          ,"evidence_type": {"enum": ["visual", "speech", null]}
         }
       }
     }

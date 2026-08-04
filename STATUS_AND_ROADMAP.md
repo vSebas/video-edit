@@ -1,10 +1,18 @@
 # AI-Assisted Video Editing — Status and Roadmap
 
-**Updated:** 2026-07-18
-**Current phase:** Phase 1 complete; Phase 2A evidence boundaries, completed
-human reviews, versioned finalization, and provider scorecard complete. The
-local Vidi feasibility spike is PARTIAL; real MediaMolder-to-Vidi
-interoperability and the owned live multi-provider adapter are next.
+**Updated:** 2026-08-04
+**Current phase:** Daily-vlog walking skeleton complete. A new folder plus a
+prompt now produces live visual evidence, local ASR, grounded concepts with
+missing-shot advice, a validated edit plan, a review render, and OTIO/XMEML
+exports entirely through owned adapters — no OpenStoryline involvement.
+DaVinci import verification is pending a local Resolve installation.
+
+**Product target (2026-08-04):** daily personal vlogs, a few minutes each,
+from raw phone footage. Every edit must produce BOTH a rendered review video
+and an editable export for a conventional editor. The Phase 2A per-observation
+review machinery below is retained for the archived benchmark but is legacy
+for daily use; routine evidence is auto-approved under an audited policy and
+human review concentrates on risk-flagged claims and creative choices.
 
 **Repository:** <https://github.com/vSebas/video-edit>
 
@@ -76,6 +84,32 @@ Every component connects through an adapter. This also keeps incompatible
 licenses and optional research models from becoming inseparable from the core.
 
 ## Standing Today
+
+### Daily-vlog walking skeleton (2026-08-04)
+
+Owned modules added under `app/video_app/`: `providers.py` (OpenAI-compatible
+Qwen/Gemini client, secrets never persisted), `visual.py` (deterministic
+ffmpeg scene shots, three keyframes per shot, grounded VLM captions with risk
+flags and the audited `auto-live-v1` auto-approval policy), `speech.py`
+(local faster-whisper with word timings and a confidence gate), and
+`planning.py` (compact evidence pack → grounded concepts with missing-shot
+advice; deterministic plan compiler with schema validation). The render and
+OTIO/XMEML export scripts were generalized to arbitrary projects.
+
+Verified end to end on the seven benchmark clips as a fresh project:
+
+- 25 live visual observations; 20 auto-approved, 3 correctly risk-flagged
+  (including the Chobani brand claim the old benchmark flagged), honest low
+  confidence on blurry/dark shots.
+- 25 low-confidence ASR segments all held below the auto-approve gate —
+  correct, since the footage has no real dialogue (Whisper noise
+  hallucination contained by policy).
+- Two distinct concepts with prioritized missing-shot advice and fallbacks.
+- A 36.2 s 1080x1920 H.264/AAC review render plus schema-validated OTIO and
+  DaVinci XMEML from the same compiled `edit-plan.v1`.
+- 14 API/unit tests pass; market survey (2026-08) confirmed no consumer-priced
+  tool covers this loop (closest: Eddie AI at pro pricing; Novacut/Threadline
+  speech-centric).
 
 ### Completed research and benchmark work
 
@@ -394,25 +428,22 @@ These can be completed while Phase 2 begins:
 
 ## Immediate Next Actions
 
-1. Finish the local Vidi1.5-9B 8-bit spike on the RTX 2060 and record real load,
-   memory, speed, output, and license constraints.
-2. Add the owned live visual-provider interface with deterministic precomputed
-   ranges/keyframes, then place Qwen, Gemini, and Vidi behind the same evidence
-   contract.
-3. Run CutScript/WhisperX ASR on dialogue-heavy footage and compare its words,
-   timings, captions, and cut safety with a direct ASR baseline.
-4. Fuse Vidi temporal evidence and ASR word evidence without asking either tool
-   to own the project or invent unsupported facts.
-5. Connect MediaMolder to the proven Vidi service and run its separate render-
-   parity test on the 31-second edit.
-6. Feed the resulting evidence and plan to OpenTake for its remaining GUI, MCP,
-   compositor, and manual-editing tests; the core native project path is already
-   validated.
-7. Repeat Qwen/Gemini/Vidi on identical ranges, then run the fresh Crayotter
-   comparison and planner upgrades against the fixed benchmark.
-8. Promote reviewed evidence into grounded concepts and automatic planning,
-   with review focused on conflicts and creative approval rather than every
-   routine clip.
+1. Install DaVinci Resolve locally (registration-gated download is done by the
+   user) and verify the generated XMEML import: clip order, trims, rotation,
+   audio linking, duration.
+2. Run the walking skeleton on a fresh, real day of vlog footage and review
+   output quality, latency, and provider cost.
+3. Add prompt-driven plan revision that rebuilds only concepts/plan/render
+   while media analysis stays cached.
+4. Add workbench UI controls for the new pipeline (analyze, concepts, select,
+   compile, render, export) on top of the existing API.
+5. Add sideways-clip detection (no rotation metadata) so the compiler can set
+   `rotation_degrees` instead of leaving manual review.
+6. Later: CapCut draft export via the OSS CapCutAPI ecosystem, Resolve
+   scripting auto-import (mazsola2k pattern), dialogue-heavy footage benchmark.
+
+Deprioritized until a concrete need appears: Vidi retrieval spike,
+MediaMolder-to-Vidi bridge, Crayotter comparison, OpenTake GUI/MCP tests.
 
 ## Durable Sources of Truth
 

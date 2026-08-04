@@ -11,9 +11,15 @@ import opentimelineio as otio
 
 
 POC_ROOT = Path(__file__).resolve().parent.parent
+
+# Defaults preserve the original benchmark behavior; main() overrides them
+# from command-line arguments for arbitrary projects.
 PLAN_PATH = POC_ROOT / "artifacts/edit-plan.json"
 INVENTORY_PATH = POC_ROOT / "artifacts/media-inventory.json"
+MEDIA_ROOT = POC_ROOT
 OUTPUT_DIR = POC_ROOT / "artifacts/timelines"
+SEQUENCE_NAME = "Morning Routine — 31 Second Vertical Short"
+SEQUENCE_ID = "morning-routine-sequence"
 OTIO_PATH = OUTPUT_DIR / "morning-routine.otio"
 XMEML_PATH = OUTPUT_DIR / "morning-routine-davinci.xml"
 REPORT_PATH = OUTPUT_DIR / "timeline-validation.json"
@@ -55,7 +61,7 @@ def frame(value: float, fps: int) -> int:
 
 
 def make_reference(asset, fps):
-    source = (POC_ROOT / asset["source_path"]).resolve()
+    source = (MEDIA_ROOT / asset["source_path"]).resolve()
     return otio.schema.ExternalReference(
         target_url=source.as_uri(),
         available_range=time_range(
@@ -72,7 +78,7 @@ def make_reference(asset, fps):
 
 def export_otio(plan, assets):
     fps = plan["project"]["fps"]
-    timeline = otio.schema.Timeline(name="Morning Routine — 31 Second Vertical Short")
+    timeline = otio.schema.Timeline(name=SEQUENCE_NAME)
     timeline.global_start_time = rt(0, fps)
     timeline.metadata["video_editing_poc"] = {
         "schema_version": plan["schema_version"],
@@ -134,7 +140,7 @@ def export_otio(plan, assets):
 
 
 def add_file_node(clipitem, asset, fps):
-    source = (POC_ROOT / asset["source_path"]).resolve()
+    source = (MEDIA_ROOT / asset["source_path"]).resolve()
     file_node = add(clipitem, "file", attributes={"id": f"file-{asset['asset_id']}"})
     add(file_node, "name", asset["filename"])
     add(file_node, "pathurl", source.as_uri())
@@ -149,11 +155,12 @@ def add_file_node(clipitem, asset, fps):
     add(sample, "anamorphic", "FALSE")
     add(sample, "pixelaspectratio", "square")
     add(sample, "fielddominance", "none")
-    audio = add(media, "audio")
-    sample = add(audio, "samplecharacteristics")
-    add(sample, "depth", 16)
-    add(sample, "samplerate", asset["audio"]["sample_rate"])
-    add(audio, "channelcount", asset["audio"]["channels"])
+    if asset.get("audio"):
+        audio = add(media, "audio")
+        sample = add(audio, "samplecharacteristics")
+        add(sample, "depth", 16)
+        add(sample, "samplerate", asset["audio"]["sample_rate"])
+        add(audio, "channelcount", asset["audio"]["channels"])
 
 
 def add_motion_filter(clipitem, rotation):
@@ -200,8 +207,8 @@ def add_audio_level_filter(clipitem, volume_db):
 def export_xmeml(plan, assets):
     fps = int(plan["project"]["fps"])
     root = ET.Element("xmeml", {"version": "5"})
-    sequence = add(root, "sequence", attributes={"id": "morning-routine-sequence"})
-    add(sequence, "name", "Morning Routine — 31 Second Vertical Short")
+    sequence = add(root, "sequence", attributes={"id": SEQUENCE_ID})
+    add(sequence, "name", SEQUENCE_NAME)
     add(sequence, "duration", frame(plan["project"]["duration_seconds"], fps))
     add_rate(sequence, fps)
     timecode = add(sequence, "timecode")
@@ -370,6 +377,11 @@ def validate_exports(plan):
             "detail": f"video={len(xml_video)} audio={len(xml_audio)} titles={len(xml_titles)}",
         }
     )
+    expected_rotations = [
+        str(-(event.get("reframe") or {}).get("rotation_degrees", 0))
+        for event in track(plan, "video")["events"]
+        if (event.get("reframe") or {}).get("rotation_degrees", 0)
+    ]
     rotation_values = [
         item.text
         for item in root.findall(".//parameter[parameterid='rotation']/value")
@@ -377,8 +389,8 @@ def validate_exports(plan):
     checks.append(
         {
             "check": "xmeml_rotation",
-            "pass": rotation_values == ["90"],
-            "detail": f"rotation_values={rotation_values}",
+            "pass": rotation_values == expected_rotations,
+            "detail": f"rotation_values={rotation_values} expected={expected_rotations}",
         }
     )
     report = {
@@ -394,6 +406,32 @@ def validate_exports(plan):
 
 
 def main():
+    import argparse
+
+    global PLAN_PATH, INVENTORY_PATH, MEDIA_ROOT, OUTPUT_DIR
+    global SEQUENCE_NAME, SEQUENCE_ID, OTIO_PATH, XMEML_PATH, REPORT_PATH
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--plan", type=Path, default=PLAN_PATH)
+    parser.add_argument("--inventory", type=Path, default=INVENTORY_PATH)
+    parser.add_argument("--media-root", type=Path, default=MEDIA_ROOT)
+    parser.add_argument("--output-dir", type=Path, default=OUTPUT_DIR)
+    parser.add_argument("--name", default=None)
+    parser.add_argument("--basename", default=None)
+    args = parser.parse_args()
+
+    PLAN_PATH = args.plan.resolve()
+    INVENTORY_PATH = args.inventory.resolve()
+    MEDIA_ROOT = args.media_root.resolve()
+    OUTPUT_DIR = args.output_dir.resolve()
+    if args.name:
+        SEQUENCE_NAME = args.name
+    if args.basename:
+        SEQUENCE_ID = f"{args.basename}-sequence"
+        OTIO_PATH = OUTPUT_DIR / f"{args.basename}.otio"
+        XMEML_PATH = OUTPUT_DIR / f"{args.basename}-davinci.xml"
+        REPORT_PATH = OUTPUT_DIR / f"{args.basename}-timeline-validation.json"
+
     plan = load_json(PLAN_PATH)
     inventory = load_json(INVENTORY_PATH)
     assets = {item["asset_id"]: item for item in inventory["assets"]}

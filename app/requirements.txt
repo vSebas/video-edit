@@ -1,4 +1,5 @@
 fastapi>=0.116,<1
+faster-whisper>=1.1,<2
 httpx>=0.28,<1
 jsonschema>=4.22,<5
 opentimelineio>=0.18,<0.19

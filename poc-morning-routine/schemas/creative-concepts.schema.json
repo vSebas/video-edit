@@ -10,9 +10,10 @@
     "generated_at": {"type": "string", "format": "date-time"},
     "benchmark_id": {"type": "string"},
     "footage_summary": {"type": "string"},
+    "provenance": {"type": "object"},
     "concepts": {
       "type": "array",
-      "minItems": 3,
+      "minItems": 2,
       "items": {"$ref": "#/$defs/concept"}
     }
   },

@@ -44,8 +44,27 @@ artifact is
 `runtime/projects/morning-routine/analysis/finalized/review-outcome.json`, with
 content-addressed revisions under its `versions/` directory.
 
-The next adapter milestone is live visual invocation through the owned provider
-boundary using deterministic scene ranges/keyframes, followed by timestamped
-local ASR based on the useful
-CutScript/WhisperX patterns. Those adapters must populate the existing analysis
-and concept schemas; they do not replace `edit-plan.json`.
+## Walking-skeleton pipeline (daily vlogs)
+
+The owned live pipeline turns a media folder plus a prompt into a rendered
+proposal and editable exports without OpenStoryline:
+
+1. `POST /api/projects` — index a folder (ffprobe facts, hashes, thumbnails).
+2. `POST /api/projects/{id}/analysis/visual` — deterministic ffmpeg shot
+   detection and keyframes, described by the configured hosted VLM
+   (`{"provider": "qwen"}` by default). Unflagged, confident captions are
+   auto-approved under the audited `auto-live-v1` policy; risky claims stay
+   pending without blocking planning.
+3. `POST /api/projects/{id}/analysis/speech` — local faster-whisper ASR with
+   word timings; audio never leaves the machine.
+4. `POST /api/projects/{id}/concepts` — grounded concepts with hooks, beats,
+   honest weaknesses, and concrete missing-shot advice.
+5. `POST /api/projects/{id}/selection` then `POST /api/projects/{id}/plan` —
+   deterministic compilation into a schema-validated `edit-plan.v1`.
+6. `POST /api/projects/{id}/render` and `POST /api/projects/{id}/exports` —
+   review MP4 plus OTIO and DaVinci-compatible XMEML from the same plan.
+
+Provider credentials come from the ignored root `.env`
+(`DASHSCOPE_API_KEY`, `GEMINI_API_KEY`); they are never written into
+artifacts. The legacy OpenStoryline import path remains only for the archived
+benchmark evidence.

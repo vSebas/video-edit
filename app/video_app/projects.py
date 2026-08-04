@@ -23,8 +23,16 @@ from .finalization import (
     load_benchmark_findings,
     validate_review_outcome,
 )
+from .planning import (
+    PlanningError,
+    compile_edit_plan,
+    generate_concepts,
+    validate_edit_plan,
+)
+from .providers import ChatClient, ProviderError, resolve_provider
 from .semantic import SemanticEvidenceError, load_json as load_semantic_json
 from .semantic import normalize_openstoryline_run, validate_semantic_evidence
+from .visual import VisualAnalysisError, analyze_assets, auto_review_decisions
 
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
@@ -105,8 +113,22 @@ class ProjectService:
                 pass
 
         faster_whisper = importlib.util.find_spec("faster_whisper") is not None
+        live_visual_ready = bool(os.environ.get("DASHSCOPE_API_KEY")) or bool(
+            os.environ.get("GEMINI_API_KEY")
+        )
         return {
             "visual": [
+                {
+                    "id": "owned-live-visual",
+                    "label": "Owned live visual adapter (Qwen/Gemini)",
+                    "ready": live_visual_ready,
+                    "detail": (
+                        "Deterministic shots and keyframes are described by the "
+                        "configured hosted VLM."
+                        if live_visual_ready
+                        else "Set DASHSCOPE_API_KEY or GEMINI_API_KEY to enable."
+                    ),
+                },
                 {
                     "id": "reviewed-fixture",
                     "label": "Reviewed fixture observations",
@@ -357,6 +379,280 @@ class ProjectService:
             write_json(path, stored)
         return manifest
 
+    def analyze_visual(
+        self,
+        project_id: str,
+        provider: str = "qwen",
+        model: str | None = None,
+    ) -> dict:
+        """Run the owned live visual adapter over the project's media and
+        persist the result as a reviewed-by-policy semantic evidence run."""
+        project = self.get_project(project_id)
+        assets = project.get("inventory", {}).get("assets", [])
+        if not assets:
+            raise ProjectError("The project has no indexed media to analyze")
+        media_root = self.settings.poc_root if project_id == FIXTURE_ID else self.settings.root
+
+        run_id = uuid.uuid4().hex[:12]
+        run_key = f"{provider}-live-{run_id}"
+        try:
+            client = ChatClient(resolve_provider(provider, model))
+            normalized, raw_records = analyze_assets(
+                client, assets, media_root, project_id, run_id
+            )
+            validate_semantic_evidence(
+                normalized,
+                self.settings.poc_root / "schemas" / "semantic-evidence.schema.json",
+            )
+        except (ProviderError, VisualAnalysisError, SemanticEvidenceError) as exc:
+            raise ProjectError(f"Live visual analysis failed: {exc}") from exc
+
+        if not normalized["observations"]:
+            raise ProjectError(
+                "Live visual analysis produced no observations; "
+                "provider warnings: " + "; ".join(normalized["warnings"][:3])
+            )
+
+        reviews = auto_review_decisions(normalized)
+        reviews["run_key"] = run_key
+        runs_dir = self.settings.runtime / project_id / "analysis" / "runs"
+        runs_dir.mkdir(parents=True, exist_ok=True)
+        staging = Path(tempfile.mkdtemp(prefix=f".{run_key}-", dir=runs_dir))
+        try:
+            raw_dir = staging / "raw"
+            raw_dir.mkdir()
+            write_json(raw_dir / "live-responses.json", {"responses": raw_records})
+            write_json(staging / "normalized.json", normalized)
+            write_json(staging / "reviews.json", reviews)
+            manifest = {
+                "schema_version": "semantic-run-manifest.v1",
+                "run_key": run_key,
+                "run_id": run_id,
+                "project_id": project_id,
+                "provider": normalized["provider"],
+                "review_status": normalized["review_status"],
+                "safe_for_edit_plan": normalized["safe_for_edit_plan"],
+                "summary": normalized["summary"],
+                "warnings": normalized["warnings"],
+                "imported_at": normalized["generated_at"],
+                "detail_url": f"/api/projects/{project_id}/analysis/runs/{run_key}",
+            }
+            write_json(staging / "manifest.json", manifest)
+            os.replace(staging, runs_dir / run_key)
+        except Exception:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+
+        self._mark_semantic_progress(project_id, "visual")
+        return self.semantic_run(project_id, run_key)
+
+    def analyze_speech(self, project_id: str, model_size: str | None = None) -> dict:
+        """Run local timestamped ASR over every asset with audio and persist
+        the transcript as a semantic evidence run."""
+        from .speech import DEFAULT_MODEL_SIZE, SpeechAnalysisError, analyze_speech
+
+        project = self.get_project(project_id)
+        assets = project.get("inventory", {}).get("assets", [])
+        if not assets:
+            raise ProjectError("The project has no indexed media to analyze")
+        media_root = self.settings.poc_root if project_id == FIXTURE_ID else self.settings.root
+
+        run_id = uuid.uuid4().hex[:12]
+        run_key = f"asr-live-{run_id}"
+        try:
+            normalized, raw_records = analyze_speech(
+                assets, media_root, project_id, run_id, model_size or DEFAULT_MODEL_SIZE
+            )
+            validate_semantic_evidence(
+                normalized,
+                self.settings.poc_root / "schemas" / "semantic-evidence.schema.json",
+            )
+        except (SpeechAnalysisError, SemanticEvidenceError) as exc:
+            raise ProjectError(f"Speech analysis failed: {exc}") from exc
+
+        reviews = auto_review_decisions(normalized)
+        reviews["run_key"] = run_key
+        runs_dir = self.settings.runtime / project_id / "analysis" / "runs"
+        runs_dir.mkdir(parents=True, exist_ok=True)
+        staging = Path(tempfile.mkdtemp(prefix=f".{run_key}-", dir=runs_dir))
+        try:
+            raw_dir = staging / "raw"
+            raw_dir.mkdir()
+            write_json(raw_dir / "transcripts.json", {"transcripts": raw_records})
+            write_json(staging / "normalized.json", normalized)
+            write_json(staging / "reviews.json", reviews)
+            manifest = {
+                "schema_version": "semantic-run-manifest.v1",
+                "run_key": run_key,
+                "run_id": run_id,
+                "project_id": project_id,
+                "provider": normalized["provider"],
+                "review_status": normalized["review_status"],
+                "safe_for_edit_plan": normalized["safe_for_edit_plan"],
+                "summary": normalized["summary"],
+                "warnings": normalized["warnings"],
+                "imported_at": normalized["generated_at"],
+                "detail_url": f"/api/projects/{project_id}/analysis/runs/{run_key}",
+            }
+            write_json(staging / "manifest.json", manifest)
+            os.replace(staging, runs_dir / run_key)
+        except Exception:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+
+        self._mark_semantic_progress(project_id, "speech")
+        return self.semantic_run(project_id, run_key)
+
+    def _mark_semantic_progress(self, project_id: str, kind: str) -> None:
+        if project_id == FIXTURE_ID:
+            return
+        path = self.settings.runtime / project_id / "project.json"
+        stored = load_json(path)
+        stored["updated_at"] = utc_now()
+        stored["analysis"][kind] = "completed"
+        pending_risky = 0
+        for manifest in self._semantic_run_manifests(project_id):
+            run = self.semantic_run(project_id, manifest["run_key"])
+            pending_risky += run["summary"].get("pending_review_count", 0)
+        stored["status"] = (
+            "semantic_ready" if pending_risky == 0 else "semantic_review_recommended"
+        )
+        stored["analysis"]["warning"] = (
+            "Routine evidence was auto-approved by policy; "
+            f"{pending_risky} risk-flagged claim(s) await optional review."
+            if pending_risky
+            else "Evidence is ready for concept generation."
+        )
+        write_json(path, stored)
+
+    def approved_evidence(self, project_id: str) -> list[dict]:
+        """Approved observations across all evidence runs, with reviewed
+        wording taking precedence over the provider caption."""
+        items: list[dict] = []
+        for manifest in self._semantic_run_manifests(project_id):
+            run = self.semantic_run(project_id, manifest["run_key"])
+            for observation in run["observations"]:
+                if observation["normalization_status"] != "accepted":
+                    continue
+                if observation.get("review_status") != "reviewed":
+                    continue
+                items.append(
+                    {
+                        "asset_id": observation["asset_id"],
+                        "start_seconds": observation["start_seconds"],
+                        "end_seconds": observation["end_seconds"],
+                        "caption": observation.get("reviewed_caption")
+                        or observation["caption"],
+                        "evidence_type": observation.get("evidence_type") or "visual",
+                        "confidence": observation.get("model_confidence") or 0.8,
+                    }
+                )
+        return items
+
+    def generate_concepts(
+        self,
+        project_id: str,
+        provider: str = "qwen",
+        model: str | None = None,
+    ) -> dict:
+        """Generate grounded creative concepts with missing-shot advice from
+        the project's approved evidence."""
+        if project_id == FIXTURE_ID:
+            raise ProjectError("The benchmark fixture already has reviewed concepts")
+        project = self.get_project(project_id)
+        evidence = self.approved_evidence(project_id)
+        try:
+            client = ChatClient(resolve_provider(provider, model))
+            document = generate_concepts(client, project, evidence)
+            self._validate_schema(
+                document,
+                self.settings.poc_root / "schemas" / "creative-concepts.schema.json",
+                "Creative concepts",
+            )
+        except (ProviderError, PlanningError) as exc:
+            raise ProjectError(f"Concept generation failed: {exc}") from exc
+
+        write_json(
+            self.settings.runtime / project_id / "analysis" / "concepts.json", document
+        )
+        path = self.settings.runtime / project_id / "project.json"
+        stored = load_json(path)
+        stored["updated_at"] = utc_now()
+        stored["footage_summary"] = document["footage_summary"]
+        stored["concepts"] = document["concepts"]
+        stored["status"] = "concepts_ready"
+        write_json(path, stored)
+        return document
+
+    def compile_plan(
+        self,
+        project_id: str,
+        concept_id: str | None = None,
+        width: int = 1080,
+        height: int = 1920,
+        fps: int = 30,
+    ) -> dict:
+        """Deterministically compile the selected concept into a validated
+        edit-plan.v1 and persist it with a matching media inventory."""
+        if project_id == FIXTURE_ID:
+            raise ProjectError("The benchmark fixture already has a compiled plan")
+        project = self.get_project(project_id)
+        concepts_path = self.settings.runtime / project_id / "analysis" / "concepts.json"
+        if not concepts_path.is_file():
+            raise ProjectError("Generate concepts before compiling an edit plan")
+        document = load_json(concepts_path)
+        selection = self._selection(project_id)
+        selected = concept_id or (selection or {}).get("concept_id")
+        if not selected:
+            raise ProjectError("Select a concept before compiling the edit plan")
+        try:
+            plan = compile_edit_plan(project, document, selected, width, height, fps)
+            validate_edit_plan(
+                plan,
+                self.settings.poc_root / "schemas" / "edit-plan.schema.json",
+                project,
+            )
+        except PlanningError as exc:
+            raise ProjectError(f"Plan compilation failed: {exc}") from exc
+
+        plan_dir = self.settings.runtime / project_id / "plan"
+        write_json(plan_dir / "edit-plan.json", plan)
+        write_json(
+            plan_dir / "media-inventory.json",
+            {"assets": project["inventory"]["assets"]},
+        )
+        path = self.settings.runtime / project_id / "project.json"
+        stored = load_json(path)
+        stored["updated_at"] = utc_now()
+        stored["plan"] = plan
+        stored["selected_concept_id"] = selected
+        stored["status"] = "plan_ready"
+        write_json(path, stored)
+        write_json(
+            self.settings.runtime / project_id / "selection.json",
+            {
+                "project_id": project_id,
+                "concept_id": selected,
+                "selected_at": utc_now(),
+                "plan_available": True,
+            },
+        )
+        return plan
+
+    @staticmethod
+    def _validate_schema(document: dict, schema_path: Path, label: str) -> None:
+        from jsonschema import Draft202012Validator
+
+        schema = load_json(schema_path)
+        errors = sorted(
+            Draft202012Validator(schema).iter_errors(document),
+            key=lambda err: list(err.path),
+        )
+        if errors:
+            first = errors[0]
+            location = "/".join(str(part) for part in first.path)
+            raise ProjectError(f"{label} failed validation at {location}: {first.message}")
+
     def semantic_runs(self, project_id: str) -> list[dict]:
         self.get_project(project_id)
         runs_dir = self.settings.runtime / project_id / "analysis" / "runs"
@@ -539,16 +835,13 @@ class ProjectService:
         selected = selection.get("concept_id") if selection else plan["concept_id"]
         if selected != plan["concept_id"]:
             raise ProjectError(
-                "The selected concept has no compiled edit plan yet; select the chronological concept"
+                "The selected concept has no compiled edit plan yet; compile it first"
             )
-        if project_id != FIXTURE_ID:
-            raise ProjectError("Generic project rendering will be enabled after semantic planning")
-
         output_dir = self.settings.runtime / project_id / "outputs"
         output_dir.mkdir(parents=True, exist_ok=True)
         output = output_dir / "review.mp4"
         script = self.settings.poc_root / "scripts/render_reference_edit.py"
-        plan_path = self.settings.poc_root / "artifacts/edit-plan.json"
+        plan_path, inventory_path, media_root = self._plan_sources(project_id)
         command = [
             sys.executable,
             str(script),
@@ -556,6 +849,10 @@ class ProjectService:
             str(plan_path),
             "--output",
             str(output),
+            "--inventory",
+            str(inventory_path),
+            "--media-root",
+            str(media_root),
         ]
         result = subprocess.run(command, capture_output=True, text=True, check=False)
         if result.returncode:
@@ -567,30 +864,72 @@ class ProjectService:
         }
 
     def prepare_exports(self, project_id: str) -> dict:
-        if project_id != FIXTURE_ID:
+        project = self.get_project(project_id)
+        if not project.get("plan"):
             raise ProjectError("This project does not have a compiled editable timeline")
         script = self.settings.poc_root / "scripts/export_timelines.py"
-        result = subprocess.run(
-            [sys.executable, str(script)], capture_output=True, text=True, check=False
-        )
+        output_dir = self.settings.runtime / project_id / "outputs"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        if project_id == FIXTURE_ID:
+            result = subprocess.run(
+                [sys.executable, str(script)], capture_output=True, text=True, check=False
+            )
+            if result.returncode:
+                detail = (result.stderr or result.stdout).strip()
+                raise ProjectError(f"Timeline export failed: {detail[-1000:]}")
+            source_dir = self.settings.poc_root / "artifacts/timelines"
+            outputs = {
+                "otio": (source_dir / "morning-routine.otio", output_dir / "timeline.otio"),
+                "xmeml": (
+                    source_dir / "morning-routine-davinci.xml",
+                    output_dir / "timeline-davinci.xml",
+                ),
+            }
+            for source, destination in outputs.values():
+                shutil.copy2(source, destination)
+            return {
+                key: f"/api/projects/{project_id}/outputs/{key}" for key in outputs
+            }
+
+        plan_path, inventory_path, media_root = self._plan_sources(project_id)
+        command = [
+            sys.executable,
+            str(script),
+            "--plan",
+            str(plan_path),
+            "--inventory",
+            str(inventory_path),
+            "--media-root",
+            str(media_root),
+            "--output-dir",
+            str(output_dir),
+            "--basename",
+            "timeline",
+            "--name",
+            project.get("name") or project_id,
+        ]
+        result = subprocess.run(command, capture_output=True, text=True, check=False)
         if result.returncode:
             detail = (result.stderr or result.stdout).strip()
             raise ProjectError(f"Timeline export failed: {detail[-1000:]}")
-        source_dir = self.settings.poc_root / "artifacts/timelines"
-        output_dir = self.settings.runtime / project_id / "outputs"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        outputs = {
-            "otio": (source_dir / "morning-routine.otio", output_dir / "timeline.otio"),
-            "xmeml": (
-                source_dir / "morning-routine-davinci.xml",
-                output_dir / "timeline-davinci.xml",
-            ),
-        }
-        for source, destination in outputs.values():
-            shutil.copy2(source, destination)
         return {
-            key: f"/api/projects/{project_id}/outputs/{key}" for key in outputs
+            kind: f"/api/projects/{project_id}/outputs/{kind}"
+            for kind in ("otio", "xmeml")
         }
+
+    def _plan_sources(self, project_id: str) -> tuple[Path, Path, Path]:
+        """Plan, inventory, and media-root paths for render/export scripts."""
+        if project_id == FIXTURE_ID:
+            return (
+                self.settings.poc_root / "artifacts/edit-plan.json",
+                self.settings.poc_root / "artifacts/media-inventory.json",
+                self.settings.poc_root,
+            )
+        plan_dir = self.settings.runtime / project_id / "plan"
+        plan_path = plan_dir / "edit-plan.json"
+        if not plan_path.is_file():
+            raise ProjectError("Compile an edit plan before rendering or exporting")
+        return plan_path, plan_dir / "media-inventory.json", self.settings.root
 
     def media_path(self, project_id: str, asset_id: str) -> Path:
         project = self.get_project(project_id)

@@ -53,12 +53,17 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--plan", type=Path, default=DEFAULT_PLAN)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument(
+        "--inventory", type=Path, default=POC_ROOT / "artifacts/media-inventory.json"
+    )
+    parser.add_argument("--media-root", type=Path, default=POC_ROOT)
     args = parser.parse_args()
 
     plan_path = args.plan.resolve()
     output_path = args.output.resolve()
+    media_root = args.media_root.resolve()
     plan = load_json(plan_path)
-    inventory = load_json(POC_ROOT / "artifacts/media-inventory.json")
+    inventory = load_json(args.inventory)
     assets = {asset["asset_id"]: asset for asset in inventory["assets"]}
     video_events = track(plan, "video")["events"]
     audio_events = track(plan, "audio")["events"]
@@ -79,7 +84,7 @@ def main() -> None:
 
     command = ["ffmpeg", "-hide_banner", "-y"]
     for event in video_events:
-        source = (POC_ROOT / assets[event["asset_id"]]["source_path"]).resolve()
+        source = (media_root / assets[event["asset_id"]]["source_path"]).resolve()
         command.extend(["-i", str(source)])
 
     filters = []
@@ -103,11 +108,19 @@ def main() -> None:
             f"setsar=1,fps={fps},format=yuv420p[v{index}]"
         )
         volume = audio.get("volume_db") or 0
-        audio_filter = (
-            f"[{index}:a:0]atrim=start={start}:end={end},asetpts=PTS-STARTPTS,"
-            f"volume={volume}dB,aresample=48000,"
-            f"aformat=sample_fmts=fltp:channel_layouts=stereo[a{index}]"
-        )
+        if assets[audio["asset_id"]].get("audio"):
+            audio_filter = (
+                f"[{index}:a:0]atrim=start={start}:end={end},asetpts=PTS-STARTPTS,"
+                f"volume={volume}dB,aresample=48000,"
+                f"aformat=sample_fmts=fltp:channel_layouts=stereo[a{index}]"
+            )
+        else:
+            # Silent source keeps A/V event pairing intact for clips that
+            # carry no audio stream.
+            audio_filter = (
+                f"anullsrc=r=48000:cl=stereo:d={end - start},"
+                f"aformat=sample_fmts=fltp:channel_layouts=stereo[a{index}]"
+            )
         filters.extend([video_filter, audio_filter])
         concat_inputs.append(f"[v{index}][a{index}]")
 

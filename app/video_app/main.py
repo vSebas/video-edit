@@ -23,6 +23,27 @@ class SelectConceptRequest(BaseModel):
     concept_id: str = Field(min_length=1)
 
 
+class AnalyzeVisualRequest(BaseModel):
+    provider: str = Field(default="qwen", pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
+    model: str | None = Field(default=None, max_length=160)
+
+
+class AnalyzeSpeechRequest(BaseModel):
+    model_size: str | None = Field(default=None, pattern=r"^[a-z0-9.-]{1,40}$")
+
+
+class GenerateConceptsRequest(BaseModel):
+    provider: str = Field(default="qwen", pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
+    model: str | None = Field(default=None, max_length=160)
+
+
+class CompilePlanRequest(BaseModel):
+    concept_id: str | None = Field(default=None, max_length=160)
+    width: int = Field(default=1080, ge=16, le=7680)
+    height: int = Field(default=1920, ge=16, le=7680)
+    fps: int = Field(default=30, ge=1, le=120)
+
+
 class ImportOpenStorylineRunRequest(BaseModel):
     provider: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
     session_id: str = Field(pattern=r"^[a-f0-9]{12,64}$")
@@ -97,6 +118,51 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         project_call(lambda: projects.get_project(project_id))
         return jobs.submit(
             "editable_exports", project_id, lambda: projects.prepare_exports(project_id)
+        )
+
+    @application.post("/api/projects/{project_id}/analysis/visual", status_code=202)
+    def analyze_visual(project_id: str, request: AnalyzeVisualRequest | None = None):
+        project_call(lambda: projects.get_project(project_id))
+        options = request or AnalyzeVisualRequest()
+        return jobs.submit(
+            "visual_analysis",
+            project_id,
+            lambda: projects.analyze_visual(project_id, options.provider, options.model),
+        )
+
+    @application.post("/api/projects/{project_id}/analysis/speech", status_code=202)
+    def analyze_speech(project_id: str, request: AnalyzeSpeechRequest | None = None):
+        project_call(lambda: projects.get_project(project_id))
+        options = request or AnalyzeSpeechRequest()
+        return jobs.submit(
+            "speech_analysis",
+            project_id,
+            lambda: projects.analyze_speech(project_id, options.model_size),
+        )
+
+    @application.post("/api/projects/{project_id}/concepts", status_code=202)
+    def generate_concepts(project_id: str, request: GenerateConceptsRequest | None = None):
+        project_call(lambda: projects.get_project(project_id))
+        options = request or GenerateConceptsRequest()
+        return jobs.submit(
+            "concept_generation",
+            project_id,
+            lambda: projects.generate_concepts(
+                project_id, options.provider, options.model
+            ),
+        )
+
+    @application.post("/api/projects/{project_id}/plan", status_code=201)
+    def compile_plan(project_id: str, request: CompilePlanRequest | None = None):
+        options = request or CompilePlanRequest()
+        return project_call(
+            lambda: projects.compile_plan(
+                project_id,
+                options.concept_id,
+                options.width,
+                options.height,
+                options.fps,
+            )
         )
 
     @application.post(

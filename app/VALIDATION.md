@@ -1,14 +1,29 @@
 # Application validation
 
-**Verified:** 2026-07-18
-**Image:** `video-editing-app:local`
+**Verified:** 2026-08-04
+**Image:** `video-editing-app:local` (rebuilt with faster-whisper)
+
+## Walking-skeleton live checks (2026-08-04)
+
+Run as a fresh project over the seven private benchmark clips:
+
+- Live Qwen visual analysis (`qwen3.7-plus`, owned adapter): 25 observations,
+  20 auto-approved by policy, 3 risk-flagged, 0 schema failures.
+- Local faster-whisper ASR (small/int8/CPU): 25 low-confidence segments all
+  correctly held below the auto-approve gate (footage has no real dialogue).
+- Concept generation: 2 grounded concepts, each with prioritized missing-shot
+  advice and edit-around fallbacks; all cited ranges survived clamping.
+- Deterministic plan compilation: 15 events, schema-valid `edit-plan.v1`.
+- Render: 36.236 s 1080x1920 H.264/AAC review video.
+- Exports: OTIO and DaVinci XMEML round-trip validation report all-pass
+  (7 video clips, 7 audio clips, 1 title marker).
 
 ## Automated checks
 
 - Python source compilation: pass
 - Browser JavaScript syntax check: pass
 - Docker Compose configuration: pass
-- API tests: 5 passed
+- API tests: 14 passed (5 legacy + 9 walking-skeleton unit tests)
   - reviewed fixture exposes seven assets, three concepts, a 31-second plan, and a render;
   - concept selection distinguishes compiled from uncompiled plans;
   - a generated media folder is hashed, probed, and thumbnailed without fabricated semantics.
@@ -54,10 +69,14 @@ The app-generated editable copies independently parse as:
 
 ## Deliberately incomplete
 
-New arbitrary projects stop at `awaiting_semantic_analysis` until a saved run is
-imported or a future live adapter is invoked. Reviewed evidence can be finalized
-but still cannot produce generic concepts or an edit plan. The current benchmark
-scorecard intentionally blocks automatic promotion because two approved claims
-conflict with verified footage and the provider runs used different shot
-boundaries. Live provider invocation and the local timestamped-ASR runtime
-remain unimplemented.
+- The browser UI has no controls yet for the new pipeline endpoints
+  (visual/speech analysis, concept generation, plan compilation); the walking
+  skeleton is currently API-driven.
+- Sideways-stored clips without rotation metadata render unrotated; the
+  compiler does not yet set `rotation_degrees` automatically.
+- DaVinci Resolve import of the generated XMEML is unverified (Resolve is not
+  installed; the installer download is registration-gated and user-owned).
+- Prompt-driven plan revision is not implemented yet.
+- The legacy benchmark scorecard still intentionally blocks automatic
+  promotion of its two verified-footage conflicts; this does not affect new
+  projects, which use the auto-approval policy instead.
