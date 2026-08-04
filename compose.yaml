@@ -15,6 +15,7 @@ services:
       VIDEO_EDITING_ROOT: /workspace/video-editing
       VIDEO_EDITING_RUNTIME: /workspace/video-editing/runtime/projects
       VIDEO_EDITING_POC_ROOT: /workspace/video-editing/poc-morning-routine
+      VIDEO_EDITING_SEMANTIC_SOURCE_ROOT: /workspace/video-editing/runtime/openstoryline
     volumes:
       - ./:/workspace/video-editing
     ports:

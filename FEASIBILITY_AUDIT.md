@@ -1,6 +1,7 @@
 # AI-Assisted Video Editing — Preliminary Feasibility Audit
 
-**Status:** Initial audit, 2026-07-17
+**Status:** Phase 1 audit, completed 2026-07-17. Current decisions and remaining
+work are tracked in `STATUS_AND_ROADMAP.md`.
 **Scope:** Existing local experiments, supplied repositories and papers, additional open-source candidates, and a recommended first proof of concept.
 
 ## Preliminary Conclusion
@@ -186,7 +187,7 @@ The central artifact should be a versioned `edit-plan.json`, not an LLM conversa
 
 A deterministic validator should reject missing media, invalid time ranges, impossible durations, unsupported transitions, accidental repetition, unsafe crops, and ungrounded content claims before rendering.
 
-## Recommended First Proof of Concept
+## Phase 1 Proof of Concept — Completed
 
 Use the existing seven morning-routine clips as a common benchmark.
 
@@ -213,7 +214,7 @@ The prototype should:
 - The DaVinci timeline opens with the expected clip order and trims.
 - Revisions are localized and reproducible.
 
-## Recommended Implementation Order
+## Original Phase 1 Implementation Order
 
 1. Define the media inventory, analysis, recommendation, and `edit-plan` schemas.
 2. Build deterministic validation and OTIO/XMEML exporters early.

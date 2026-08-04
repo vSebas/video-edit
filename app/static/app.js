@@ -3,6 +3,8 @@ const state = {
   projects: [],
   activeProjectId: null,
   activeProject: null,
+  activeProviderRuns: [],
+  activeReviewOutcome: null,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -114,6 +116,175 @@ function outputLinks(project) {
   ).join('');
 }
 
+function providerLabel(run) {
+  const labels = { qwen: 'Qwen', 'gemini-vlm': 'Gemini VLM' };
+  return labels[run.provider?.id] || run.provider?.id || 'Provider';
+}
+
+function conflictForEvidence(runKey, evidenceId) {
+  return state.activeReviewOutcome?.material_conflicts?.find((item) =>
+    item.run_key === runKey && item.evidence_id === evidenceId
+  );
+}
+
+function evidenceItem(observation, runKey) {
+  const flags = [...(observation.risk_flags || [])];
+  if ((observation.adjustments || []).includes('end_clamped_to_source_duration')) flags.push('time clamped');
+  const conflict = conflictForEvidence(runKey, observation.evidence_id);
+  if (conflict) flags.push('independent benchmark conflict');
+  const reviewedCaption = observation.reviewed_caption && observation.reviewed_caption !== observation.caption
+    ? `<div class="reviewed-caption"><strong>Reviewed wording</strong><p>${escapeHtml(observation.reviewed_caption)}</p></div>`
+    : '';
+  const reviewControls = observation.review_status === 'pending'
+    ? `<div class="review-actions">
+        <button class="ghost approve" data-review-run="${escapeHtml(runKey)}" data-review-id="${escapeHtml(observation.evidence_id)}" data-review-action="approve">Approve</button>
+        <button class="ghost" data-review-run="${escapeHtml(runKey)}" data-review-id="${escapeHtml(observation.evidence_id)}" data-review-action="edit">Edit + approve</button>
+        <button class="ghost reject" data-review-run="${escapeHtml(runKey)}" data-review-id="${escapeHtml(observation.evidence_id)}" data-review-action="reject">Reject</button>
+      </div>`
+    : `<div class="review-actions completed-review">
+        <div class="review-decision ${observation.review_status}">${escapeHtml(observation.review_status)}</div>
+        ${observation.review_status === 'reviewed'
+          ? `<button class="ghost" data-review-run="${escapeHtml(runKey)}" data-review-id="${escapeHtml(observation.evidence_id)}" data-review-action="edit">Edit approval</button>
+             <button class="ghost reject" data-review-run="${escapeHtml(runKey)}" data-review-id="${escapeHtml(observation.evidence_id)}" data-review-action="reject">Reject instead</button>`
+          : `<button class="ghost approve" data-review-run="${escapeHtml(runKey)}" data-review-id="${escapeHtml(observation.evidence_id)}" data-review-action="approve">Approve instead</button>
+             <button class="ghost" data-review-run="${escapeHtml(runKey)}" data-review-id="${escapeHtml(observation.evidence_id)}" data-review-action="edit">Edit + approve</button>`}
+      </div>`;
+  return `
+    <article class="evidence-item ${conflict ? 'has-conflict' : ''}" data-evidence-run="${escapeHtml(runKey)}" data-evidence-id="${escapeHtml(observation.evidence_id)}">
+      <div class="evidence-meta">
+        <span>${Number(observation.start_seconds).toFixed(2)}–${Number(observation.end_seconds).toFixed(2)}s</span>
+        <span>${escapeHtml(observation.clip_id || 'unmapped clip')}</span>
+      </div>
+      <p>${escapeHtml(observation.caption)}</p>
+      ${reviewedCaption}
+      ${conflict ? `<div class="evidence-conflict"><strong>Verified-footage conflict</strong><p>${escapeHtml(conflict.summary)}</p><p><em>Independent observation:</em> ${escapeHtml(conflict.verified_observation)}</p></div>` : ''}
+      ${flags.length ? `<div class="evidence-flags">${flags.map((flag) => `<span>${escapeHtml(flag.replaceAll('_', ' '))}</span>`).join('')}</div>` : ''}
+      ${reviewControls}
+    </article>
+  `;
+}
+
+function reviewOutcomeSection(outcome, runs) {
+  if (!runs.length) return '';
+  const allReviewed = runs.every((run) => (run.summary.pending_review_count ?? run.summary.accepted_range_count) === 0);
+  if (!allReviewed) return '';
+  if (!outcome) {
+    return `
+      <section id="review-outcome">
+        <div class="section-header"><div><span class="eyebrow">Completed review</span><h2>Finalize provider evidence</h2></div></div>
+        <div class="card outcome-empty">
+          <div><h3>All provider ranges have a decision</h3><p>Create the versioned evidence sets and provider scorecard. This does not pick a winner or render a video.</p></div>
+          <button class="primary" data-finalize-reviews>Finalize review outcome</button>
+        </div>
+      </section>
+    `;
+  }
+  const labels = {
+    conflicts_require_resolution: 'Conflicts need resolution',
+    deterministic_rerun_required: 'Deterministic rerun required',
+    provider_selection_required: 'Provider selection required',
+  };
+  const scorecards = outcome.candidate_sets.map((candidate) => {
+    const benchmark = candidate.benchmark || {};
+    const timing = benchmark.end_to_end_seconds == null ? 'not recorded' : `${benchmark.end_to_end_seconds}s`;
+    return `
+      <article class="card scorecard">
+        <div class="scorecard-heading"><div><span class="eyebrow">${escapeHtml(candidate.provider.adapter)}</span><h3>${escapeHtml(providerLabel(candidate))}</h3></div><span>${escapeHtml(candidate.provider.model)}</span></div>
+        <div class="scorecard-metrics">
+          <span><strong>${candidate.review.approved_count}</strong>approved</span>
+          <span><strong>${candidate.review.rejected_count}</strong>rejected</span>
+          <span><strong>${candidate.quality_signals.flagged_approved_count}</strong>risk-flagged</span>
+          <span class="${candidate.quality_signals.material_conflict_count ? 'bad' : ''}"><strong>${candidate.quality_signals.material_conflict_count}</strong>conflicts</span>
+        </div>
+        <p>${benchmark.split_count ?? '—'} ranges · ${timing} end to end · ${candidate.quality_signals.clamped_count} endpoints clamped</p>
+      </article>
+    `;
+  }).join('');
+  const conflicts = outcome.material_conflicts.map((conflict) => `
+    <article class="conflict-row">
+      <div><strong>${escapeHtml(conflict.filename)} · ${Number(conflict.start_seconds).toFixed(1)}–${Number(conflict.end_seconds).toFixed(1)}s</strong><span>${escapeHtml(conflict.summary)}</span></div>
+      <button class="ghost" data-jump-conflict-run="${escapeHtml(conflict.run_key)}" data-jump-conflict-id="${escapeHtml(conflict.evidence_id)}">Review caption</button>
+    </article>
+  `).join('');
+  return `
+    <section id="review-outcome">
+      <div class="section-header">
+        <div><span class="eyebrow">Versioned review outcome · ${escapeHtml(outcome.revision_id)}</span><h2>Provider scorecard</h2></div>
+        <button class="secondary compact" data-finalize-reviews>${outcome.freshness === 'stale' ? 'Refresh scorecard' : 'Rebuild scorecard'}</button>
+      </div>
+      <div class="outcome-status ${outcome.material_conflicts.length ? 'blocked' : ''}">
+        <div><strong>${escapeHtml(labels[outcome.status] || outcome.status)}</strong><p>${escapeHtml(outcome.recommendation.reason)}</p></div>
+        <span>${outcome.planning_eligible ? 'PLANNING ELIGIBLE' : 'NOT PROMOTED'}</span>
+      </div>
+      <div class="scorecard-grid">${scorecards}</div>
+      <div class="comparison-verdict">
+        <strong>No automatic winner</strong>
+        <p>${escapeHtml(outcome.comparison.reason || outcome.recommendation.next_action)}</p>
+      </div>
+      ${conflicts ? `<div class="conflict-list"><h3>Approved captions that conflict with verified footage</h3>${conflicts}</div>` : ''}
+    </section>
+  `;
+}
+
+function providerComparisonSection(runs) {
+  if (!runs.length) return '';
+  const filenames = [...new Set(runs.flatMap((run) =>
+    run.observations.filter((item) => item.normalization_status === 'accepted').map((item) => item.filename)
+  ).filter(Boolean))].sort();
+  const summaryCards = runs.map((run) => {
+    const summary = run.summary;
+    const pending = summary.pending_review_count ?? summary.accepted_range_count;
+    const candidate = state.activeReviewOutcome?.candidate_sets?.find((item) => item.run_key === run.run_key);
+    const statusText = pending > 0
+      ? 'Review required · never compiled directly into an edit plan'
+      : candidate?.quality_signals.material_conflict_count
+        ? `Review complete · ${candidate.quality_signals.material_conflict_count} verified-footage conflict${candidate.quality_signals.material_conflict_count === 1 ? '' : 's'}`
+        : candidate
+          ? 'Review complete · candidate evidence finalized'
+          : 'Review complete · finalize to produce the scorecard';
+    return `
+      <article class="provider-summary card">
+        <div><span class="eyebrow">${escapeHtml(run.provider.adapter)}</span><h3>${escapeHtml(providerLabel(run))}</h3></div>
+        <span class="model-name">${escapeHtml(run.provider.model)}</span>
+        <div class="provider-metrics">
+          <span><strong>${summary.observation_count}</strong> captions</span>
+          <span><strong>${summary.clamped_count}</strong> clamped</span>
+          <span><strong>${pending}</strong> pending</span>
+        </div>
+        <p>${escapeHtml(statusText)}</p>
+      </article>
+    `;
+  }).join('');
+  const fileComparisons = filenames.map((filename, index) => `
+    <details class="comparison-file" data-comparison-file="${escapeHtml(filename)}" ${index === 0 ? 'open' : ''}>
+      <summary><strong>${escapeHtml(filename)}</strong><span>Compare provider captions</span></summary>
+      <div class="provider-columns">
+        ${runs.map((run) => {
+          const observations = run.observations.filter((item) =>
+            item.filename === filename && item.normalization_status === 'accepted'
+          );
+          return `
+            <div class="provider-column">
+              <h4>${escapeHtml(providerLabel(run))} <span>${observations.length} ranges</span></h4>
+              ${observations.map((item) => evidenceItem(item, run.run_key)).join('') || '<p class="no-evidence">No mapped evidence.</p>'}
+            </div>
+          `;
+        }).join('')}
+      </div>
+    </details>
+  `).join('');
+  return `
+    <section id="provider-comparison">
+      <div class="section-header">
+        <div><span class="eyebrow">Review-only evidence</span><h2>Qwen and Gemini comparison</h2></div>
+        <p>Ranges are normalized against original filenames and ffprobe durations.</p>
+      </div>
+      <div class="provider-summary-grid">${summaryCards}</div>
+      <div class="comparison-files">${fileComparisons}</div>
+    </section>
+  `;
+}
+
 function renderProject() {
   const project = state.activeProject;
   if (!project) return;
@@ -181,6 +352,8 @@ function renderProject() {
       </article>
     </div>
     ${analysisCallout}
+    ${reviewOutcomeSection(state.activeReviewOutcome, state.activeProviderRuns)}
+    ${providerComparisonSection(state.activeProviderRuns)}
     <section>
       <div class="section-header"><div><span class="eyebrow">Source inventory</span><h2>Recorded media</h2></div><p>Files remain linked to their originals.</p></div>
       <div class="media-grid">${media.map(assetCard).join('')}</div>
@@ -194,17 +367,163 @@ function renderProject() {
   });
   $('#render-button')?.addEventListener('click', () => startJob('render'));
   $('#export-button')?.addEventListener('click', () => startJob('exports'));
+  bindReviewControls();
+}
+
+function bindReviewControls() {
+  document.querySelectorAll('[data-review-action]').forEach((button) => {
+    button.addEventListener('click', () => reviewEvidence(button));
+  });
+  document.querySelectorAll('[data-finalize-reviews]').forEach((button) => {
+    button.addEventListener('click', () => finalizeReviews(button));
+  });
+  document.querySelectorAll('[data-jump-conflict-run]').forEach((button) => {
+    button.addEventListener('click', () => jumpToEvidence(
+      button.dataset.jumpConflictRun,
+      button.dataset.jumpConflictId,
+    ));
+  });
+}
+
+function jumpToEvidence(runKey, evidenceId) {
+  const evidence = [...document.querySelectorAll('.evidence-item')].find((item) =>
+    item.dataset.evidenceRun === runKey && item.dataset.evidenceId === evidenceId
+  );
+  const details = evidence?.closest('.comparison-file');
+  if (details) details.open = true;
+  evidence?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function captureReviewPosition(button) {
+  const evidence = button.closest('.evidence-item');
+  return {
+    scrollY: window.scrollY,
+    anchorTop: evidence?.getBoundingClientRect().top ?? null,
+    runKey: evidence?.dataset.evidenceRun,
+    evidenceId: evidence?.dataset.evidenceId,
+    openFiles: [...document.querySelectorAll('.comparison-file[open]')]
+      .map((item) => item.dataset.comparisonFile),
+  };
+}
+
+function restoreReviewPosition(snapshot) {
+  const details = [...document.querySelectorAll('.comparison-file')];
+  details.forEach((item) => {
+    item.open = snapshot.openFiles.includes(item.dataset.comparisonFile);
+  });
+  const restore = () => {
+    const evidence = [...document.querySelectorAll('.evidence-item')].find((item) =>
+      item.dataset.evidenceRun === snapshot.runKey
+      && item.dataset.evidenceId === snapshot.evidenceId
+    );
+    if (evidence && snapshot.anchorTop !== null) {
+      window.scrollBy(0, evidence.getBoundingClientRect().top - snapshot.anchorTop);
+    } else {
+      window.scrollTo(0, snapshot.scrollY);
+    }
+  };
+  restore();
+  window.requestAnimationFrame(restore);
 }
 
 async function loadProject(projectId) {
   state.activeProjectId = projectId;
+  state.activeProviderRuns = [];
+  state.activeReviewOutcome = null;
   renderProjectList();
   $('#project-view').innerHTML = '<div class="empty-state">Loading project…</div>';
   try {
     state.activeProject = await api(`/api/projects/${projectId}`);
+    state.activeProviderRuns = await Promise.all(
+      (state.activeProject.provider_runs || []).map(async (run) => ({
+        ...(await api(run.detail_url)),
+        run_key: run.run_key,
+      }))
+    );
+    if (state.activeProject.review_outcome?.detail_url) {
+      state.activeReviewOutcome = await api(state.activeProject.review_outcome.detail_url);
+    }
     renderProject();
   } catch (error) {
     notice(error.message, true);
+  }
+}
+
+async function reviewEvidence(button) {
+  const runKey = button.dataset.reviewRun;
+  const evidenceId = button.dataset.reviewId;
+  const requestedAction = button.dataset.reviewAction;
+  const run = state.activeProviderRuns.find((item) => item.run_key === runKey);
+  const observation = run?.observations.find((item) => item.evidence_id === evidenceId);
+  if (!observation) return notice('Evidence is no longer available.', true);
+  let action = requestedAction;
+  let caption = null;
+  if (requestedAction === 'edit') {
+    caption = window.prompt(
+      'Edit the factual observation before approval:',
+      observation.reviewed_caption || observation.caption,
+    );
+    if (caption === null) return;
+    action = 'approve';
+  }
+  const position = captureReviewPosition(button);
+  button.disabled = true;
+  try {
+    let finalizationWarning = null;
+    const updatedRun = await api(`/api/projects/${state.activeProjectId}/analysis/runs/${runKey}/reviews`, {
+      method: 'POST',
+      body: JSON.stringify({ evidence_id: evidenceId, action, caption }),
+    });
+    state.activeProviderRuns = state.activeProviderRuns.map((item) =>
+      item.run_key === runKey ? { ...updatedRun, run_key: runKey } : item
+    );
+    if (state.activeProviderRuns.every((item) => item.summary.pending_review_count === 0)) {
+      try {
+        state.activeReviewOutcome = await api(`/api/projects/${state.activeProjectId}/analysis/finalized`, {
+          method: 'POST',
+          body: JSON.stringify({ run_keys: state.activeProviderRuns.map((item) => item.run_key) }),
+        });
+      } catch (finalizationError) {
+        state.activeReviewOutcome = null;
+        finalizationWarning = finalizationError.message;
+      }
+    }
+    const outcome = $('#review-outcome');
+    if (outcome) outcome.outerHTML = reviewOutcomeSection(state.activeReviewOutcome, state.activeProviderRuns);
+    const comparison = $('#provider-comparison');
+    if (comparison) {
+      comparison.outerHTML = providerComparisonSection(state.activeProviderRuns);
+      bindReviewControls();
+      restoreReviewPosition(position);
+    }
+    notice(
+      finalizationWarning
+        ? `Decision saved, but scorecard refresh failed: ${finalizationWarning}`
+        : action === 'approve' ? 'Evidence approved.' : 'Evidence rejected.',
+      Boolean(finalizationWarning),
+    );
+  } catch (error) {
+    notice(error.message, true);
+    button.disabled = false;
+  }
+}
+
+async function finalizeReviews(button) {
+  button.disabled = true;
+  try {
+    state.activeReviewOutcome = await api(`/api/projects/${state.activeProjectId}/analysis/finalized`, {
+      method: 'POST',
+      body: JSON.stringify({ run_keys: state.activeProviderRuns.map((item) => item.run_key) }),
+    });
+    const outcome = $('#review-outcome');
+    if (outcome) outcome.outerHTML = reviewOutcomeSection(state.activeReviewOutcome, state.activeProviderRuns);
+    const comparison = $('#provider-comparison');
+    if (comparison) comparison.outerHTML = providerComparisonSection(state.activeProviderRuns);
+    bindReviewControls();
+    notice('Versioned evidence sets and provider scorecard are current.');
+  } catch (error) {
+    notice(error.message, true);
+    button.disabled = false;
   }
 }
 

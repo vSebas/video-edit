@@ -1,0 +1,14 @@
+services:
+  openstoryline:
+    # Qwen remains the tool-calling agent. Gemini is isolated to visual sampling:
+    # OpenStoryline's current ChatOpenAI agent path drops Gemini thought signatures
+    # on multi-turn tool calls, causing the next request to fail with HTTP 400.
+    environment:
+      OPENSTORYLINE_LLM_MODEL: qwen3.7-plus
+      OPENSTORYLINE_LLM_BASE_URL: "${DASHSCOPE_BASE_URL:?Set DASHSCOPE_BASE_URL in .env}"
+      OPENSTORYLINE_LLM_API_KEY: "${DASHSCOPE_API_KEY:?Set DASHSCOPE_API_KEY in .env}"
+      OPENSTORYLINE_VLM_MODEL: gemini-3.5-flash
+      OPENSTORYLINE_VLM_BASE_URL: https://generativelanguage.googleapis.com/v1beta/openai
+      OPENSTORYLINE_VLM_API_KEY: "${GEMINI_API_KEY:?Set GEMINI_API_KEY in .env}"
+    volumes:
+      - ./runtime/openstoryline/gemini-vlm/outputs:/app/outputs

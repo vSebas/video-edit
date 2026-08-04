@@ -48,15 +48,35 @@ The whole `/home/saveas/Documents/video-editing` directory is bind-mounted at `/
 
 ## FireRed-OpenStoryline
 
-The optional service uses the already present `firered-openstoryline:local` image and host networking so its MCP server can bind to `127.0.0.1:8001` and its web interface to `127.0.0.1:7860`.
+The optional service uses the already present `firered-openstoryline:local`
+image and host networking so its MCP server can bind to `127.0.0.1:8001` and
+its web interface to `127.0.0.1:7860`.
 
-It is deliberately behind a Compose profile:
+It is deliberately behind a Compose profile. Choose one tracked provider
+override; each maps values from the ignored root `.env` without embedding a
+secret in Compose or `config.toml`:
 
 ```bash
-docker compose --profile openstoryline up -d openstoryline
+docker compose -f compose.yaml -f compose.openstoryline.qwen.yaml \
+  --profile openstoryline up -d openstoryline
+
+docker compose -f compose.yaml -f compose.openstoryline.gemini-vlm.yaml \
+  --profile openstoryline up -d --force-recreate openstoryline
 ```
 
-Do not start it yet with the current tracked config: `repos/FireRed-OpenStoryline/config.toml` has blank LLM/VLM model, URL, and API-key fields. A separate untracked secret-bearing config should be mounted before service startup. The existing image was inspected read-only: it contains Python 3.11, FFmpeg 7.1, and the 117 MB TransNetV2 resource at `/app/.storyline/models/transnetv2-pytorch-weights.pth`; its baked config has model/base-URL defaults but no API keys. No credential has been invented or copied.
+Required `.env` names are documented in `.env.example`. The mounted
+`repos/FireRed-OpenStoryline/config.toml` intentionally keeps blank model fields;
+OpenStoryline then resolves the complete LLM/VLM triplets from environment
+variables. The existing image contains Python 3.11, FFmpeg 7.1, the 117 MB
+TransNetV2 weights, and the resource bundle. Keep the service bound to localhost
+and do not print `docker compose config` without redacting its environment.
+
+The Gemini override intentionally keeps Qwen as the tool-calling LLM and uses
+Gemini only as the VLM. Gemini 3.5's OpenAI-compatible function calls require a
+thought signature on subsequent turns; OpenStoryline's current ChatOpenAI agent
+path drops that provider-specific field and receives HTTP 400 after its first
+tool call. The split configuration isolates the visual backend while keeping
+the tool-calling path operational.
 
 ## Why OpenTake is not in Docker
 

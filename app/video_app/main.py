@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -20,6 +21,23 @@ class CreateProjectRequest(BaseModel):
 
 class SelectConceptRequest(BaseModel):
     concept_id: str = Field(min_length=1)
+
+
+class ImportOpenStorylineRunRequest(BaseModel):
+    provider: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
+    session_id: str = Field(pattern=r"^[a-f0-9]{12,64}$")
+    model: str | None = Field(default=None, max_length=160)
+
+
+class ReviewSemanticEvidenceRequest(BaseModel):
+    evidence_id: str = Field(min_length=1, max_length=160)
+    action: Literal["approve", "reject"]
+    caption: str | None = Field(default=None, max_length=4000)
+    note: str | None = Field(default=None, max_length=1000)
+
+
+class FinalizeReviewOutcomeRequest(BaseModel):
+    run_keys: list[str] | None = Field(default=None, max_length=10)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -80,6 +98,58 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return jobs.submit(
             "editable_exports", project_id, lambda: projects.prepare_exports(project_id)
         )
+
+    @application.post(
+        "/api/projects/{project_id}/analysis/openstoryline", status_code=202
+    )
+    def import_openstoryline_run(
+        project_id: str, request: ImportOpenStorylineRunRequest
+    ):
+        project_call(lambda: projects.get_project(project_id))
+        return jobs.submit(
+            "semantic_analysis",
+            project_id,
+            lambda: projects.import_openstoryline_run(
+                project_id, request.provider, request.session_id, request.model
+            ),
+        )
+
+    @application.get("/api/projects/{project_id}/analysis/runs")
+    def list_semantic_runs(project_id: str):
+        return {"runs": project_call(lambda: projects.semantic_runs(project_id))}
+
+    @application.get("/api/projects/{project_id}/analysis/runs/{run_key}")
+    def get_semantic_run(project_id: str, run_key: str):
+        return project_call(lambda: projects.semantic_run(project_id, run_key))
+
+    @application.post("/api/projects/{project_id}/analysis/runs/{run_key}/reviews")
+    def review_semantic_evidence(
+        project_id: str, run_key: str, request: ReviewSemanticEvidenceRequest
+    ):
+        return project_call(
+            lambda: projects.review_semantic_evidence(
+                project_id,
+                run_key,
+                request.evidence_id,
+                request.action,
+                request.caption,
+                request.note,
+            )
+        )
+
+    @application.post("/api/projects/{project_id}/analysis/finalized")
+    def finalize_review_outcome(
+        project_id: str, request: FinalizeReviewOutcomeRequest | None = None
+    ):
+        return project_call(
+            lambda: projects.finalize_review_outcome(
+                project_id, request.run_keys if request else None
+            )
+        )
+
+    @application.get("/api/projects/{project_id}/analysis/finalized")
+    def get_review_outcome(project_id: str):
+        return project_call(lambda: projects.review_outcome(project_id))
 
     @application.get("/api/jobs")
     def list_jobs():

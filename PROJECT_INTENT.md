@@ -1,5 +1,8 @@
 # AI-Assisted Video Editing Project — Intent
 
+**Status:** Enduring project charter. Phase 1 is complete; current execution
+status and next milestones are tracked in `STATUS_AND_ROADMAP.md`.
+
 ## Goal
 
 Find, adapt, combine, or build a tool that can turn a collection of raw recorded videos, photos, audio, and text instructions into a strong short-form video quickly. The initial focus is Instagram Reels and TikTok, but the system should support other formats, aspect ratios, durations, and styles.
@@ -79,6 +82,9 @@ The papers `crayotter-paper.pdf` and `2511.19529v2.pdf` are also relevant. In pa
 
 These ideas are useful foundations, but the project should remain open to other models, tools, and architectures.
 
-## Near-Term Direction
+## Original Near-Term Direction — Completed
 
 The next phase should compare the available tools and local experiment results, identify reusable components, and design a small proof of concept around real footage. A useful first milestone would analyze a folder of clips, propose a grounded short-form story with missing-shot advice, generate a reviewable timeline, render it, and export an editable project for at least one conventional editor.
+
+That milestone was completed by the morning-routine proof of concept. See
+`poc-morning-routine/IMPLEMENTATION_RESULTS.md` and `STATUS_AND_ROADMAP.md`.

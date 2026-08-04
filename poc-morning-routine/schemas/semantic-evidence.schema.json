@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.video-editing/schemas/semantic-evidence.v1.json",
+  "title": "Normalized Semantic Evidence v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generated_at",
+    "project_id",
+    "run_id",
+    "provider",
+    "review_status",
+    "safe_for_edit_plan",
+    "summary",
+    "unmapped_media",
+    "warnings",
+    "observations"
+  ],
+  "properties": {
+    "schema_version": {"const": "semantic-evidence.v1"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "project_id": {"type": "string", "minLength": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["adapter", "id", "model"],
+      "properties": {
+        "adapter": {"const": "openstoryline"},
+        "id": {"type": "string", "minLength": 1},
+        "model": {"type": "string", "minLength": 1}
+      }
+    },
+    "review_status": {"enum": ["pending", "reviewed", "rejected"]},
+    "safe_for_edit_plan": {"type": "boolean"},
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project_asset_count",
+        "provider_media_count",
+        "mapped_media_count",
+        "observation_count",
+        "accepted_range_count",
+        "rejected_count",
+        "clamped_count",
+        "risk_flagged_count"
+      ],
+      "properties": {
+        "project_asset_count": {"type": "integer", "minimum": 0},
+        "provider_media_count": {"type": "integer", "minimum": 0},
+        "mapped_media_count": {"type": "integer", "minimum": 0},
+        "observation_count": {"type": "integer", "minimum": 0},
+        "accepted_range_count": {"type": "integer", "minimum": 0},
+        "rejected_count": {"type": "integer", "minimum": 0},
+        "clamped_count": {"type": "integer", "minimum": 0},
+        "risk_flagged_count": {"type": "integer", "minimum": 0}
+        ,"pending_review_count": {"type": "integer", "minimum": 0}
+        ,"approved_count": {"type": "integer", "minimum": 0}
+        ,"rejected_review_count": {"type": "integer", "minimum": 0}
+      }
+    },
+    "unmapped_media": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["media_id", "original_filename"],
+        "properties": {
+          "media_id": {"type": "string"},
+          "original_filename": {"type": "string"}
+        }
+      }
+    },
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "observations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "evidence_id",
+          "clip_id",
+          "media_id",
+          "asset_id",
+          "filename",
+          "raw_start_seconds",
+          "raw_end_seconds",
+          "start_seconds",
+          "end_seconds",
+          "caption",
+          "source",
+          "normalization_status",
+          "review_status",
+          "adjustments",
+          "rejection_reasons",
+          "risk_flags"
+        ],
+        "properties": {
+          "evidence_id": {"type": "string", "minLength": 1},
+          "clip_id": {"type": ["string", "null"]},
+          "media_id": {"type": ["string", "null"]},
+          "asset_id": {"type": ["string", "null"]},
+          "filename": {"type": ["string", "null"]},
+          "raw_start_seconds": {"type": "number"},
+          "raw_end_seconds": {"type": "number"},
+          "start_seconds": {"type": "number", "minimum": 0},
+          "end_seconds": {"type": "number", "minimum": 0},
+          "caption": {"type": "string"},
+          "source": {"const": "model"},
+          "normalization_status": {"enum": ["accepted", "rejected"]},
+          "review_status": {"enum": ["pending", "reviewed", "rejected"]},
+          "adjustments": {"type": "array", "items": {"type": "string"}},
+          "rejection_reasons": {"type": "array", "items": {"type": "string"}},
+          "risk_flags": {"type": "array", "items": {"type": "string"}}
+          ,"reviewed_caption": {"type": ["string", "null"]}
+          ,"review_note": {"type": ["string", "null"]}
+          ,"reviewed_at": {"type": ["string", "null"], "format": "date-time"}
+        }
+      }
+    }
+  }
+}

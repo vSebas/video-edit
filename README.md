@@ -2,6 +2,12 @@
 
 This directory now separates code, third-party source, surviving experiment data, and generated outputs explicitly.
 
+## Current status
+
+See `STATUS_AND_ROADMAP.md` for the completed milestones, tool-test matrix,
+OpenStoryline configuration finding, model strategy, outstanding checks, and
+ordered implementation plan.
+
 ## Code we own
 
 - `app/` — local project API and browser workflow for footage indexing, concept review, rendering, and editable exports
