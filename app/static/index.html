@@ -5,7 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark" />
     <title>Video Editing Workbench</title>
-    <link rel="stylesheet" href="/styles.css" />
+    <meta http-equiv="Cache-Control" content="no-cache" />
+    <link rel="stylesheet" href="/styles.css?v=3" />
   </head>
   <body>
     <div class="shell">
@@ -57,9 +58,10 @@
           <input name="name" required placeholder="Tuesday — lake trip" />
         </label>
         <label>
-          Folder with your clips (inside the workspace)
-          <input name="source_directory" required placeholder="footage/2026-08-05" />
+          Folder with your clips
+          <input name="source_directory" required placeholder="Pick below or type a path" />
         </label>
+        <div id="folder-browser" class="folder-browser" aria-label="Browse workspace folders"></div>
         <label>
           What's the story? (optional)
           <textarea name="prompt" rows="3" placeholder="A short fun vlog of my day, ending with the sunset…"></textarea>
@@ -74,6 +76,6 @@
       </form>
     </dialog>
 
-    <script type="module" src="/app.js"></script>
+    <script type="module" src="/app.js?v=3"></script>
   </body>
 </html>

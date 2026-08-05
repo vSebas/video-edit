@@ -112,6 +112,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def get_project(project_id: str):
         return project_call(lambda: projects.get_project(project_id))
 
+    @application.delete("/api/projects/{project_id}")
+    def delete_project(project_id: str):
+        return project_call(lambda: projects.delete_project(project_id))
+
+    @application.get("/api/browse")
+    def browse(path: str = ""):
+        return project_call(lambda: projects.browse_directories(path))
+
     @application.post("/api/projects/{project_id}/selection")
     def select_concept(project_id: str, request: SelectConceptRequest):
         return project_call(

@@ -76,8 +76,16 @@ const PHASE_LABEL = {
 /* ------------------------------------------------------------------ */
 /* Sidebar                                                             */
 
+function visibleProjects() {
+  const showArchive = localStorage.getItem('showArchive') === '1';
+  return state.projects.filter((project) =>
+    showArchive || project.project_id !== 'morning-routine');
+}
+
 function renderProjectList() {
-  $('#project-list').innerHTML = state.projects.map((project) => `
+  const hasArchive = state.projects.some((project) => project.project_id === 'morning-routine');
+  const showArchive = localStorage.getItem('showArchive') === '1';
+  $('#project-list').innerHTML = visibleProjects().map((project) => `
     <button class="project-button ${project.project_id === state.activeProjectId ? 'active' : ''}" data-project-id="${escapeHtml(project.project_id)}">
       <span class="project-dot ${project.has_plan || project.status === 'ready' ? 'ready' : ''}"></span>
       <span class="project-copy">
@@ -85,9 +93,16 @@ function renderProjectList() {
         <span>${project.asset_count} clips${project.has_plan ? ' · edited' : ''}</span>
       </span>
     </button>
-  `).join('');
+  `).join('') + (hasArchive ? `
+    <button class="ghost archive-toggle" id="toggle-archive">
+      ${showArchive ? 'Hide archive' : 'Show archive (1)'}
+    </button>` : '');
   document.querySelectorAll('[data-project-id]').forEach((button) => {
     button.addEventListener('click', () => loadProject(button.dataset.projectId));
+  });
+  $('#toggle-archive')?.addEventListener('click', () => {
+    localStorage.setItem('showArchive', showArchive ? '0' : '1');
+    renderProjectList();
   });
 }
 
@@ -294,6 +309,7 @@ function advancedSection(project) {
           </button>
         `).join('')}
       </div>
+      <button class="ghost reject" id="delete-project">Delete this vlog (keeps your clips)</button>
       <div class="media-grid">
         ${media.map((asset) => {
           const thumbnail = asset.thumbnail_url
@@ -364,6 +380,55 @@ function renderProject() {
   document.querySelectorAll('[data-pipeline]').forEach((button) => {
     button.addEventListener('click', () => runAdvancedStep(button.dataset.pipeline, button));
   });
+  $('#delete-project')?.addEventListener('click', deleteProject);
+}
+
+async function deleteProject() {
+  const project = state.activeProject;
+  if (!project) return;
+  const confirmed = window.confirm(
+    `Delete "${project.name}"? The AI analysis, cut, and renders are removed. ` +
+    'Your original clips are NOT touched.'
+  );
+  if (!confirmed) return;
+  try {
+    await api(`/api/projects/${project.project_id}`, { method: 'DELETE' });
+    notice('Vlog deleted. Your clips are untouched.');
+    await refreshProjects();
+    const next = visibleProjects()[0] || state.projects[0];
+    if (next) await loadProject(next.project_id);
+    else $('#project-view').innerHTML = '<div class="empty-state">No vlogs yet — add your clips.</div>';
+  } catch (error) {
+    notice(error.message, true);
+  }
+}
+
+/* Folder picker in the new-vlog dialog */
+async function browseTo(path) {
+  const input = document.querySelector('[name="source_directory"]');
+  const container = $('#folder-browser');
+  try {
+    const listing = await api(`/api/browse?path=${encodeURIComponent(path)}`);
+    if (listing.media_count > 0) input.value = listing.path;
+    container.innerHTML = `
+      <div class="browser-head">
+        <span>/${escapeHtml(listing.path)}</span>
+        <span class="muted">${listing.media_count ? `${listing.media_count} media file${listing.media_count === 1 ? '' : 's'} here` : ''}</span>
+      </div>
+      ${listing.parent !== null ? `<button type="button" class="browser-item up" data-browse="${escapeHtml(listing.parent)}">← back</button>` : ''}
+      ${listing.directories.map((dir) => `
+        <button type="button" class="browser-item" data-browse="${escapeHtml(dir.path)}">
+          📁 ${escapeHtml(dir.name)}
+          ${dir.media_count ? `<span class="count">${dir.media_count} clips</span>` : ''}
+        </button>
+      `).join('') || '<p class="muted">No subfolders.</p>'}
+    `;
+    container.querySelectorAll('[data-browse]').forEach((button) => {
+      button.addEventListener('click', () => browseTo(button.dataset.browse));
+    });
+  } catch (error) {
+    container.innerHTML = `<p class="muted">${escapeHtml(error.message)}</p>`;
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -600,7 +665,10 @@ async function initialize() {
 }
 
 const dialog = $('#new-project-dialog');
-$('#new-project-button').addEventListener('click', () => dialog.showModal());
+$('#new-project-button').addEventListener('click', () => {
+  dialog.showModal();
+  browseTo('');
+});
 $('#close-dialog').addEventListener('click', () => dialog.close());
 $('#cancel-dialog').addEventListener('click', () => dialog.close());
 $('#new-project-form').addEventListener('submit', createProject);

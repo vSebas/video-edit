@@ -219,3 +219,66 @@ def test_detect_shots_on_synthetic_video(tmp_path: Path) -> None:
     assert shots[-1][1] == 6.0
     for start, end in shots:
         assert end - start > 0
+
+
+def test_browse_lists_workspace_directories(tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+    from video_app.config import Settings
+    from video_app.main import create_app
+
+    settings = Settings(
+        root=PROJECT_ROOT, runtime=tmp_path / "runtime", poc_root=POC_ROOT
+    )
+    with TestClient(create_app(settings)) as current:
+        listing = current.get("/api/browse").json()
+        names = [item["name"] for item in listing["directories"]]
+        assert "app" in names
+        assert "runtime" not in names  # skipped at the workspace root
+        assert current.get("/api/browse", params={"path": "../etc"}).status_code == 400
+
+
+def test_delete_project_removes_runtime_state_only(tmp_path: Path) -> None:
+    import subprocess as sp
+
+    from fastapi.testclient import TestClient
+    from video_app.config import Settings
+    from video_app.main import create_app
+
+    source = PROJECT_ROOT / "runtime" / "test-fixtures" / f"delete-{tmp_path.name}"
+    source.mkdir(parents=True, exist_ok=True)
+    sample = source / "clip.mp4"
+    sp.run(
+        [
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+            "-f", "lavfi", "-i", "color=c=0x223344:s=320x240:d=1:r=30",
+            "-c:v", "libx264", str(sample),
+        ],
+        check=True,
+    )
+    settings = Settings(
+        root=PROJECT_ROOT, runtime=tmp_path / "runtime", poc_root=POC_ROOT
+    )
+    try:
+        with TestClient(create_app(settings)) as current:
+            created = current.post(
+                "/api/projects",
+                json={
+                    "name": "Delete me",
+                    "source_directory": str(source.relative_to(PROJECT_ROOT)),
+                    "prompt": "",
+                },
+            )
+            assert created.status_code == 201
+            project_id = created.json()["project_id"]
+            assert (tmp_path / "runtime" / project_id / "project.json").is_file()
+
+            assert current.delete("/api/projects/morning-routine").status_code == 400
+            deleted = current.delete(f"/api/projects/{project_id}")
+            assert deleted.status_code == 200
+            assert not (tmp_path / "runtime" / project_id).exists()
+            assert sample.is_file()  # source media untouched
+    finally:
+        if sample.exists():
+            sample.unlink()
+        if source.exists():
+            source.rmdir()

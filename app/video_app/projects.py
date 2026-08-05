@@ -254,6 +254,73 @@ class ProjectService:
             raise
         return self.get_project(project_id)
 
+    def delete_project(self, project_id: str) -> dict:
+        """Delete a runtime project's derived state. Source media is never
+        touched; the archived benchmark fixture cannot be deleted."""
+        if project_id == FIXTURE_ID:
+            raise ProjectError(
+                "The archived benchmark is built into the repository; hide it "
+                "in the sidebar instead"
+            )
+        target = (self.settings.runtime / project_id).resolve()
+        try:
+            target.relative_to(self.settings.runtime)
+        except ValueError as exc:
+            raise ProjectError("Invalid project id") from exc
+        if not (target / "project.json").is_file():
+            raise ProjectError(f"Unknown project: {project_id}")
+        shutil.rmtree(target)
+        return {"deleted": project_id}
+
+    BROWSE_SKIP = {
+        ".git", "node_modules", "__pycache__", ".venv", "repos",
+        "runtime", ".tmp", ".claude",
+    }
+
+    def browse_directories(self, relative: str = "") -> dict:
+        """List subdirectories and media counts under the workspace so the
+        UI can offer a folder picker without exposing the whole filesystem."""
+        base = self.settings.root
+        current = (base / relative).resolve() if relative else base
+        try:
+            current.relative_to(base)
+        except ValueError as exc:
+            raise ProjectError("Folder must be inside the workspace") from exc
+        if not current.is_dir():
+            raise ProjectError("Folder does not exist")
+        directories = []
+        media_count = 0
+        for entry in sorted(current.iterdir()):
+            if entry.name.startswith("."):
+                continue
+            if entry.is_dir():
+                if current == base and entry.name in self.BROWSE_SKIP:
+                    continue
+                child_media = sum(
+                    1
+                    for item in entry.iterdir()
+                    if item.is_file() and item.suffix.lower() in SUPPORTED_EXTENSIONS
+                )
+                directories.append(
+                    {
+                        "name": entry.name,
+                        "path": str(entry.relative_to(base)),
+                        "media_count": child_media,
+                    }
+                )
+            elif entry.is_file() and entry.suffix.lower() in SUPPORTED_EXTENSIONS:
+                media_count += 1
+        return {
+            "path": "" if current == base else str(current.relative_to(base)),
+            "parent": (
+                None
+                if current == base
+                else str(current.parent.relative_to(base)) if current.parent != base else ""
+            ),
+            "media_count": media_count,
+            "directories": directories,
+        }
+
     def select_concept(self, project_id: str, concept_id: str) -> dict:
         project = self.get_project(project_id)
         concept = next(
