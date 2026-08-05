@@ -339,3 +339,38 @@ textarea { resize: vertical; }
 .missing-shot .priority.recommended { color: var(--amber); border-color: var(--amber); }
 .missing-shot .priority.optional { color: var(--muted); }
 .concept-card details summary { cursor: pointer; font-size: 12px; color: var(--blue); margin: 6px 0; }
+
+/* Guided-flow rebuild */
+.muted { color: var(--muted); font-size: 13px; }
+.primary.big { font-size: 16px; padding: 14px 28px; margin-top: 14px; }
+.start-card { max-width: 640px; }
+.start-card h2 { margin: 10px 0; }
+.busy-card { max-width: 560px; }
+.step-list { list-style: none; padding: 0; margin: 18px 0; display: flex; flex-direction: column; gap: 12px; }
+.step-list li { display: flex; align-items: center; gap: 10px; color: var(--muted); }
+.step-list li i {
+  width: 10px; height: 10px; border-radius: 50%;
+  border: 2px solid var(--line); flex: none;
+}
+.step-list li.done { color: var(--text); }
+.step-list li.done i { background: var(--accent); border-color: var(--accent); }
+.step-list li.active { color: var(--text); }
+.step-list li.active i {
+  border-color: var(--accent);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+@keyframes pulse { 50% { transform: scale(1.5); } }
+.result-hero { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(280px, 1fr); gap: 14px; }
+@media (max-width: 900px) { .result-hero { grid-template-columns: 1fr; } }
+.video-stage video { width: 100%; max-height: 62vh; border-radius: calc(var(--radius) - 6px); background: #000; }
+.video-caption { margin-top: 8px; color: var(--muted); font-size: 12px; }
+.chat-card { display: flex; flex-direction: column; gap: 10px; }
+.revision-form.vertical { flex-direction: column; }
+.revision-form.vertical button { align-self: flex-end; }
+.export-card { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+.export-card code { font-size: 11px; color: var(--blue); word-break: break-all; }
+.cut-details summary { cursor: pointer; color: var(--blue); font-size: 13px; margin: 4px 0 10px; }
+.cut-list { margin: 0; padding-left: 4px; list-style: none; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.advanced { margin-top: 24px; border-top: 1px solid var(--line); padding-top: 12px; }
+.advanced summary { cursor: pointer; color: var(--muted); font-size: 12px; margin-bottom: 12px; }
+.advanced .media-grid { margin-top: 12px; }

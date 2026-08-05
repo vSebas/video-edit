@@ -13,17 +13,17 @@
         <div class="brand">
           <span class="brand-mark">V</span>
           <div>
-            <strong>Workbench</strong>
-            <span>real-footage editor</span>
+            <strong>Vlog Studio</strong>
+            <span>your footage, AI-edited</span>
           </div>
         </div>
 
-        <button class="primary full" id="new-project-button">+ Index new footage</button>
+        <button class="primary full" id="new-project-button">+ New vlog from clips</button>
 
-        <div class="side-heading">Projects</div>
+        <div class="side-heading">My vlogs</div>
         <nav id="project-list" class="project-list" aria-label="Projects"></nav>
 
-        <div class="side-heading status-heading">Pipeline</div>
+        <div class="side-heading status-heading">System</div>
         <div id="capability-list" class="capability-list"></div>
       </aside>
 
@@ -47,30 +47,29 @@
       <form id="new-project-form">
         <div class="dialog-heading">
           <div>
-            <span class="eyebrow">New local project</span>
-            <h2>Index a footage folder</h2>
+            <span class="eyebrow">New vlog</span>
+            <h2>Where are your clips?</h2>
           </div>
           <button type="button" class="icon-button" id="close-dialog" aria-label="Close">×</button>
         </div>
         <label>
-          Project name
-          <input name="name" required placeholder="Weekend hike" />
+          Give this day a name
+          <input name="name" required placeholder="Tuesday — lake trip" />
         </label>
         <label>
-          Folder inside the video-editing workspace
-          <input name="source_directory" required value="Crayotter/crayotter-data/user_temp" />
+          Folder with your clips (inside the workspace)
+          <input name="source_directory" required placeholder="footage/2026-08-05" />
         </label>
         <label>
-          What should the video accomplish?
-          <textarea name="prompt" rows="4" placeholder="Create a concise vertical Reel about…"></textarea>
+          What's the story? (optional)
+          <textarea name="prompt" rows="3" placeholder="A short fun vlog of my day, ending with the sunset…"></textarea>
         </label>
         <p class="form-note">
-          Indexing is immediate and local. Then run the pipeline: analyze footage,
-          transcribe speech, propose concepts, compile, render, and export.
+          Your files stay where they are — nothing is copied or modified.
         </p>
         <div class="dialog-actions">
           <button type="button" class="secondary" id="cancel-dialog">Cancel</button>
-          <button type="submit" class="primary">Index footage</button>
+          <button type="submit" class="primary">Add my clips</button>
         </div>
       </form>
     </dialog>
