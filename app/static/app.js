@@ -602,6 +602,15 @@ async function runAdvancedStep(stepId, button) {
 /* ------------------------------------------------------------------ */
 /* Loading                                                             */
 
+const JOB_LABELS = {
+  visual_analysis: 'Watching your footage',
+  speech_analysis: 'Listening for speech',
+  concept_generation: 'Writing story ideas',
+  render: 'Rendering the preview',
+  editable_exports: 'Preparing editor files',
+  plan_revision: 'Re-cutting to your instruction',
+};
+
 async function loadProject(projectId) {
   state.activeProjectId = projectId;
   state.runs = [];
@@ -615,6 +624,26 @@ async function loadProject(projectId) {
         run_key: run.run_key,
       }))
     );
+    // Reconnect to jobs still running server-side (e.g. after a reload)
+    // so the working state is visible and buttons are not double-clicked.
+    if (!state.busy) {
+      const jobs = (await api('/api/jobs')).jobs.filter(
+        (job) => job.project_id === projectId && ['queued', 'running'].includes(job.status)
+      );
+      if (jobs.length) {
+        setBusy(
+          'Still working — picking up where it left off',
+          jobs.map((job) => JOB_LABELS[job.kind] || job.kind),
+          0,
+        );
+        Promise.allSettled(jobs.map((job) => pollJob(job.job_id))).then(async () => {
+          state.busy = null;
+          notice('Done.');
+          await loadProject(projectId);
+        });
+        return;
+      }
+    }
     renderProject();
   } catch (error) {
     notice(error.message, true);
