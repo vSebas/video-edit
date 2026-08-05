@@ -517,7 +517,7 @@ class ProjectService:
     def analyze_speech(self, project_id: str, model_size: str | None = None) -> dict:
         """Run local timestamped ASR over every asset with audio and persist
         the transcript as a semantic evidence run."""
-        from .speech import DEFAULT_MODEL_SIZE, SpeechAnalysisError, analyze_speech
+        from .speech import SpeechAnalysisError, analyze_speech
 
         project = self.get_project(project_id)
         assets = project.get("inventory", {}).get("assets", [])
@@ -529,7 +529,7 @@ class ProjectService:
         run_key = f"asr-live-{run_id}"
         try:
             normalized, raw_records = analyze_speech(
-                assets, media_root, project_id, run_id, model_size or DEFAULT_MODEL_SIZE
+                assets, media_root, project_id, run_id, model_size
             )
             validate_semantic_evidence(
                 normalized,
@@ -674,7 +674,15 @@ class ProjectService:
         if not selected:
             raise ProjectError("Select a concept before compiling the edit plan")
         try:
-            plan = compile_edit_plan(project, document, selected, width, height, fps)
+            plan = compile_edit_plan(
+                project,
+                document,
+                selected,
+                width,
+                height,
+                fps,
+                speech_words=self._speech_words(project_id),
+            )
             validate_edit_plan(
                 plan,
                 self.settings.poc_root / "schemas" / "edit-plan.schema.json",
@@ -727,7 +735,14 @@ class ProjectService:
         evidence = self.approved_evidence(project_id)
         try:
             client = ChatClient(resolve_provider(provider, model))
-            new_plan, note = revise_plan(client, project, plan, evidence, instruction)
+            new_plan, note = revise_plan(
+                client,
+                project,
+                plan,
+                evidence,
+                instruction,
+                speech_words=self._speech_words(project_id),
+            )
             validate_edit_plan(
                 new_plan,
                 self.settings.poc_root / "schemas" / "edit-plan.schema.json",
@@ -762,6 +777,26 @@ class ProjectService:
         stored["status"] = "plan_ready"
         write_json(path, stored)
         return {"plan": new_plan, "revision_note": note}
+
+    def _speech_words(self, project_id: str) -> dict[str, list[dict]]:
+        """Word timings from the most recent ASR run, keyed by asset, for
+        snapping cut boundaries to speech."""
+        runs_dir = self.settings.runtime / project_id / "analysis" / "runs"
+        candidates = sorted(runs_dir.glob("asr-live-*/raw/transcripts.json"))
+        if not candidates:
+            return {}
+        words: dict[str, list[dict]] = {}
+        for record in load_json(candidates[-1]).get("transcripts", []):
+            asset_words = words.setdefault(record["asset_id"], [])
+            for segment in record.get("segments", []):
+                for word in segment.get("words", []):
+                    asset_words.append(
+                        {
+                            "start_seconds": word["start_seconds"],
+                            "end_seconds": word["end_seconds"],
+                        }
+                    )
+        return words
 
     @staticmethod
     def _validate_schema(document: dict, schema_path: Path, label: str) -> None:

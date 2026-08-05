@@ -282,3 +282,44 @@ def test_delete_project_removes_runtime_state_only(tmp_path: Path) -> None:
             sample.unlink()
         if source.exists():
             source.rmdir()
+
+
+def test_shot_moments_converts_and_clamps_relative_timestamps() -> None:
+    from video_app.visual import shot_moments
+
+    parsed = {
+        "best_moment": {"start_seconds": 1.5, "end_seconds": 2.5, "why": "waves at camera"},
+        "moments": [
+            {"start_seconds": 1.5, "end_seconds": 2.5, "label": "duplicate of best"},
+            {"start_seconds": 5.0, "end_seconds": 99.0, "label": "runs past shot end"},
+            {"start_seconds": 3.0, "end_seconds": 3.1, "label": "too short"},
+        ],
+    }
+    moments = shot_moments(parsed, start=10.0, end=18.0)
+    assert moments[0] == {"start": 11.5, "end": 12.5, "label": "waves at camera", "is_best": True}
+    assert len(moments) == 2  # duplicate and too-short dropped
+    assert moments[1]["end"] == 18.0  # clamped to shot end
+
+
+def test_snap_spans_moves_cut_out_of_spoken_words() -> None:
+    from video_app.planning import snap_spans_to_speech
+
+    project = sample_project()
+    words = {
+        "clip_a": [
+            {"start_seconds": 3.8, "end_seconds": 4.4},   # word straddles span end 4.0
+            {"start_seconds": 9.9, "end_seconds": 10.6},  # word straddles span start 10.0
+        ]
+    }
+    spans = [
+        {"label": "a", "asset_id": "clip_a", "source_start_seconds": 0.0,
+         "source_end_seconds": 4.0, "intent": "x", "observed_content": "y", "confidence": 0.9},
+        {"label": "b", "asset_id": "clip_a", "source_start_seconds": 10.0,
+         "source_end_seconds": 14.0, "intent": "x", "observed_content": "y", "confidence": 0.9},
+    ]
+    snapped = snap_spans_to_speech(spans, words, project)
+    assert snapped[0]["source_end_seconds"] == pytest.approx(4.52)   # finishes the word + pad
+    # start boundary inside a word pulls back before the word begins
+    assert snapped[1]["source_start_seconds"] == pytest.approx(9.78)
+    # untouched boundaries stay put
+    assert snapped[0]["source_start_seconds"] == 0.0

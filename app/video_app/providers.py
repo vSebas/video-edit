@@ -74,6 +74,14 @@ def image_part(jpeg_bytes: bytes) -> dict:
     }
 
 
+def video_part(mp4_bytes: bytes) -> dict:
+    encoded = base64.b64encode(mp4_bytes).decode("ascii")
+    return {
+        "type": "video_url",
+        "video_url": {"url": f"data:video/mp4;base64,{encoded}"},
+    }
+
+
 def text_part(text: str) -> dict:
     return {"type": "text", "text": text}
 

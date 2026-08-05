@@ -1,7 +1,25 @@
 # Application validation
 
-**Verified:** 2026-08-04
+**Verified:** 2026-08-05
 **Image:** `video-editing-app:local` (rebuilt with faster-whisper)
+
+## Moment-level selection checks (2026-08-05)
+
+The visual adapter now sends each shot as a downscaled native-video segment
+(≈1.2k video tokens ≈ $0.0005/shot on `qwen3.7-plus`) and returns sub-shot
+moments; keyframes remain the fallback. Verified against the independently
+checked benchmark ground truth:
+
+- IMG_0997 wave (verified 1.45–3.3 s): best moment reported 2.0–3.0 s —
+  "makes direct eye contact and waves at the camera". PASS.
+- IMG_0996 shoe reveal (verified ~8.5–11.3 s): best moment 10.9–12.9 s —
+  "lifts the sneaker into frame". PASS.
+- Evidence density: 24 shot captions + 67 sub-moments (v1: 25 coarse blocks);
+  84 auto-approved, 7 pending.
+
+Cut boundaries now snap to spoken-word edges (±0.12 s padding) using the ASR
+word timings at compile and revision time, and faster-whisper attempts
+large-v3 on CUDA before falling back to small/int8 CPU. 18 tests pass.
 
 ## Walking-skeleton live checks (2026-08-04)
 

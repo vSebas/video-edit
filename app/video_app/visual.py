@@ -6,10 +6,20 @@ import subprocess
 import uuid
 from pathlib import Path
 
-from .providers import ChatClient, ProviderError, image_part, parse_json_content, text_part
+from .providers import (
+    ChatClient,
+    ProviderError,
+    image_part,
+    parse_json_content,
+    text_part,
+    video_part,
+)
 from .semantic import RISK_PATTERNS, utc_now
 
-PROMPT_VERSION = "live-visual-v1"
+PROMPT_VERSION = "live-visual-v2-video"
+SEGMENT_MAX_BYTES = 7_000_000
+SEGMENT_SCALES = (480, 360)
+MIN_MOMENT_SECONDS = 0.6
 SCENE_THRESHOLD = 0.30
 MIN_SHOT_SECONDS = 1.5
 MAX_SHOT_SECONDS = 8.0
@@ -83,6 +93,25 @@ def extract_frame(path: Path, timestamp: float) -> bytes:
     return result.stdout
 
 
+def extract_segment(path: Path, start: float, end: float) -> bytes | None:
+    """Downscaled, silent H.264 segment of the shot for native-video model
+    input. Returns None if it cannot be kept under the payload budget."""
+    for scale in SEGMENT_SCALES:
+        command = [
+            "ffmpeg", "-hide_banner", "-loglevel", "error",
+            "-ss", f"{max(start, 0):.3f}", "-t", f"{max(end - start, 0.1):.3f}",
+            "-i", str(path),
+            "-vf", f"scale={scale}:-2",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "30",
+            "-an", "-movflags", "+faststart+frag_keyframe+empty_moov",
+            "-f", "mp4", "pipe:1",
+        ]
+        result = subprocess.run(command, capture_output=True, check=False)
+        if result.returncode == 0 and result.stdout and len(result.stdout) <= SEGMENT_MAX_BYTES:
+            return result.stdout
+    return None
+
+
 def frame_timestamps(start: float, end: float) -> list[float]:
     span = end - start
     if span <= 0.5:
@@ -94,6 +123,19 @@ def risk_flags_for(caption: str) -> list[str]:
     return [name for name, pattern in RISK_PATTERNS if pattern.search(caption)]
 
 
+RESPONSE_SHAPE = (
+    'Respond with JSON: {"caption": "<2-3 factual sentences>", '
+    '"visible_actions": ["<short action phrases>"], '
+    '"on_screen_text": "<verbatim readable text or null>", '
+    '"camera": "<static|handheld|pan|tilt|unclear>", '
+    '"confidence": <0.0-1.0>, '
+    '"best_moment": {"start_seconds": <float>, "end_seconds": <float>, '
+    '"why": "<what makes this the strongest instant>"} or null, '
+    '"moments": [{"start_seconds": <float>, "end_seconds": <float>, '
+    '"label": "<short factual label>"}]}'
+)
+
+
 def describe_shot(
     client: ChatClient,
     path: Path,
@@ -101,18 +143,29 @@ def describe_shot(
     start: float,
     end: float,
 ) -> tuple[dict, dict]:
-    """Returns (parsed observation payload, raw exchange record)."""
-    frames = [extract_frame(path, ts) for ts in frame_timestamps(start, end)]
-    instruction = (
-        f"These {len(frames)} frames were sampled in order from {start:.2f}s to "
-        f"{end:.2f}s of the clip '{filename}'. Describe this shot.\n"
-        'Respond with JSON: {"caption": "<2-3 factual sentences>", '
-        '"visible_actions": ["<short action phrases>"], '
-        '"on_screen_text": "<verbatim readable text or null>", '
-        '"camera": "<static|handheld|pan|tilt|unclear>", '
-        '"confidence": <0.0-1.0>}'
-    )
-    content = [text_part(instruction)] + [image_part(frame) for frame in frames]
+    """Describe one shot, preferring native-video input (motion, order, and
+    sub-shot timestamps) and falling back to sampled keyframes. Returns
+    (parsed observation payload, raw exchange record)."""
+    segment = None if end - start < 0.5 else extract_segment(path, start, end)
+    if segment is not None:
+        instruction = (
+            f"This video is one shot from the clip '{filename}' "
+            f"(covering {start:.2f}s to {end:.2f}s of the source). Describe it, "
+            "and give timestamps RELATIVE TO THIS VIDEO for the strongest "
+            "moment and up to 3 notable moments (peaks of action, gestures, "
+            "reveals, eye contact).\n" + RESPONSE_SHAPE
+        )
+        content = [video_part(segment), text_part(instruction)]
+        input_mode = "video"
+    else:
+        frames = [extract_frame(path, ts) for ts in frame_timestamps(start, end)]
+        instruction = (
+            f"These {len(frames)} frames were sampled in order from {start:.2f}s to "
+            f"{end:.2f}s of the clip '{filename}'. Describe this shot; use null "
+            "for best_moment since motion is not visible.\n" + RESPONSE_SHAPE
+        )
+        content = [text_part(instruction)] + [image_part(frame) for frame in frames]
+        input_mode = "keyframes"
     response = client.chat(
         [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -127,13 +180,53 @@ def describe_shot(
         "filename": filename,
         "shot_start_seconds": start,
         "shot_end_seconds": end,
-        "frame_timestamps": [round(ts, 3) for ts in frame_timestamps(start, end)],
+        "input_mode": input_mode,
         "prompt_version": PROMPT_VERSION,
         "model": response["model"],
         "content": response["content"],
         "usage": response["usage"],
     }
     return parsed, raw
+
+
+def shot_moments(parsed: dict, start: float, end: float) -> list[dict]:
+    """Convert model-reported segment-relative moments into absolute,
+    clamped source ranges. The best moment is first."""
+    span = end - start
+    candidates = []
+    best = parsed.get("best_moment")
+    if isinstance(best, dict):
+        candidates.append({**best, "label": best.get("why", "strongest moment"), "is_best": True})
+    for item in parsed.get("moments") or []:
+        if isinstance(item, dict):
+            candidates.append({**item, "is_best": False})
+    moments = []
+    for item in candidates[:4]:
+        try:
+            rel_start = float(item["start_seconds"])
+            rel_end = float(item["end_seconds"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        absolute_start = min(max(start + rel_start, start), end)
+        absolute_end = min(max(start + rel_end, start), end)
+        if absolute_end - absolute_start < MIN_MOMENT_SECONDS:
+            continue
+        label = str(item.get("label", "")).strip() or "notable moment"
+        if any(
+            abs(existing["start"] - absolute_start) < 0.3
+            and abs(existing["end"] - absolute_end) < 0.3
+            for existing in moments
+        ):
+            continue
+        moments.append(
+            {
+                "start": round(absolute_start, 3),
+                "end": round(absolute_end, 3),
+                "label": label,
+                "is_best": bool(item.get("is_best")),
+            }
+        )
+    return moments
 
 
 def analyze_assets(
@@ -218,6 +311,41 @@ def analyze_assets(
                     "evidence_type": "visual",
                 }
             )
+            for moment_index, moment in enumerate(
+                shot_moments(parsed, start, end), start=1
+            ):
+                moment_caption = (
+                    f"{'Best moment' if moment['is_best'] else 'Moment'} of this "
+                    f"shot: {moment['label']}"
+                )
+                moment_flags = risk_flags_for(moment_caption)
+                if moment_flags:
+                    risk_count += 1
+                observations.append(
+                    {
+                        "evidence_id": f"{run_id}-{sequence:04d}m{moment_index}",
+                        "clip_id": f"shot_{sequence:04d}_m{moment_index}",
+                        "media_id": asset["asset_id"],
+                        "asset_id": asset["asset_id"],
+                        "filename": asset["filename"],
+                        "raw_start_seconds": moment["start"],
+                        "raw_end_seconds": moment["end"],
+                        "start_seconds": moment["start"],
+                        "end_seconds": min(moment["end"], duration) if duration else moment["end"],
+                        "caption": moment_caption,
+                        "source": "model",
+                        "normalization_status": "accepted",
+                        "review_status": "pending",
+                        "adjustments": [],
+                        "rejection_reasons": [],
+                        "risk_flags": moment_flags,
+                        "reviewed_caption": None,
+                        "review_note": None,
+                        "reviewed_at": None,
+                        "model_confidence": confidence,
+                        "evidence_type": "visual",
+                    }
+                )
 
     analyzed_assets = [
         asset for asset in assets if asset.get("media_type") in {"video", "image"}

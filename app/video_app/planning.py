@@ -278,6 +278,61 @@ def sanitize_spans(project: dict, items: list) -> list[dict]:
     return spans
 
 
+WORD_SNAP_PADDING = 0.12
+
+
+def snap_boundary(value: float, words: list[dict], is_end: bool) -> float:
+    """If a cut boundary lands inside a spoken word, move it to the nearer
+    word edge (padded away from the word) so speech is never clipped
+    mid-word — the classic transcript-editing rule."""
+    for word in words:
+        if word["start_seconds"] < value < word["end_seconds"]:
+            to_start = value - word["start_seconds"]
+            to_end = word["end_seconds"] - value
+            if is_end:
+                # Finish the word unless it barely began at the cut point.
+                if to_start < 0.15:
+                    return max(word["start_seconds"] - WORD_SNAP_PADDING, 0.0)
+                return word["end_seconds"] + WORD_SNAP_PADDING
+            # Include the word from its start unless it is nearly over.
+            if to_end < 0.15:
+                return word["end_seconds"] + WORD_SNAP_PADDING
+            return max(word["start_seconds"] - WORD_SNAP_PADDING, 0.0)
+    return value
+
+
+def snap_spans_to_speech(
+    spans: list[dict], speech_words: dict[str, list[dict]], project: dict
+) -> list[dict]:
+    """Adjust span boundaries so cuts respect word edges. Reverts a snap
+    that would invert or over-shrink the span."""
+    durations = {
+        asset["asset_id"]: float(asset.get("duration_seconds") or 0.0)
+        for asset in project.get("inventory", {}).get("assets", [])
+    }
+    snapped = []
+    for span in spans:
+        words = speech_words.get(span["asset_id"]) or []
+        start = span["source_start_seconds"]
+        end = span["source_end_seconds"]
+        if words:
+            new_start = snap_boundary(start, words, is_end=False)
+            new_end = snap_boundary(end, words, is_end=True)
+            duration = durations.get(span["asset_id"]) or new_end
+            new_start = max(0.0, new_start)
+            new_end = min(new_end, duration) if duration else new_end
+            if new_end - new_start >= MIN_EVENT_SECONDS:
+                start, end = new_start, new_end
+        snapped.append(
+            {
+                **span,
+                "source_start_seconds": round(start, 3),
+                "source_end_seconds": round(end, 3),
+            }
+        )
+    return snapped
+
+
 def build_plan(
     project: dict,
     spans: list[dict],
@@ -289,11 +344,14 @@ def build_plan(
     height: int = DEFAULT_HEIGHT,
     fps: int = DEFAULT_FPS,
     revision: int = 1,
+    speech_words: dict[str, list[dict]] | None = None,
 ) -> dict:
     """Deterministically assemble edit-plan.v1 from grounded spans with
     linked video/audio events and a hook title."""
     if not spans:
         raise PlanningError("No usable evidence ranges to build a plan from")
+    if speech_words:
+        spans = snap_spans_to_speech(spans, speech_words, project)
     video_events = []
     audio_events = []
     timeline = 0.0
@@ -384,6 +442,7 @@ def compile_edit_plan(
     width: int = DEFAULT_WIDTH,
     height: int = DEFAULT_HEIGHT,
     fps: int = DEFAULT_FPS,
+    speech_words: dict[str, list[dict]] | None = None,
 ) -> dict:
     """Deterministically compile a sanitized concept into edit-plan.v1."""
     concept = next(
@@ -421,6 +480,7 @@ def compile_edit_plan(
             width=width,
             height=height,
             fps=fps,
+            speech_words=speech_words,
         )
     except PlanningError as exc:
         raise PlanningError(f"The selected concept is not compilable: {exc}") from exc
@@ -444,6 +504,7 @@ def revise_plan(
     plan: dict,
     evidence: list[dict],
     instruction: str,
+    speech_words: dict[str, list[dict]] | None = None,
 ) -> tuple[dict, str]:
     """Revise the current plan per a natural-language instruction, keeping
     media analysis untouched. Returns (new plan, revision note)."""
@@ -522,6 +583,7 @@ events. Every range must stay at least {MIN_EVENT_SECONDS}s long."""
         height=plan["project"]["height"],
         fps=plan["project"]["fps"],
         revision=int(plan.get("revision", 1)) + 1,
+        speech_words=speech_words,
     )
     note = str(parsed.get("revision_note", "")).strip() or "Plan revised."
     return new_plan, note

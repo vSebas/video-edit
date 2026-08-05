@@ -14,14 +14,29 @@ class SpeechAnalysisError(RuntimeError):
     pass
 
 
-def _load_model(model_size: str):
+GPU_MODEL_SIZE = "large-v3"
+
+
+def _load_model(model_size: str | None) -> tuple[object, str, str]:
+    """Best available model: requested (or large-v3) on CUDA, falling back
+    to the fast small/int8 CPU path. Returns (model, size, device)."""
     try:
         from faster_whisper import WhisperModel
     except ImportError as exc:
         raise SpeechAnalysisError(
             "faster-whisper is not installed in this environment"
         ) from exc
-    return WhisperModel(model_size, device="cpu", compute_type="int8")
+    attempts = [
+        (model_size or GPU_MODEL_SIZE, "cuda", "float16"),
+        (model_size or DEFAULT_MODEL_SIZE, "cpu", "int8"),
+    ]
+    last_error: Exception | None = None
+    for size, device, compute_type in attempts:
+        try:
+            return WhisperModel(size, device=device, compute_type=compute_type), size, device
+        except Exception as exc:  # missing CUDA/toolkit raises RuntimeError variants
+            last_error = exc
+    raise SpeechAnalysisError(f"Could not load a Whisper model: {last_error}")
 
 
 def transcribe_asset(model, path: Path) -> tuple[list[dict], dict]:
@@ -67,11 +82,11 @@ def analyze_speech(
     media_root: Path,
     project_id: str,
     run_id: str,
-    model_size: str = DEFAULT_MODEL_SIZE,
+    model_size: str | None = None,
 ) -> tuple[dict, list[dict]]:
     """Transcribe every asset with an audio stream into schema-valid
     semantic-evidence.v1 speech observations plus raw transcript records."""
-    model = _load_model(model_size)
+    model, used_size, device = _load_model(model_size)
     observations: list[dict] = []
     raw_records: list[dict] = []
     warnings: list[str] = []
@@ -145,7 +160,7 @@ def analyze_speech(
         "provider": {
             "adapter": "local-asr",
             "id": "faster-whisper",
-            "model": f"whisper-{model_size}-int8-cpu",
+            "model": f"whisper-{used_size}-{device}",
         },
         "review_status": "pending",
         "safe_for_edit_plan": False,
