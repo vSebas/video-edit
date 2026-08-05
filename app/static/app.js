@@ -259,32 +259,72 @@ function resultSection(project) {
   `;
 }
 
+const FLAG_REASONS = {
+  brand_or_product_claim: 'names a brand or product — a classic AI-hallucination spot',
+  intent_or_emotion_inference: 'guesses feelings or intent, which frames cannot prove',
+  unverified_speech_claim: 'claims someone is speaking without a matching transcript',
+  identity_or_continuity_inference: 'assumes identity or continuity across shots',
+  low_confidence_transcription: 'the audio was unclear, so the transcript may be wrong',
+};
+
+function claimReason(observation) {
+  const reasons = (observation.risk_flags || [])
+    .map((flag) => FLAG_REASONS[flag])
+    .filter(Boolean);
+  const confidence = observation.model_confidence;
+  if (confidence != null && confidence < 0.75) {
+    reasons.push(`the model itself rated this only ${(confidence * 100).toFixed(0)}% sure (blurry/ambiguous footage)`);
+  }
+  return reasons.join('; ') || 'held back by policy';
+}
+
 function needsCheckSection() {
   const pending = pendingClaims();
   if (!pending.length) return '';
+  const projectId = state.activeProjectId;
+  if (localStorage.getItem(`skipClaims:${projectId}`) === '1') {
+    return `
+      <section id="pending-review" class="card skipped-claims">
+        <span>${pending.length} unchecked claim${pending.length === 1 ? '' : 's'} hidden — they are simply not used in editing.</span>
+        <button class="ghost" id="unskip-claims">Review them</button>
+      </section>
+    `;
+  }
   return `
     <section id="pending-review">
       <div class="section-header">
-        <div><span class="eyebrow">Needs your check</span><h2>${pending.length} thing${pending.length === 1 ? '' : 's'} the editor wasn't sure about</h2></div>
-        <p>Brands, emotions, or unclear audio the AI noticed but won't rely on unless you
-        confirm. Everything else (${approvedCount()} observations) was solid and approved
-        automatically. Ignoring these is fine.</p>
+        <div><span class="eyebrow">Needs your check (optional)</span><h2>${pending.length} thing${pending.length === 1 ? '' : 's'} the editor won't rely on unchecked</h2></div>
+        <p>These aren't "unsure" guesses about your footage in general — each one tripped a
+        specific safety rule shown below. Unchecked claims are simply excluded from
+        editing (${approvedCount()} solid observations are already in use).</p>
+        <button class="secondary compact" id="skip-claims">Skip all for now</button>
       </div>
       <div class="pending-grid">
-        ${pending.map((observation) => `
+        ${pending.map((observation) => {
+          const midpoint = ((Number(observation.start_seconds) + Number(observation.end_seconds)) / 2).toFixed(2);
+          const asset = state.activeProject.inventory.assets.find((item) => item.asset_id === observation.asset_id);
+          const playUrl = asset?.media_url
+            ? `${asset.media_url}#t=${Number(observation.start_seconds).toFixed(1)},${Number(observation.end_seconds).toFixed(1)}`
+            : null;
+          return `
           <article class="evidence-item">
-            <div class="evidence-meta">
-              <span>${escapeHtml(observation.filename || observation.asset_id)}</span>
-              <span>${Number(observation.start_seconds).toFixed(1)}–${Number(observation.end_seconds).toFixed(1)}s</span>
-            </div>
-            <p>${escapeHtml(observation.caption)}</p>
-            <div class="review-actions">
-              <button class="ghost approve" data-review-run="${escapeHtml(observation.run_key)}" data-review-id="${escapeHtml(observation.evidence_id)}" data-review-action="approve">True — use it</button>
-              <button class="ghost" data-review-run="${escapeHtml(observation.run_key)}" data-review-id="${escapeHtml(observation.evidence_id)}" data-review-action="edit">Fix wording</button>
-              <button class="ghost reject" data-review-run="${escapeHtml(observation.run_key)}" data-review-id="${escapeHtml(observation.evidence_id)}" data-review-action="reject">Wrong — ignore it</button>
+            <a ${playUrl ? `href="${escapeHtml(playUrl)}" target="_blank" title="Open the clip at this moment"` : ''} class="claim-visual">
+              <img loading="lazy" src="/api/projects/${escapeHtml(projectId)}/frames/${escapeHtml(observation.asset_id)}?t=${midpoint}" alt="" />
+              <span class="play-hint">▶ ${Number(observation.start_seconds).toFixed(1)}–${Number(observation.end_seconds).toFixed(1)}s</span>
+            </a>
+            <div class="claim-body">
+              <div class="evidence-meta"><span>${escapeHtml(observation.filename || observation.asset_id)}</span></div>
+              <p>${escapeHtml(observation.caption)}</p>
+              <p class="muted why-flagged">Why it's here: ${escapeHtml(claimReason(observation))}.</p>
+              <div class="review-actions">
+                <button class="ghost approve" data-review-run="${escapeHtml(observation.run_key)}" data-review-id="${escapeHtml(observation.evidence_id)}" data-review-action="approve">True — use it</button>
+                <button class="ghost" data-review-run="${escapeHtml(observation.run_key)}" data-review-id="${escapeHtml(observation.evidence_id)}" data-review-action="edit">Fix wording</button>
+                <button class="ghost reject" data-review-run="${escapeHtml(observation.run_key)}" data-review-id="${escapeHtml(observation.evidence_id)}" data-review-action="reject">Wrong — ignore it</button>
+              </div>
             </div>
           </article>
-        `).join('')}
+        `;
+        }).join('')}
       </div>
     </section>
   `;
@@ -381,6 +421,14 @@ function renderProject() {
     button.addEventListener('click', () => runAdvancedStep(button.dataset.pipeline, button));
   });
   $('#delete-project')?.addEventListener('click', deleteProject);
+  $('#skip-claims')?.addEventListener('click', () => {
+    localStorage.setItem(`skipClaims:${state.activeProjectId}`, '1');
+    renderProject();
+  });
+  $('#unskip-claims')?.addEventListener('click', () => {
+    localStorage.removeItem(`skipClaims:${state.activeProjectId}`);
+    renderProject();
+  });
 }
 
 async function deleteProject() {

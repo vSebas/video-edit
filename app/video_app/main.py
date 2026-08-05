@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -264,6 +264,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def media(project_id: str, asset_id: str):
         path = project_call(lambda: projects.media_path(project_id, asset_id))
         return FileResponse(path)
+
+    @application.get("/api/projects/{project_id}/frames/{asset_id}")
+    def frame(project_id: str, asset_id: str, t: float = 0.0):
+        data = project_call(lambda: projects.frame_at(project_id, asset_id, t))
+        return Response(
+            content=data,
+            media_type="image/jpeg",
+            headers={"Cache-Control": "private, max-age=86400"},
+        )
 
     @application.get("/api/projects/{project_id}/thumbnails/{asset_id}")
     def thumbnail(project_id: str, asset_id: str):

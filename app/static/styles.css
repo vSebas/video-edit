@@ -419,3 +419,27 @@ textarea { resize: vertical; }
 }
 .archive-toggle { font-size: 11px; color: var(--muted); margin-top: 6px; }
 #delete-project { margin: 10px 0; }
+
+/* Claim review with visuals */
+.pending-grid .evidence-item { display: flex; gap: 12px; }
+.claim-visual {
+  flex: none;
+  width: 132px;
+  position: relative;
+  border-radius: 10px;
+  overflow: hidden;
+  align-self: flex-start;
+  background: #000;
+}
+.claim-visual img { width: 100%; display: block; }
+.claim-visual .play-hint {
+  position: absolute;
+  bottom: 4px;
+  left: 6px;
+  font-size: 10px;
+  color: #fff;
+  text-shadow: 0 1px 3px #000;
+}
+.claim-body { min-width: 0; flex: 1; }
+.why-flagged { margin: 4px 0; }
+.skipped-claims { display: flex; justify-content: space-between; align-items: center; gap: 12px; }

@@ -1173,6 +1173,23 @@ class ProjectService:
             path = (self.settings.root / asset["source_path"]).resolve()
         return self._require_file(path)
 
+    def frame_at(self, project_id: str, asset_id: str, timestamp: float) -> bytes:
+        """A small JPEG of the asset at a given second, so review decisions
+        can be made visually."""
+        path = self.media_path(project_id, asset_id)
+        command = [
+            "ffmpeg", "-hide_banner", "-loglevel", "error",
+            "-ss", f"{max(0.0, min(timestamp, 36000.0)):.3f}",
+            "-i", str(path),
+            "-frames:v", "1",
+            "-vf", "scale=360:-2",
+            "-f", "image2", "-c:v", "mjpeg", "pipe:1",
+        ]
+        result = subprocess.run(command, capture_output=True, check=False)
+        if result.returncode or not result.stdout:
+            raise ProjectError(f"Could not extract a frame from {asset_id}")
+        return result.stdout
+
     def thumbnail_path(self, project_id: str, asset_id: str) -> Path:
         if project_id == FIXTURE_ID:
             analysis = self.settings.poc_root / "artifacts/assets" / asset_id / "analysis.json"
