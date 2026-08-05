@@ -44,6 +44,12 @@ class CompilePlanRequest(BaseModel):
     fps: int = Field(default=30, ge=1, le=120)
 
 
+class RevisePlanRequest(BaseModel):
+    instruction: str = Field(min_length=3, max_length=2000)
+    provider: str = Field(default="qwen", pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
+    model: str | None = Field(default=None, max_length=160)
+
+
 class ImportOpenStorylineRunRequest(BaseModel):
     provider: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
     session_id: str = Field(pattern=r"^[a-f0-9]{12,64}$")
@@ -163,6 +169,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 options.height,
                 options.fps,
             )
+        )
+
+    @application.post("/api/projects/{project_id}/plan/revise", status_code=202)
+    def revise_plan(project_id: str, request: RevisePlanRequest):
+        project_call(lambda: projects.get_project(project_id))
+        return jobs.submit(
+            "plan_revision",
+            project_id,
+            lambda: projects.revise_plan(
+                project_id, request.instruction, request.provider, request.model
+            ),
         )
 
     @application.post(

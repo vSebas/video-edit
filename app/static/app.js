@@ -4,7 +4,6 @@ const state = {
   activeProjectId: null,
   activeProject: null,
   activeProviderRuns: [],
-  activeReviewOutcome: null,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -33,18 +32,18 @@ function notice(message, error = false) {
   element.textContent = message;
   element.classList.toggle('error', error);
   element.classList.remove('hidden');
-  if (!error) window.setTimeout(() => element.classList.add('hidden'), 5000);
+  if (!error) window.setTimeout(() => element.classList.add('hidden'), 6000);
 }
 
 function renderCapabilities() {
   const capabilities = state.status?.capabilities;
   if (!capabilities) return;
   const items = [
-    capabilities.visual.find((item) => item.id === 'openstoryline'),
+    capabilities.visual.find((item) => item.id === 'owned-live-visual'),
     capabilities.speech.find((item) => item.id === 'faster-whisper'),
     capabilities.render,
     capabilities.editable_exports,
-  ];
+  ].filter(Boolean);
   $('#capability-list').innerHTML = items.map((item) => `
     <div class="capability ${item.ready ? 'ready' : ''}">
       <i></i>
@@ -56,7 +55,7 @@ function renderCapabilities() {
 function renderProjectList() {
   $('#project-list').innerHTML = state.projects.map((project) => `
     <button class="project-button ${project.project_id === state.activeProjectId ? 'active' : ''}" data-project-id="${escapeHtml(project.project_id)}">
-      <span class="project-dot ${project.status === 'ready' ? 'ready' : ''}"></span>
+      <span class="project-dot ${['ready', 'plan_ready'].includes(project.status) ? 'ready' : ''}"></span>
       <span class="project-copy">
         <strong>${escapeHtml(project.name)}</strong>
         <span>${project.asset_count} assets · ${project.concept_count} concepts</span>
@@ -93,14 +92,16 @@ function conceptCard(concept, project) {
   const selected = concept.concept_id === project.selected_concept_id;
   const planAvailable = concept.concept_id === project.plan?.concept_id;
   const weaknesses = (concept.weaknesses || []).slice(0, 2).map((item) => `<li>${escapeHtml(item)}</li>`).join('');
-  const missing = (concept.missing_shots || []).length;
+  const missingShots = (concept.missing_shots || []).map((shot) => `
+    <li class="missing-shot"><span class="priority ${escapeHtml(shot.priority)}">${escapeHtml(shot.priority)}</span> ${escapeHtml(shot.recording_instruction)}</li>
+  `).join('');
   return `
     <article class="concept-card ${selected ? 'selected' : ''}">
       <div class="concept-top"><span class="eyebrow">${escapeHtml(concept.topic)}</span><span class="duration">${concept.target_duration_seconds}s</span></div>
       <h3>${escapeHtml(concept.title)}</h3>
       <p class="hook"><strong>Hook:</strong> ${escapeHtml(concept.hook)}</p>
       <ul>${weaknesses}</ul>
-      <p>${missing} missing-shot recommendation${missing === 1 ? '' : 's'}</p>
+      ${missingShots ? `<details><summary>Missing-shot advice</summary><ul>${missingShots}</ul></details>` : ''}
       <div class="concept-footer">
         <span class="${planAvailable ? 'plan-ready' : 'plan-pending'}">${planAvailable ? 'EDIT PLAN READY' : 'PLAN NOT COMPILED'}</span>
         <button class="${selected ? 'secondary' : 'primary'}" data-select-concept="${escapeHtml(concept.concept_id)}">${selected ? 'Selected' : 'Select'}</button>
@@ -116,171 +117,111 @@ function outputLinks(project) {
   ).join('');
 }
 
-function providerLabel(run) {
-  const labels = { qwen: 'Qwen', 'gemini-vlm': 'Gemini VLM' };
-  return labels[run.provider?.id] || run.provider?.id || 'Provider';
-}
-
-function conflictForEvidence(runKey, evidenceId) {
-  return state.activeReviewOutcome?.material_conflicts?.find((item) =>
-    item.run_key === runKey && item.evidence_id === evidenceId
-  );
-}
-
-function evidenceItem(observation, runKey) {
-  const flags = [...(observation.risk_flags || [])];
-  if ((observation.adjustments || []).includes('end_clamped_to_source_duration')) flags.push('time clamped');
-  const conflict = conflictForEvidence(runKey, observation.evidence_id);
-  if (conflict) flags.push('independent benchmark conflict');
-  const reviewedCaption = observation.reviewed_caption && observation.reviewed_caption !== observation.caption
-    ? `<div class="reviewed-caption"><strong>Reviewed wording</strong><p>${escapeHtml(observation.reviewed_caption)}</p></div>`
-    : '';
-  const reviewControls = observation.review_status === 'pending'
-    ? `<div class="review-actions">
-        <button class="ghost approve" data-review-run="${escapeHtml(runKey)}" data-review-id="${escapeHtml(observation.evidence_id)}" data-review-action="approve">Approve</button>
-        <button class="ghost" data-review-run="${escapeHtml(runKey)}" data-review-id="${escapeHtml(observation.evidence_id)}" data-review-action="edit">Edit + approve</button>
-        <button class="ghost reject" data-review-run="${escapeHtml(runKey)}" data-review-id="${escapeHtml(observation.evidence_id)}" data-review-action="reject">Reject</button>
-      </div>`
-    : `<div class="review-actions completed-review">
-        <div class="review-decision ${observation.review_status}">${escapeHtml(observation.review_status)}</div>
-        ${observation.review_status === 'reviewed'
-          ? `<button class="ghost" data-review-run="${escapeHtml(runKey)}" data-review-id="${escapeHtml(observation.evidence_id)}" data-review-action="edit">Edit approval</button>
-             <button class="ghost reject" data-review-run="${escapeHtml(runKey)}" data-review-id="${escapeHtml(observation.evidence_id)}" data-review-action="reject">Reject instead</button>`
-          : `<button class="ghost approve" data-review-run="${escapeHtml(runKey)}" data-review-id="${escapeHtml(observation.evidence_id)}" data-review-action="approve">Approve instead</button>
-             <button class="ghost" data-review-run="${escapeHtml(runKey)}" data-review-id="${escapeHtml(observation.evidence_id)}" data-review-action="edit">Edit + approve</button>`}
-      </div>`;
+function pipelineSection(project) {
+  const runs = state.activeProviderRuns;
+  const hasVisual = runs.some((run) => run.provider?.adapter === 'owned-live-visual');
+  const hasSpeech = runs.some((run) => run.provider?.adapter === 'local-asr');
+  const approvedCount = runs.reduce((total, run) => total + (run.summary?.approved_count || 0), 0);
+  const hasConcepts = (project.concepts || []).length > 0;
+  const isFixture = project.project_id === 'morning-routine';
+  if (isFixture) return '';
+  const steps = [
+    {
+      id: 'analyze-visual', label: hasVisual ? 'Re-analyze footage' : '1 · Analyze footage',
+      hint: 'Shots + keyframes described by the visual model', enabled: true,
+    },
+    {
+      id: 'analyze-speech', label: hasSpeech ? 'Re-transcribe speech' : '2 · Transcribe speech',
+      hint: 'Local Whisper, audio stays on this machine', enabled: true,
+    },
+    {
+      id: 'generate-concepts', label: hasConcepts ? 'Regenerate concepts' : '3 · Propose concepts',
+      hint: approvedCount ? `${approvedCount} approved observations available` : 'Needs approved evidence first',
+      enabled: approvedCount > 0,
+    },
+    {
+      id: 'compile-plan', label: project.plan ? 'Recompile plan' : '4 · Compile edit plan',
+      hint: project.selected_concept_id ? `For ${project.selected_concept_id}` : 'Select a concept first',
+      enabled: Boolean(project.selected_concept_id),
+    },
+    {
+      id: 'render', label: '5 · Render review video', hint: 'Deterministic FFmpeg render',
+      enabled: Boolean(project.plan),
+    },
+    {
+      id: 'exports', label: '6 · Export timelines', hint: 'OTIO + DaVinci XML',
+      enabled: Boolean(project.plan),
+    },
+  ];
   return `
-    <article class="evidence-item ${conflict ? 'has-conflict' : ''}" data-evidence-run="${escapeHtml(runKey)}" data-evidence-id="${escapeHtml(observation.evidence_id)}">
-      <div class="evidence-meta">
-        <span>${Number(observation.start_seconds).toFixed(2)}–${Number(observation.end_seconds).toFixed(2)}s</span>
-        <span>${escapeHtml(observation.clip_id || 'unmapped clip')}</span>
+    <section id="pipeline">
+      <div class="section-header"><div><span class="eyebrow">Pipeline</span><h2>From footage to edit</h2></div><p>Each step is repeatable; analysis results are cached and reused.</p></div>
+      <div class="pipeline-grid">
+        ${steps.map((step) => `
+          <button class="pipeline-step" data-pipeline="${step.id}" ${step.enabled ? '' : 'disabled'}>
+            <strong>${escapeHtml(step.label)}</strong>
+            <span>${escapeHtml(step.hint)}</span>
+          </button>
+        `).join('')}
       </div>
-      <p>${escapeHtml(observation.caption)}</p>
-      ${reviewedCaption}
-      ${conflict ? `<div class="evidence-conflict"><strong>Verified-footage conflict</strong><p>${escapeHtml(conflict.summary)}</p><p><em>Independent observation:</em> ${escapeHtml(conflict.verified_observation)}</p></div>` : ''}
-      ${flags.length ? `<div class="evidence-flags">${flags.map((flag) => `<span>${escapeHtml(flag.replaceAll('_', ' '))}</span>`).join('')}</div>` : ''}
-      ${reviewControls}
-    </article>
-  `;
-}
-
-function reviewOutcomeSection(outcome, runs) {
-  if (!runs.length) return '';
-  const allReviewed = runs.every((run) => (run.summary.pending_review_count ?? run.summary.accepted_range_count) === 0);
-  if (!allReviewed) return '';
-  if (!outcome) {
-    return `
-      <section id="review-outcome">
-        <div class="section-header"><div><span class="eyebrow">Completed review</span><h2>Finalize provider evidence</h2></div></div>
-        <div class="card outcome-empty">
-          <div><h3>All provider ranges have a decision</h3><p>Create the versioned evidence sets and provider scorecard. This does not pick a winner or render a video.</p></div>
-          <button class="primary" data-finalize-reviews>Finalize review outcome</button>
-        </div>
-      </section>
-    `;
-  }
-  const labels = {
-    conflicts_require_resolution: 'Conflicts need resolution',
-    deterministic_rerun_required: 'Deterministic rerun required',
-    provider_selection_required: 'Provider selection required',
-  };
-  const scorecards = outcome.candidate_sets.map((candidate) => {
-    const benchmark = candidate.benchmark || {};
-    const timing = benchmark.end_to_end_seconds == null ? 'not recorded' : `${benchmark.end_to_end_seconds}s`;
-    return `
-      <article class="card scorecard">
-        <div class="scorecard-heading"><div><span class="eyebrow">${escapeHtml(candidate.provider.adapter)}</span><h3>${escapeHtml(providerLabel(candidate))}</h3></div><span>${escapeHtml(candidate.provider.model)}</span></div>
-        <div class="scorecard-metrics">
-          <span><strong>${candidate.review.approved_count}</strong>approved</span>
-          <span><strong>${candidate.review.rejected_count}</strong>rejected</span>
-          <span><strong>${candidate.quality_signals.flagged_approved_count}</strong>risk-flagged</span>
-          <span class="${candidate.quality_signals.material_conflict_count ? 'bad' : ''}"><strong>${candidate.quality_signals.material_conflict_count}</strong>conflicts</span>
-        </div>
-        <p>${benchmark.split_count ?? '—'} ranges · ${timing} end to end · ${candidate.quality_signals.clamped_count} endpoints clamped</p>
-      </article>
-    `;
-  }).join('');
-  const conflicts = outcome.material_conflicts.map((conflict) => `
-    <article class="conflict-row">
-      <div><strong>${escapeHtml(conflict.filename)} · ${Number(conflict.start_seconds).toFixed(1)}–${Number(conflict.end_seconds).toFixed(1)}s</strong><span>${escapeHtml(conflict.summary)}</span></div>
-      <button class="ghost" data-jump-conflict-run="${escapeHtml(conflict.run_key)}" data-jump-conflict-id="${escapeHtml(conflict.evidence_id)}">Review caption</button>
-    </article>
-  `).join('');
-  return `
-    <section id="review-outcome">
-      <div class="section-header">
-        <div><span class="eyebrow">Versioned review outcome · ${escapeHtml(outcome.revision_id)}</span><h2>Provider scorecard</h2></div>
-        <button class="secondary compact" data-finalize-reviews>${outcome.freshness === 'stale' ? 'Refresh scorecard' : 'Rebuild scorecard'}</button>
-      </div>
-      <div class="outcome-status ${outcome.material_conflicts.length ? 'blocked' : ''}">
-        <div><strong>${escapeHtml(labels[outcome.status] || outcome.status)}</strong><p>${escapeHtml(outcome.recommendation.reason)}</p></div>
-        <span>${outcome.planning_eligible ? 'PLANNING ELIGIBLE' : 'NOT PROMOTED'}</span>
-      </div>
-      <div class="scorecard-grid">${scorecards}</div>
-      <div class="comparison-verdict">
-        <strong>No automatic winner</strong>
-        <p>${escapeHtml(outcome.comparison.reason || outcome.recommendation.next_action)}</p>
-      </div>
-      ${conflicts ? `<div class="conflict-list"><h3>Approved captions that conflict with verified footage</h3>${conflicts}</div>` : ''}
     </section>
   `;
 }
 
-function providerComparisonSection(runs) {
-  if (!runs.length) return '';
-  const filenames = [...new Set(runs.flatMap((run) =>
-    run.observations.filter((item) => item.normalization_status === 'accepted').map((item) => item.filename)
-  ).filter(Boolean))].sort();
-  const summaryCards = runs.map((run) => {
-    const summary = run.summary;
-    const pending = summary.pending_review_count ?? summary.accepted_range_count;
-    const candidate = state.activeReviewOutcome?.candidate_sets?.find((item) => item.run_key === run.run_key);
-    const statusText = pending > 0
-      ? 'Review required · never compiled directly into an edit plan'
-      : candidate?.quality_signals.material_conflict_count
-        ? `Review complete · ${candidate.quality_signals.material_conflict_count} verified-footage conflict${candidate.quality_signals.material_conflict_count === 1 ? '' : 's'}`
-        : candidate
-          ? 'Review complete · candidate evidence finalized'
-          : 'Review complete · finalize to produce the scorecard';
-    return `
-      <article class="provider-summary card">
-        <div><span class="eyebrow">${escapeHtml(run.provider.adapter)}</span><h3>${escapeHtml(providerLabel(run))}</h3></div>
-        <span class="model-name">${escapeHtml(run.provider.model)}</span>
-        <div class="provider-metrics">
-          <span><strong>${summary.observation_count}</strong> captions</span>
-          <span><strong>${summary.clamped_count}</strong> clamped</span>
-          <span><strong>${pending}</strong> pending</span>
-        </div>
-        <p>${escapeHtml(statusText)}</p>
-      </article>
-    `;
-  }).join('');
-  const fileComparisons = filenames.map((filename, index) => `
-    <details class="comparison-file" data-comparison-file="${escapeHtml(filename)}" ${index === 0 ? 'open' : ''}>
-      <summary><strong>${escapeHtml(filename)}</strong><span>Compare provider captions</span></summary>
-      <div class="provider-columns">
-        ${runs.map((run) => {
-          const observations = run.observations.filter((item) =>
-            item.filename === filename && item.normalization_status === 'accepted'
-          );
-          return `
-            <div class="provider-column">
-              <h4>${escapeHtml(providerLabel(run))} <span>${observations.length} ranges</span></h4>
-              ${observations.map((item) => evidenceItem(item, run.run_key)).join('') || '<p class="no-evidence">No mapped evidence.</p>'}
-            </div>
-          `;
-        }).join('')}
+function pendingReviewSection() {
+  const pending = state.activeProviderRuns.flatMap((run) =>
+    (run.observations || [])
+      .filter((item) => item.normalization_status === 'accepted' && item.review_status === 'pending')
+      .map((item) => ({ ...item, run_key: run.run_key }))
+  );
+  const approvedCount = state.activeProviderRuns.reduce(
+    (total, run) => total + (run.summary?.approved_count || 0), 0,
+  );
+  if (!pending.length) {
+    return approvedCount ? `
+      <section>
+        <div class="section-header"><div><span class="eyebrow">Evidence</span><h2>All claims settled</h2></div>
+        <p>${approvedCount} observations approved (routine evidence auto-approved by policy).</p></div>
+      </section>` : '';
+  }
+  const items = pending.map((observation) => `
+    <article class="evidence-item">
+      <div class="evidence-meta">
+        <span>${escapeHtml(observation.filename || observation.asset_id)}</span>
+        <span>${Number(observation.start_seconds).toFixed(2)}–${Number(observation.end_seconds).toFixed(2)}s</span>
+        <span>conf ${Number(observation.model_confidence ?? 0).toFixed(2)}</span>
       </div>
-    </details>
+      <p>${escapeHtml(observation.caption)}</p>
+      ${(observation.risk_flags || []).length ? `<div class="evidence-flags">${observation.risk_flags.map((flag) => `<span>${escapeHtml(flag.replaceAll('_', ' '))}</span>`).join('')}</div>` : ''}
+      <div class="review-actions">
+        <button class="ghost approve" data-review-run="${escapeHtml(observation.run_key)}" data-review-id="${escapeHtml(observation.evidence_id)}" data-review-action="approve">Approve</button>
+        <button class="ghost" data-review-run="${escapeHtml(observation.run_key)}" data-review-id="${escapeHtml(observation.evidence_id)}" data-review-action="edit">Edit + approve</button>
+        <button class="ghost reject" data-review-run="${escapeHtml(observation.run_key)}" data-review-id="${escapeHtml(observation.evidence_id)}" data-review-action="reject">Reject</button>
+      </div>
+    </article>
   `).join('');
   return `
-    <section id="provider-comparison">
+    <section id="pending-review">
       <div class="section-header">
-        <div><span class="eyebrow">Review-only evidence</span><h2>Qwen and Gemini comparison</h2></div>
-        <p>Ranges are normalized against original filenames and ffprobe durations.</p>
+        <div><span class="eyebrow">Needs your judgement</span><h2>${pending.length} flagged claim${pending.length === 1 ? '' : 's'}</h2></div>
+        <p>Routine evidence was auto-approved (${approvedCount} so far). Only risky or uncertain claims are listed here; they never enter a plan unapproved.</p>
       </div>
-      <div class="provider-summary-grid">${summaryCards}</div>
-      <div class="comparison-files">${fileComparisons}</div>
+      <div class="pending-grid">${items}</div>
+    </section>
+  `;
+}
+
+function revisionSection(project) {
+  if (!project.plan || project.project_id === 'morning-routine') return '';
+  return `
+    <section id="revision">
+      <div class="section-header"><div><span class="eyebrow">Talk to the editor</span><h2>Revise this edit</h2></div>
+      <p>Revision changes only the plan and render; footage analysis stays cached. Revision ${project.plan.revision || 1} is current.</p></div>
+      <form id="revision-form" class="revision-form">
+        <textarea name="instruction" rows="2" required minlength="3"
+          placeholder="e.g. Shorten the intro, drop the fridge shot, end on the scooter ride…"></textarea>
+        <button type="submit" class="primary">Revise + re-render</button>
+      </form>
     </section>
   `;
 }
@@ -292,42 +233,29 @@ function renderProject() {
   $('#project-status').textContent = project.status.replaceAll('_', ' ');
   renderProjectList();
 
-  const visualGood = project.analysis.visual === 'reviewed' || project.analysis.visual === 'completed';
+  const visualGood = ['reviewed', 'completed'].includes(project.analysis.visual);
   const speechGood = project.analysis.speech === 'completed';
   const renderUrl = project.outputs?.render?.url;
   const media = project.inventory?.assets || [];
   const concepts = project.concepts || [];
-  const selectedPlanReady = project.selected_concept_id === project.plan?.concept_id;
-  const poster = media.find((asset) => asset.asset_id === 'img_0997')?.thumbnail_url
-    || media.find((asset) => asset.thumbnail_url)?.thumbnail_url;
-
-  const analysisCallout = concepts.length ? '' : `
-    <div class="callout">
-      <h3>Semantic analysis is still required</h3>
-      <p>${escapeHtml(project.analysis.warning)} The technical inventory below is real and reusable, but this application will not fabricate story concepts until a visual or speech adapter supplies grounded observations.</p>
-    </div>
-  `;
+  const poster = media.find((asset) => asset.thumbnail_url)?.thumbnail_url;
 
   const conceptSection = concepts.length ? `
     <section>
-      <div class="section-header"><div><span class="eyebrow">Creative direction</span><h2>Grounded concepts</h2></div><p>Selecting a concept does not silently invent a plan.</p></div>
+      <div class="section-header"><div><span class="eyebrow">Creative direction</span><h2>Grounded concepts</h2></div><p>Every beat cites real assets and timecodes; gaps become missing-shot advice.</p></div>
       <div class="concept-grid">${concepts.map((concept) => conceptCard(concept, project)).join('')}</div>
     </section>
   ` : '';
 
   const planSection = project.plan ? `
     <section>
-      <div class="section-header"><div><span class="eyebrow">Deterministic execution</span><h2>Approved edit plan</h2></div></div>
+      <div class="section-header"><div><span class="eyebrow">Deterministic execution</span><h2>Edit plan · revision ${project.plan.revision || 1}</h2></div></div>
       <div class="card plan-card">
         <div>
-          <span class="eyebrow">${escapeHtml(project.plan_summary?.format || '')}</span>
-          <h3>${project.plan_summary?.duration_seconds}s · ${project.plan_summary?.tracks?.video || 0} video cuts · ${project.plan_summary?.tracks?.title || 0} title beats</h3>
-          <p>${selectedPlanReady ? 'The selected concept matches the compiled plan.' : 'Select the chronological concept to render the existing compiled plan.'}</p>
+          <span class="eyebrow">${escapeHtml(project.plan_summary?.format || `${project.plan.project.width}x${project.plan.project.height} @ ${project.plan.project.fps}fps`)}</span>
+          <h3>${(project.plan_summary?.duration_seconds ?? project.plan.project.duration_seconds).toFixed ? (project.plan_summary?.duration_seconds ?? project.plan.project.duration_seconds).toFixed(1) : project.plan.project.duration_seconds}s · ${(project.plan.tracks.find((t) => t.kind === 'video')?.events || []).length} cuts</h3>
+          <p>Concept: ${escapeHtml(project.plan.concept_id)}</p>
           <div class="downloads">${outputLinks(project)}</div>
-        </div>
-        <div class="plan-actions">
-          <button class="secondary" id="export-button" ${selectedPlanReady ? '' : 'disabled'}>Rebuild exports</button>
-          <button class="primary" id="render-button" ${selectedPlanReady ? '' : 'disabled'}>Render video</button>
         </div>
       </div>
     </section>
@@ -351,101 +279,83 @@ function renderProject() {
         ${renderUrl ? `<video controls preload="metadata" ${poster ? `poster="${escapeHtml(poster)}"` : ''} src="${escapeHtml(renderUrl)}"></video>` : '<div class="video-placeholder">No rendered review yet</div>'}
       </article>
     </div>
-    ${analysisCallout}
-    ${reviewOutcomeSection(state.activeReviewOutcome, state.activeProviderRuns)}
-    ${providerComparisonSection(state.activeProviderRuns)}
+    ${pipelineSection(project)}
+    ${pendingReviewSection()}
+    ${conceptSection}
+    ${planSection}
+    ${revisionSection(project)}
     <section>
       <div class="section-header"><div><span class="eyebrow">Source inventory</span><h2>Recorded media</h2></div><p>Files remain linked to their originals.</p></div>
       <div class="media-grid">${media.map(assetCard).join('')}</div>
     </section>
-    ${conceptSection}
-    ${planSection}
   `;
 
   document.querySelectorAll('[data-select-concept]').forEach((button) => {
     button.addEventListener('click', () => selectConcept(button.dataset.selectConcept));
   });
-  $('#render-button')?.addEventListener('click', () => startJob('render'));
-  $('#export-button')?.addEventListener('click', () => startJob('exports'));
-  bindReviewControls();
-}
-
-function bindReviewControls() {
+  document.querySelectorAll('[data-pipeline]').forEach((button) => {
+    button.addEventListener('click', () => runPipelineStep(button.dataset.pipeline, button));
+  });
   document.querySelectorAll('[data-review-action]').forEach((button) => {
     button.addEventListener('click', () => reviewEvidence(button));
   });
-  document.querySelectorAll('[data-finalize-reviews]').forEach((button) => {
-    button.addEventListener('click', () => finalizeReviews(button));
-  });
-  document.querySelectorAll('[data-jump-conflict-run]').forEach((button) => {
-    button.addEventListener('click', () => jumpToEvidence(
-      button.dataset.jumpConflictRun,
-      button.dataset.jumpConflictId,
-    ));
-  });
+  $('#revision-form')?.addEventListener('submit', submitRevision);
 }
 
-function jumpToEvidence(runKey, evidenceId) {
-  const evidence = [...document.querySelectorAll('.evidence-item')].find((item) =>
-    item.dataset.evidenceRun === runKey && item.dataset.evidenceId === evidenceId
-  );
-  const details = evidence?.closest('.comparison-file');
-  if (details) details.open = true;
-  evidence?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-}
+const PIPELINE_CALLS = {
+  'analyze-visual': { path: 'analysis/visual', job: true, message: 'Visual analysis running (this takes a few minutes)…' },
+  'analyze-speech': { path: 'analysis/speech', job: true, message: 'Transcribing locally…' },
+  'generate-concepts': { path: 'concepts', job: true, message: 'Proposing grounded concepts…' },
+  'compile-plan': { path: 'plan', job: false, message: 'Compiling the edit plan…' },
+  render: { path: 'render', job: true, message: 'Render queued…' },
+  exports: { path: 'exports', job: true, message: 'Editable export queued…' },
+};
 
-function captureReviewPosition(button) {
-  const evidence = button.closest('.evidence-item');
-  return {
-    scrollY: window.scrollY,
-    anchorTop: evidence?.getBoundingClientRect().top ?? null,
-    runKey: evidence?.dataset.evidenceRun,
-    evidenceId: evidence?.dataset.evidenceId,
-    openFiles: [...document.querySelectorAll('.comparison-file[open]')]
-      .map((item) => item.dataset.comparisonFile),
-  };
-}
-
-function restoreReviewPosition(snapshot) {
-  const details = [...document.querySelectorAll('.comparison-file')];
-  details.forEach((item) => {
-    item.open = snapshot.openFiles.includes(item.dataset.comparisonFile);
-  });
-  const restore = () => {
-    const evidence = [...document.querySelectorAll('.evidence-item')].find((item) =>
-      item.dataset.evidenceRun === snapshot.runKey
-      && item.dataset.evidenceId === snapshot.evidenceId
-    );
-    if (evidence && snapshot.anchorTop !== null) {
-      window.scrollBy(0, evidence.getBoundingClientRect().top - snapshot.anchorTop);
-    } else {
-      window.scrollTo(0, snapshot.scrollY);
-    }
-  };
-  restore();
-  window.requestAnimationFrame(restore);
-}
-
-async function loadProject(projectId) {
-  state.activeProjectId = projectId;
-  state.activeProviderRuns = [];
-  state.activeReviewOutcome = null;
-  renderProjectList();
-  $('#project-view').innerHTML = '<div class="empty-state">Loading project…</div>';
+async function runPipelineStep(stepId, button) {
+  const call = PIPELINE_CALLS[stepId];
+  if (!call) return;
+  button.disabled = true;
   try {
-    state.activeProject = await api(`/api/projects/${projectId}`);
-    state.activeProviderRuns = await Promise.all(
-      (state.activeProject.provider_runs || []).map(async (run) => ({
-        ...(await api(run.detail_url)),
-        run_key: run.run_key,
-      }))
-    );
-    if (state.activeProject.review_outcome?.detail_url) {
-      state.activeReviewOutcome = await api(state.activeProject.review_outcome.detail_url);
+    notice(call.message);
+    const result = await api(`/api/projects/${state.activeProjectId}/${call.path}`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    if (call.job) {
+      await pollJob(result.job_id);
+    } else {
+      notice('Edit plan compiled and validated.');
+      await loadProject(state.activeProjectId);
     }
-    renderProject();
   } catch (error) {
     notice(error.message, true);
+    button.disabled = false;
+  }
+}
+
+async function submitRevision(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const instruction = new FormData(form).get('instruction')?.toString().trim();
+  if (!instruction) return;
+  const submit = form.querySelector('[type="submit"]');
+  submit.disabled = true;
+  submit.textContent = 'Revising…';
+  try {
+    const job = await api(`/api/projects/${state.activeProjectId}/plan/revise`, {
+      method: 'POST',
+      body: JSON.stringify({ instruction }),
+    });
+    const finished = await pollJob(job.job_id, { reload: false });
+    notice(finished.result?.revision_note || 'Plan revised.');
+    const renderJob = await api(`/api/projects/${state.activeProjectId}/render`, { method: 'POST' });
+    notice('Plan revised. Re-rendering…');
+    await pollJob(renderJob.job_id);
+  } catch (error) {
+    notice(error.message, true);
+  } finally {
+    submit.disabled = false;
+    submit.textContent = 'Revise + re-render';
   }
 }
 
@@ -459,68 +369,18 @@ async function reviewEvidence(button) {
   let action = requestedAction;
   let caption = null;
   if (requestedAction === 'edit') {
-    caption = window.prompt(
-      'Edit the factual observation before approval:',
-      observation.reviewed_caption || observation.caption,
-    );
+    caption = window.prompt('Edit the factual observation before approval:', observation.caption);
     if (caption === null) return;
     action = 'approve';
   }
-  const position = captureReviewPosition(button);
   button.disabled = true;
   try {
-    let finalizationWarning = null;
-    const updatedRun = await api(`/api/projects/${state.activeProjectId}/analysis/runs/${runKey}/reviews`, {
+    await api(`/api/projects/${state.activeProjectId}/analysis/runs/${runKey}/reviews`, {
       method: 'POST',
       body: JSON.stringify({ evidence_id: evidenceId, action, caption }),
     });
-    state.activeProviderRuns = state.activeProviderRuns.map((item) =>
-      item.run_key === runKey ? { ...updatedRun, run_key: runKey } : item
-    );
-    if (state.activeProviderRuns.every((item) => item.summary.pending_review_count === 0)) {
-      try {
-        state.activeReviewOutcome = await api(`/api/projects/${state.activeProjectId}/analysis/finalized`, {
-          method: 'POST',
-          body: JSON.stringify({ run_keys: state.activeProviderRuns.map((item) => item.run_key) }),
-        });
-      } catch (finalizationError) {
-        state.activeReviewOutcome = null;
-        finalizationWarning = finalizationError.message;
-      }
-    }
-    const outcome = $('#review-outcome');
-    if (outcome) outcome.outerHTML = reviewOutcomeSection(state.activeReviewOutcome, state.activeProviderRuns);
-    const comparison = $('#provider-comparison');
-    if (comparison) {
-      comparison.outerHTML = providerComparisonSection(state.activeProviderRuns);
-      bindReviewControls();
-      restoreReviewPosition(position);
-    }
-    notice(
-      finalizationWarning
-        ? `Decision saved, but scorecard refresh failed: ${finalizationWarning}`
-        : action === 'approve' ? 'Evidence approved.' : 'Evidence rejected.',
-      Boolean(finalizationWarning),
-    );
-  } catch (error) {
-    notice(error.message, true);
-    button.disabled = false;
-  }
-}
-
-async function finalizeReviews(button) {
-  button.disabled = true;
-  try {
-    state.activeReviewOutcome = await api(`/api/projects/${state.activeProjectId}/analysis/finalized`, {
-      method: 'POST',
-      body: JSON.stringify({ run_keys: state.activeProviderRuns.map((item) => item.run_key) }),
-    });
-    const outcome = $('#review-outcome');
-    if (outcome) outcome.outerHTML = reviewOutcomeSection(state.activeReviewOutcome, state.activeProviderRuns);
-    const comparison = $('#provider-comparison');
-    if (comparison) comparison.outerHTML = providerComparisonSection(state.activeProviderRuns);
-    bindReviewControls();
-    notice('Versioned evidence sets and provider scorecard are current.');
+    notice(action === 'approve' ? 'Claim approved for planning.' : 'Claim rejected.');
+    await loadProject(state.activeProjectId);
   } catch (error) {
     notice(error.message, true);
     button.disabled = false;
@@ -529,37 +389,49 @@ async function finalizeReviews(button) {
 
 async function selectConcept(conceptId) {
   try {
-    const result = await api(`/api/projects/${state.activeProjectId}/selection`, {
+    await api(`/api/projects/${state.activeProjectId}/selection`, {
       method: 'POST',
       body: JSON.stringify({ concept_id: conceptId }),
     });
-    notice(result.plan_available ? 'Concept selected. Its deterministic plan is ready.' : 'Concept selected, but its edit plan has not been compiled yet.');
+    notice('Concept selected. Compile the edit plan when ready.');
     await loadProject(state.activeProjectId);
   } catch (error) {
     notice(error.message, true);
   }
 }
 
-async function startJob(kind) {
-  try {
-    notice(kind === 'render' ? 'Render queued…' : 'Editable export queued…');
-    const job = await api(`/api/projects/${state.activeProjectId}/${kind}`, { method: 'POST' });
-    await pollJob(job.job_id);
-  } catch (error) {
-    notice(error.message, true);
-  }
-}
-
-async function pollJob(jobId) {
+async function pollJob(jobId, options = {}) {
+  const { reload = true } = options;
   for (;;) {
     const job = await api(`/api/jobs/${jobId}`);
     if (job.status === 'completed') {
-      notice(job.kind === 'render' ? 'Render completed.' : 'Editable exports rebuilt.');
-      await loadProject(job.project_id);
-      return;
+      if (reload) {
+        notice('Done.');
+        await loadProject(job.project_id);
+      }
+      return job;
     }
     if (job.status === 'failed') throw new Error(job.error || 'Job failed');
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+  }
+}
+
+async function loadProject(projectId) {
+  state.activeProjectId = projectId;
+  state.activeProviderRuns = [];
+  renderProjectList();
+  $('#project-view').innerHTML = '<div class="empty-state">Loading project…</div>';
+  try {
+    state.activeProject = await api(`/api/projects/${projectId}`);
+    state.activeProviderRuns = await Promise.all(
+      (state.activeProject.provider_runs || []).map(async (run) => ({
+        ...(await api(run.detail_url)),
+        run_key: run.run_key,
+      }))
+    );
+    renderProject();
+  } catch (error) {
+    notice(error.message, true);
   }
 }
 
@@ -575,7 +447,7 @@ async function createProject(event) {
     $('#new-project-dialog').close();
     await refreshProjects();
     await loadProject(project.project_id);
-    notice('Technical inventory completed. Semantic adapters are the next gate.');
+    notice('Folder indexed. Run "Analyze footage" to start the pipeline.');
   } catch (error) {
     notice(error.message, true);
   } finally {
@@ -596,8 +468,9 @@ async function initialize() {
     state.status = status;
     state.projects = projects.projects;
     renderCapabilities();
-    const initial = state.projects[0];
-    if (initial) await loadProject(initial.project_id);
+    const preferred = state.projects.find((project) => project.project_id !== 'morning-routine')
+      || state.projects[0];
+    if (preferred) await loadProject(preferred.project_id);
   } catch (error) {
     notice(error.message, true);
   }

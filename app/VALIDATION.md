@@ -67,16 +67,24 @@ The app-generated editable copies independently parse as:
 - OTIO: 31.000 seconds, two tracks, six markers
 - DaVinci XMEML: 930 frames, nine video clips, nine audio clips
 
+## Revision live check (2026-08-04)
+
+Instruction "drop the sideways wake-up shot, tighten to ~25s, end on the
+scooter" against the compiled 36.2 s plan produced revision 2: the sideways
+range was removed (the upright tail of the same clip was kept), a duplicate
+cut was dropped, duration became 31.2 s, the last cut is the scooter exit,
+and the review video re-rendered. The prior plan is retained under
+`plan/revisions/` with an instruction log.
+
 ## Deliberately incomplete
 
-- The browser UI has no controls yet for the new pipeline endpoints
-  (visual/speech analysis, concept generation, plan compilation); the walking
-  skeleton is currently API-driven.
 - Sideways-stored clips without rotation metadata render unrotated; the
   compiler does not yet set `rotation_degrees` automatically.
 - DaVinci Resolve import of the generated XMEML is unverified (Resolve is not
   installed; the installer download is registration-gated and user-owned).
-- Prompt-driven plan revision is not implemented yet.
-- The legacy benchmark scorecard still intentionally blocks automatic
-  promotion of its two verified-footage conflicts; this does not affect new
-  projects, which use the auto-approval policy instead.
+- Revision re-renders the video but does not automatically rebuild the
+  OTIO/XMEML exports; use the export step after revising.
+- Revision duration targets are honored approximately (asked ~25 s, got
+  31.2 s).
+- The legacy benchmark scorecard data remains readable through the API for
+  the archived morning-routine fixture but is no longer shown in the UI.

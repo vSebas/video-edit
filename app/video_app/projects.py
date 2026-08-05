@@ -27,6 +27,7 @@ from .planning import (
     PlanningError,
     compile_edit_plan,
     generate_concepts,
+    revise_plan,
     validate_edit_plan,
 )
 from .providers import ChatClient, ProviderError, resolve_provider
@@ -638,6 +639,62 @@ class ProjectService:
             },
         )
         return plan
+
+    def revise_plan(
+        self,
+        project_id: str,
+        instruction: str,
+        provider: str = "qwen",
+        model: str | None = None,
+    ) -> dict:
+        """Revise the compiled plan from a natural-language instruction
+        without re-running media analysis. Prior revisions are retained."""
+        if project_id == FIXTURE_ID:
+            raise ProjectError("The benchmark fixture plan is immutable")
+        project = self.get_project(project_id)
+        plan_dir = self.settings.runtime / project_id / "plan"
+        plan_path = plan_dir / "edit-plan.json"
+        if not plan_path.is_file():
+            raise ProjectError("Compile an edit plan before revising it")
+        plan = load_json(plan_path)
+        evidence = self.approved_evidence(project_id)
+        try:
+            client = ChatClient(resolve_provider(provider, model))
+            new_plan, note = revise_plan(client, project, plan, evidence, instruction)
+            validate_edit_plan(
+                new_plan,
+                self.settings.poc_root / "schemas" / "edit-plan.schema.json",
+                project,
+            )
+        except (ProviderError, PlanningError) as exc:
+            raise ProjectError(f"Plan revision failed: {exc}") from exc
+
+        previous_revision = int(plan.get("revision", 1))
+        write_json(
+            plan_dir / "revisions" / f"edit-plan.rev{previous_revision:03d}.json",
+            plan,
+        )
+        write_json(plan_path, new_plan)
+        log_path = plan_dir / "revisions" / "revision-log.json"
+        log = load_json(log_path) if log_path.is_file() else {"entries": []}
+        log["entries"].append(
+            {
+                "revision": new_plan["revision"],
+                "instruction": instruction.strip(),
+                "note": note,
+                "revised_at": new_plan["generated_at"],
+                "provider": provider,
+            }
+        )
+        write_json(log_path, log)
+
+        path = self.settings.runtime / project_id / "project.json"
+        stored = load_json(path)
+        stored["updated_at"] = utc_now()
+        stored["plan"] = new_plan
+        stored["status"] = "plan_ready"
+        write_json(path, stored)
+        return {"plan": new_plan, "revision_note": note}
 
     @staticmethod
     def _validate_schema(document: dict, schema_path: Path, label: str) -> None:

@@ -234,82 +234,111 @@ def _sanitize_concepts(document: dict, project: dict) -> None:
     document["concepts"] = valid_concepts
 
 
-def compile_edit_plan(
-    project: dict,
-    concepts_document: dict,
-    concept_id: str,
-    width: int = DEFAULT_WIDTH,
-    height: int = DEFAULT_HEIGHT,
-    fps: int = DEFAULT_FPS,
-) -> dict:
-    """Deterministically compile a sanitized concept into edit-plan.v1 with
-    linked video/audio events and a hook title."""
-    concept = next(
-        (
-            item
-            for item in concepts_document.get("concepts", [])
-            if item["concept_id"] == concept_id
-        ),
-        None,
-    )
-    if concept is None:
-        raise PlanningError(f"Unknown concept: {concept_id}")
+def sanitize_spans(project: dict, items: list) -> list[dict]:
+    """Deterministic grounding for cut lists from any source: real assets,
+    clamped ranges, minimum length. Invalid entries are dropped."""
     assets = {
         asset["asset_id"]: asset
         for asset in project.get("inventory", {}).get("assets", [])
     }
+    spans = []
+    for item in items:
+        asset = assets.get(item.get("asset_id")) if isinstance(item, dict) else None
+        if asset is None:
+            continue
+        duration = float(asset.get("duration_seconds") or 0.0)
+        try:
+            start = max(0.0, float(item["source_start_seconds"]))
+            end = float(item["source_end_seconds"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if duration:
+            end = min(end, duration)
+        if end - start < MIN_EVENT_SECONDS:
+            continue
+        try:
+            confidence = min(max(float(item.get("confidence", 0.5)), 0.0), 1.0)
+        except (TypeError, ValueError):
+            confidence = 0.5
+        slug = re.sub(
+            r"[^a-z0-9_]+", "_", str(item.get("label", "")).lower()
+        ).strip("_") or f"cut_{len(spans) + 1}"
+        spans.append(
+            {
+                "label": slug,
+                "asset_id": asset["asset_id"],
+                "source_start_seconds": round(start, 3),
+                "source_end_seconds": round(end, 3),
+                "intent": str(item.get("intent", "")).strip() or "Unlabeled cut.",
+                "observed_content": str(item.get("observed_content", "")).strip()
+                or "Unlabeled evidence range.",
+                "confidence": confidence,
+            }
+        )
+    return spans
 
+
+def build_plan(
+    project: dict,
+    spans: list[dict],
+    *,
+    concept_id: str,
+    benchmark_id: str,
+    hook_text: str,
+    width: int = DEFAULT_WIDTH,
+    height: int = DEFAULT_HEIGHT,
+    fps: int = DEFAULT_FPS,
+    revision: int = 1,
+) -> dict:
+    """Deterministically assemble edit-plan.v1 from grounded spans with
+    linked video/audio events and a hook title."""
+    if not spans:
+        raise PlanningError("No usable evidence ranges to build a plan from")
     video_events = []
     audio_events = []
     timeline = 0.0
-    for beat in concept["structure"]:
-        for span in beat["evidence"]:
-            asset = assets[span["asset_id"]]
-            start = span["start_seconds"]
-            end = span["end_seconds"]
-            duration = round(end - start, 3)
-            index = len(video_events) + 1
-            base = {
-                "asset_id": span["asset_id"],
-                "source_start_seconds": start,
-                "source_end_seconds": end,
-                "timeline_start_seconds": round(timeline, 3),
-                "duration_seconds": duration,
-                "playback_rate": 1.0,
-                "intent": beat["purpose"],
-                "observed_content": span["observed_content"],
-                "confidence": span["confidence"],
-                "transition_out": {"type": "cut", "duration_seconds": 0.0},
-                "text": None,
+    for span in spans:
+        duration = round(
+            span["source_end_seconds"] - span["source_start_seconds"], 3
+        )
+        index = len(video_events) + 1
+        base = {
+            "asset_id": span["asset_id"],
+            "source_start_seconds": span["source_start_seconds"],
+            "source_end_seconds": span["source_end_seconds"],
+            "timeline_start_seconds": round(timeline, 3),
+            "duration_seconds": duration,
+            "playback_rate": 1.0,
+            "intent": span["intent"],
+            "observed_content": span["observed_content"],
+            "confidence": span["confidence"],
+            "transition_out": {"type": "cut", "duration_seconds": 0.0},
+            "text": None,
+        }
+        video_events.append(
+            {
+                "event_id": f"v{index:02d}_{span['label']}"[:64],
+                **base,
+                "reframe": {
+                    "mode": "fit",
+                    "center_x": 0.5,
+                    "center_y": 0.5,
+                    "scale": 1.0,
+                    "rotation_degrees": 0,
+                    "manual_review": False,
+                },
+                "volume_db": None,
             }
-            video_events.append(
-                {
-                    "event_id": f"v{index:02d}_{beat['beat_id']}"[:64],
-                    **base,
-                    "reframe": {
-                        "mode": "fit",
-                        "center_x": 0.5,
-                        "center_y": 0.5,
-                        "scale": 1.0,
-                        "rotation_degrees": 0,
-                        "manual_review": False,
-                    },
-                    "volume_db": None,
-                }
-            )
-            audio_events.append(
-                {
-                    "event_id": f"a{index:02d}_{beat['beat_id']}"[:64],
-                    **base,
-                    "volume_db": 0.0,
-                }
-            )
-            timeline = round(timeline + duration, 3)
+        )
+        audio_events.append(
+            {
+                "event_id": f"a{index:02d}_{span['label']}"[:64],
+                **base,
+                "volume_db": 0.0,
+            }
+        )
+        timeline = round(timeline + duration, 3)
 
-    if not video_events:
-        raise PlanningError("The selected concept has no usable evidence ranges")
-
-    hook_text = str(concept.get("title") or "").strip()[:70] or "Daily vlog"
     title_events = [
         {
             "event_id": "t01_hook",
@@ -322,7 +351,7 @@ def compile_edit_plan(
             "intent": "Open with the concept title as the text hook.",
             "observed_content": None,
             "confidence": 1.0,
-            "text": hook_text,
+            "text": hook_text.strip()[:70] or "Daily vlog",
             "volume_db": None,
         }
     ]
@@ -330,9 +359,9 @@ def compile_edit_plan(
     return {
         "schema_version": "edit-plan.v1",
         "generated_at": utc_now(),
-        "benchmark_id": f"{project['project_id']}-auto-{PROMPT_VERSION}",
+        "benchmark_id": benchmark_id,
         "concept_id": concept_id,
-        "revision": 1,
+        "revision": revision,
         "project": {
             "width": width,
             "height": height,
@@ -346,6 +375,156 @@ def compile_edit_plan(
             {"track_id": "t1", "kind": "title", "events": title_events},
         ],
     }
+
+
+def compile_edit_plan(
+    project: dict,
+    concepts_document: dict,
+    concept_id: str,
+    width: int = DEFAULT_WIDTH,
+    height: int = DEFAULT_HEIGHT,
+    fps: int = DEFAULT_FPS,
+) -> dict:
+    """Deterministically compile a sanitized concept into edit-plan.v1."""
+    concept = next(
+        (
+            item
+            for item in concepts_document.get("concepts", [])
+            if item["concept_id"] == concept_id
+        ),
+        None,
+    )
+    if concept is None:
+        raise PlanningError(f"Unknown concept: {concept_id}")
+
+    spans = []
+    for beat in concept["structure"]:
+        for evidence in beat["evidence"]:
+            spans.append(
+                {
+                    "label": beat["beat_id"],
+                    "asset_id": evidence["asset_id"],
+                    "source_start_seconds": evidence["start_seconds"],
+                    "source_end_seconds": evidence["end_seconds"],
+                    "intent": beat["purpose"],
+                    "observed_content": evidence["observed_content"],
+                    "confidence": evidence["confidence"],
+                }
+            )
+    try:
+        return build_plan(
+            project,
+            spans,
+            concept_id=concept_id,
+            benchmark_id=f"{project['project_id']}-auto-{PROMPT_VERSION}",
+            hook_text=str(concept.get("title") or ""),
+            width=width,
+            height=height,
+            fps=fps,
+        )
+    except PlanningError as exc:
+        raise PlanningError(f"The selected concept is not compilable: {exc}") from exc
+
+
+REVISION_SYSTEM_PROMPT = (
+    "You are the editor of a grounded video editing assistant. You revise an "
+    "existing cut list according to the user's instruction. Rules:\n"
+    "- Only use source ranges that appear in the supplied evidence or in the "
+    "current cut list; you may trim, split, drop, reorder, or extend within "
+    "an asset's duration.\n"
+    "- Never invent content that is not in the evidence.\n"
+    "- Keep the edit coherent: preserve cuts the instruction does not touch.\n"
+    "- Answer with a single JSON object only."
+)
+
+
+def revise_plan(
+    client: ChatClient,
+    project: dict,
+    plan: dict,
+    evidence: list[dict],
+    instruction: str,
+) -> tuple[dict, str]:
+    """Revise the current plan per a natural-language instruction, keeping
+    media analysis untouched. Returns (new plan, revision note)."""
+    instruction = instruction.strip()
+    if not instruction:
+        raise PlanningError("A revision instruction is required")
+    video_events = next(
+        track["events"] for track in plan["tracks"] if track["kind"] == "video"
+    )
+    title_events = next(
+        (track["events"] for track in plan["tracks"] if track["kind"] == "title"),
+        [],
+    )
+    current_title = title_events[0]["text"] if title_events else ""
+    current_lines = "\n".join(
+        f"{index}. {event['asset_id']} "
+        f"[{event['source_start_seconds']:.2f}-{event['source_end_seconds']:.2f}] "
+        f"intent: {event['intent']}"
+        for index, event in enumerate(video_events, start=1)
+    )
+    pack = evidence_pack(project, evidence)
+    request = f"""Current cut list (timeline order):
+{current_lines}
+
+Current title text: {current_title!r}
+
+{pack}
+
+Revision instruction from the user: {instruction}
+
+Respond with JSON:
+{{
+  "video_events": [
+    {{
+      "label": "<short slug>",
+      "asset_id": "<existing asset id>",
+      "source_start_seconds": <number>,
+      "source_end_seconds": <number>,
+      "intent": "<why this cut is here>",
+      "observed_content": "<what the evidence says happens here>",
+      "confidence": <0.0-1.0>
+    }}
+  ],
+  "title_text": "<updated on-screen hook title, or the current one>",
+  "revision_note": "<one sentence describing exactly what you changed>"
+}}
+Return the FULL revised cut list in timeline order, not only the changed
+events. Every range must stay at least {MIN_EVENT_SECONDS}s long."""
+
+    response = client.chat(
+        [
+            {"role": "system", "content": REVISION_SYSTEM_PROMPT},
+            {"role": "user", "content": request},
+        ],
+        json_object=True,
+        temperature=0.3,
+        max_tokens=6000,
+    )
+    try:
+        parsed = parse_json_content(response["content"])
+    except json.JSONDecodeError as exc:
+        raise PlanningError(f"Revision response was not valid JSON: {exc}") from exc
+
+    spans = sanitize_spans(project, parsed.get("video_events") or [])
+    if not spans:
+        raise PlanningError(
+            "The revision produced no valid cuts; the plan was left unchanged"
+        )
+    new_plan = build_plan(
+        project,
+        spans,
+        concept_id=plan["concept_id"],
+        benchmark_id=plan["benchmark_id"],
+        hook_text=str(parsed.get("title_text") or current_title),
+        width=plan["project"]["width"],
+        height=plan["project"]["height"],
+        fps=plan["project"]["fps"],
+        revision=int(plan.get("revision", 1)) + 1,
+    )
+    note = str(parsed.get("revision_note", "")).strip() or "Plan revised."
+    return new_plan, note
 
 
 def validate_edit_plan(plan: dict, schema_path: Path, project: dict) -> None:

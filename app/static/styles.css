@@ -275,3 +275,67 @@ textarea { resize: vertical; }
   .concept-grid { grid-template-columns: 1fr; }
   .concept-card { min-height: auto; }
 }
+
+/* Pipeline action bar */
+.pipeline-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+.pipeline-step {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  color: var(--text);
+  cursor: pointer;
+}
+.pipeline-step:hover:not(:disabled) { border-color: var(--accent); }
+.pipeline-step:disabled { opacity: 0.45; cursor: not-allowed; }
+.pipeline-step strong { font-size: 13px; }
+.pipeline-step span { font-size: 11px; color: var(--muted); }
+
+/* Pending flagged-claim review */
+.pending-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 12px;
+}
+
+/* Revision chat */
+.revision-form {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.revision-form textarea {
+  flex: 1;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 12px;
+  font: inherit;
+  resize: vertical;
+}
+.revision-form textarea:focus { outline: none; border-color: var(--accent); }
+
+/* Missing-shot advice */
+.missing-shot { margin: 6px 0; font-size: 12px; color: var(--muted); }
+.missing-shot .priority {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  border: 1px solid var(--line);
+}
+.missing-shot .priority.required { color: var(--danger); border-color: var(--danger); }
+.missing-shot .priority.recommended { color: var(--amber); border-color: var(--amber); }
+.missing-shot .priority.optional { color: var(--muted); }
+.concept-card details summary { cursor: pointer; font-size: 12px; color: var(--blue); margin: 6px 0; }

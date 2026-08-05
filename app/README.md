@@ -63,6 +63,16 @@ proposal and editable exports without OpenStoryline:
    deterministic compilation into a schema-validated `edit-plan.v1`.
 6. `POST /api/projects/{id}/render` and `POST /api/projects/{id}/exports` —
    review MP4 plus OTIO and DaVinci-compatible XMEML from the same plan.
+7. `POST /api/projects/{id}/plan/revise` — natural-language revision
+   ("shorten the intro", "end on the scooter"); only the plan and render are
+   rebuilt, media analysis stays cached, and prior plan revisions are kept
+   under `plan/revisions/`.
+
+The browser workbench exposes every step: a pipeline action bar, a
+flagged-claims review panel (routine evidence is auto-approved), concept
+cards with missing-shot advice, and a "Revise this edit" box on compiled
+plans. The legacy Qwen/Gemini benchmark comparison and scorecard UI was
+removed with the daily-vlog pivot.
 
 Provider credentials come from the ignored root `.env`
 (`DASHSCOPE_API_KEY`, `GEMINI_API_KEY`); they are never written into
