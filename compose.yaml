@@ -8,20 +8,22 @@ services:
       dockerfile: Dockerfile
     init: true
     user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
-    working_dir: /workspace/video-editing/app
+    # The workspace is mounted at its host path so that exported timelines
+    # reference media locations that DaVinci Resolve can open directly.
+    working_dir: ${PWD}/app
     environment:
       HOME: /tmp
       PYTHONUNBUFFERED: "1"
-      VIDEO_EDITING_ROOT: /workspace/video-editing
-      VIDEO_EDITING_RUNTIME: /workspace/video-editing/runtime/projects
-      VIDEO_EDITING_POC_ROOT: /workspace/video-editing/poc-morning-routine
-      VIDEO_EDITING_SEMANTIC_SOURCE_ROOT: /workspace/video-editing/runtime/openstoryline
-      HF_HOME: /workspace/video-editing/runtime/model-cache
+      VIDEO_EDITING_ROOT: ${PWD}
+      VIDEO_EDITING_RUNTIME: ${PWD}/runtime/projects
+      VIDEO_EDITING_POC_ROOT: ${PWD}/poc-morning-routine
+      VIDEO_EDITING_SEMANTIC_SOURCE_ROOT: ${PWD}/runtime/openstoryline
+      HF_HOME: ${PWD}/runtime/model-cache
       DASHSCOPE_API_KEY: "${DASHSCOPE_API_KEY:-}"
       DASHSCOPE_BASE_URL: "${DASHSCOPE_BASE_URL:-}"
       GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
     volumes:
-      - ./:/workspace/video-editing
+      - ./:${PWD}
     ports:
       - "127.0.0.1:${VIDEO_EDITING_APP_PORT:-8787}:8787"
     command: ["uvicorn", "video_app.main:app", "--host", "0.0.0.0", "--port", "8787"]

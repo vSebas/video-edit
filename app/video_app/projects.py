@@ -920,7 +920,7 @@ class ProjectService:
             "path": str(output),
         }
 
-    def prepare_exports(self, project_id: str) -> dict:
+    def prepare_exports(self, project_id: str, include_proxies: bool = False) -> dict:
         project = self.get_project(project_id)
         if not project.get("plan"):
             raise ProjectError("This project does not have a compiled editable timeline")
@@ -969,10 +969,75 @@ class ProjectService:
         if result.returncode:
             detail = (result.stderr or result.stdout).strip()
             raise ProjectError(f"Timeline export failed: {detail[-1000:]}")
-        return {
+        outputs = {
             kind: f"/api/projects/{project_id}/outputs/{kind}"
             for kind in ("otio", "xmeml")
         }
+        if include_proxies:
+            self._build_resolve_proxies(project_id)
+            outputs["xmeml_proxies"] = (
+                f"/api/projects/{project_id}/outputs/xmeml_proxies"
+            )
+        return outputs
+
+    def _build_resolve_proxies(self, project_id: str) -> None:
+        """DNxHR LB proxies plus a proxy-referencing XMEML. The free Linux
+        DaVinci Resolve does not decode H.264 video, so original phone
+        footage imports audio-only; these proxies import fully (verified
+        against Resolve 21)."""
+        plan_path, inventory_path, media_root = self._plan_sources(project_id)
+        plan = load_json(plan_path)
+        inventory = {
+            asset["asset_id"]: asset
+            for asset in load_json(inventory_path)["assets"]
+        }
+        used_ids = {
+            event["asset_id"]
+            for track in plan["tracks"]
+            if track["kind"] == "video"
+            for event in track["events"]
+            if event.get("asset_id")
+        }
+        output_dir = self.settings.runtime / project_id / "outputs"
+        proxies_dir = output_dir / "proxies"
+        proxies_dir.mkdir(parents=True, exist_ok=True)
+        replacements: list[tuple[str, str]] = []
+        for asset_id in sorted(used_ids):
+            asset = inventory[asset_id]
+            source = (media_root / asset["source_path"]).resolve()
+            proxy = proxies_dir / f"{Path(asset['filename']).stem}.mov"
+            if not proxy.is_file() or proxy.stat().st_mtime < source.stat().st_mtime:
+                command = [
+                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                    "-i", str(source),
+                    "-c:v", "dnxhd", "-profile:v", "dnxhr_lb",
+                    "-pix_fmt", "yuv422p",
+                    "-c:a", "pcm_s16le", "-ar", "48000",
+                    str(proxy),
+                ]
+                result = subprocess.run(
+                    command, capture_output=True, text=True, check=False
+                )
+                if result.returncode:
+                    raise ProjectError(
+                        f"Proxy transcode failed for {asset['filename']}: "
+                        f"{result.stderr.strip()[-400:]}"
+                    )
+            replacements.append((source.as_uri(), proxy.as_uri()))
+            replacements.append(
+                (f">{asset['filename']}<", f">{proxy.name}<")
+            )
+        # The proxies are transcoded to 48 kHz PCM; keep the declared audio
+        # characteristics in sync or Resolve leaves audio items unlinked.
+        replacements.append(
+            ("<samplerate>44100</samplerate>", "<samplerate>48000</samplerate>")
+        )
+        xml_text = (output_dir / "timeline-davinci.xml").read_text(encoding="utf-8")
+        for old, new in replacements:
+            xml_text = xml_text.replace(old, new)
+        (output_dir / "timeline-davinci-proxies.xml").write_text(
+            xml_text, encoding="utf-8"
+        )
 
     def _plan_sources(self, project_id: str) -> tuple[Path, Path, Path]:
         """Plan, inventory, and media-root paths for render/export scripts."""
@@ -1023,6 +1088,7 @@ class ProjectService:
             "render": runtime_outputs / "review.mp4",
             "otio": runtime_outputs / "timeline.otio",
             "xmeml": runtime_outputs / "timeline-davinci.xml",
+            "xmeml_proxies": runtime_outputs / "timeline-davinci-proxies.xml",
         }
         path = mapping.get(kind)
         if kind == "render" and (path is None or not path.is_file()) and project_id == FIXTURE_ID:
@@ -1190,7 +1256,7 @@ class ProjectService:
 
     def _output_manifest(self, project_id: str) -> dict:
         result = {}
-        for kind in ("render", "otio", "xmeml"):
+        for kind in ("render", "otio", "xmeml", "xmeml_proxies"):
             try:
                 path = self.output_path(project_id, kind)
             except ProjectError:

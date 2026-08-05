@@ -428,9 +428,10 @@ These can be completed while Phase 2 begins:
 
 ## Immediate Next Actions
 
-1. Install DaVinci Resolve locally (registration-gated download is done by the
-   user) and verify the generated XMEML import: clip order, trims, rotation,
-   audio linking, duration.
+1. DONE 2026-08-05 — DaVinci Resolve 21.0.3 installed; XMEML import verified
+   frame-accurate (6/6 clips, 937/937 frames, 1080x1920@30). Exporter now
+   emits DNxHR proxies + a proxy XMEML because the free Linux edition does
+   not decode H.264.
 2. Run the walking skeleton on a fresh, real day of vlog footage and review
    output quality, latency, and provider cost.
 3. Add prompt-driven plan revision that rebuilds only concepts/plan/render

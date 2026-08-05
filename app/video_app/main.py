@@ -44,6 +44,10 @@ class CompilePlanRequest(BaseModel):
     fps: int = Field(default=30, ge=1, le=120)
 
 
+class ExportsRequest(BaseModel):
+    include_proxies: bool = False
+
+
 class RevisePlanRequest(BaseModel):
     instruction: str = Field(min_length=3, max_length=2000)
     provider: str = Field(default="qwen", pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
@@ -120,10 +124,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return jobs.submit("render", project_id, lambda: projects.render(project_id))
 
     @application.post("/api/projects/{project_id}/exports", status_code=202)
-    def export(project_id: str):
+    def export(project_id: str, request: ExportsRequest | None = None):
         project_call(lambda: projects.get_project(project_id))
+        options = request or ExportsRequest()
         return jobs.submit(
-            "editable_exports", project_id, lambda: projects.prepare_exports(project_id)
+            "editable_exports",
+            project_id,
+            lambda: projects.prepare_exports(project_id, options.include_proxies),
         )
 
     @application.post("/api/projects/{project_id}/analysis/visual", status_code=202)

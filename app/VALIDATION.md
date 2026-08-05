@@ -76,12 +76,29 @@ cut was dropped, duration became 31.2 s, the last cut is the scooter exit,
 and the review video re-rendered. The prior plan is retained under
 `plan/revisions/` with an instruction log.
 
+## DaVinci Resolve import check (2026-08-05) — PASS
+
+DaVinci Resolve 21.0.3 (free, Linux) was installed locally and the generated
+XMEML was imported and verified in the real application:
+
+- Timeline "Daily Skeleton A": 6 of 6 video clips and 6 of 6 audio clips in
+  exact plan order; every clip duration frame-accurate; V1 total 937 of 937
+  frames; 1080x1920 @ 30 fps. Verdict PASS via the in-app console checker
+  (`app/scripts/resolve_verify_current.py`).
+- Platform findings baked into the exporter: the free Linux edition does not
+  decode H.264 video (original phone clips import audio-only), so
+  `POST /exports {"include_proxies": true}` now transcodes DNxHR LB / 48 kHz
+  PCM proxies and writes `timeline-davinci-proxies.xml` referencing them with
+  matching declared audio characteristics. The XMEML now also carries the
+  `<!DOCTYPE xmeml>` header. This is an edition licensing limit, not a
+  version issue; Resolve Studio or another OS decodes H.264 natively.
+- Free-edition scripting is console-only (external scripting is
+  Studio-gated); helper scripts live under `app/scripts/`.
+
 ## Deliberately incomplete
 
 - Sideways-stored clips without rotation metadata render unrotated; the
   compiler does not yet set `rotation_degrees` automatically.
-- DaVinci Resolve import of the generated XMEML is unverified (Resolve is not
-  installed; the installer download is registration-gated and user-owned).
 - Revision re-renders the video but does not automatically rebuild the
   OTIO/XMEML exports; use the export step after revising.
 - Revision duration targets are honored approximately (asked ~25 s, got

@@ -326,6 +326,14 @@ def export_xmeml(plan, assets):
     tree = ET.ElementTree(root)
     ET.indent(tree, space="  ")
     tree.write(XMEML_PATH, encoding="UTF-8", xml_declaration=True)
+    # Premiere/FCP exports carry the xmeml DOCTYPE; keep it for maximum
+    # importer compatibility (verified against DaVinci Resolve 21).
+    raw = XMEML_PATH.read_text(encoding="utf-8")
+    if "<!DOCTYPE xmeml>" not in raw:
+        declaration, body = raw.split("\n", 1)
+        XMEML_PATH.write_text(
+            f"{declaration}\n<!DOCTYPE xmeml>\n{body}", encoding="utf-8"
+        )
 
 
 def validate_exports(plan):

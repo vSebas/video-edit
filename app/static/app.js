@@ -111,7 +111,12 @@ function conceptCard(concept, project) {
 }
 
 function outputLinks(project) {
-  const labels = { render: 'Review MP4', otio: 'OTIO timeline', xmeml: 'DaVinci XML' };
+  const labels = {
+    render: 'Review MP4',
+    otio: 'OTIO timeline',
+    xmeml: 'DaVinci XML',
+    xmeml_proxies: 'DaVinci XML (proxy media)',
+  };
   return Object.entries(project.outputs || {}).map(([kind, output]) =>
     `<a href="${escapeHtml(output.url)}" ${kind === 'render' ? 'target="_blank"' : 'download'}>${labels[kind] || kind}</a>`
   ).join('');
@@ -308,7 +313,11 @@ const PIPELINE_CALLS = {
   'generate-concepts': { path: 'concepts', job: true, message: 'Proposing grounded concepts…' },
   'compile-plan': { path: 'plan', job: false, message: 'Compiling the edit plan…' },
   render: { path: 'render', job: true, message: 'Render queued…' },
-  exports: { path: 'exports', job: true, message: 'Editable export queued…' },
+  exports: {
+    path: 'exports', job: true,
+    message: 'Exporting timelines and DNxHR proxies (transcoding takes a minute)…',
+    body: { include_proxies: true },
+  },
 };
 
 async function runPipelineStep(stepId, button) {
@@ -319,7 +328,7 @@ async function runPipelineStep(stepId, button) {
     notice(call.message);
     const result = await api(`/api/projects/${state.activeProjectId}/${call.path}`, {
       method: 'POST',
-      body: JSON.stringify({}),
+      body: JSON.stringify(call.body || {}),
     });
     if (call.job) {
       await pollJob(result.job_id);
