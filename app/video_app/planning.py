@@ -42,11 +42,17 @@ def evidence_pack(project: dict, evidence: list[dict]) -> str:
             f"{video.get('width')}x{video.get('height')}"
         )
     lines.append("")
-    lines.append("## Evidence (asset [start-end]s type conf: description)")
+    lines.append(
+        "## Evidence (asset [start-end]s type conf: description). Lines marked "
+        "[UNVERIFIED] are unconfirmed claims: cite one only when it is clearly "
+        "the strongest choice for a beat — the user will confirm or the editor "
+        "will cut around it."
+    )
     ordered = sorted(evidence, key=lambda item: (item["asset_id"], item["start_seconds"]))
     for item in ordered:
+        marker = "" if item.get("verified", True) else "[UNVERIFIED] "
         lines.append(
-            f"- {item['asset_id']} [{item['start_seconds']:.2f}-{item['end_seconds']:.2f}] "
+            f"- {marker}{item['asset_id']} [{item['start_seconds']:.2f}-{item['end_seconds']:.2f}] "
             f"{item['evidence_type']} {item['confidence']:.2f}: {item['caption']}"
         )
     return "\n".join(lines)
@@ -435,6 +441,14 @@ def build_plan(
     }
 
 
+def span_supported(span: dict, approved_ranges: dict[str, list[tuple[float, float]]]) -> bool:
+    midpoint = (span["source_start_seconds"] + span["source_end_seconds"]) / 2
+    return any(
+        start <= midpoint <= end
+        for start, end in approved_ranges.get(span["asset_id"], [])
+    )
+
+
 def compile_edit_plan(
     project: dict,
     concepts_document: dict,
@@ -443,6 +457,7 @@ def compile_edit_plan(
     height: int = DEFAULT_HEIGHT,
     fps: int = DEFAULT_FPS,
     speech_words: dict[str, list[dict]] | None = None,
+    approved_ranges: dict[str, list[tuple[float, float]]] | None = None,
 ) -> dict:
     """Deterministically compile a sanitized concept into edit-plan.v1."""
     concept = next(
@@ -470,6 +485,14 @@ def compile_edit_plan(
                     "confidence": evidence["confidence"],
                 }
             )
+    if approved_ranges is not None:
+        supported = [span for span in spans if span_supported(span, approved_ranges)]
+        if not supported:
+            raise PlanningError(
+                "Every range in this concept relies on unconfirmed claims; "
+                "confirm the flagged moments it uses and compile again"
+            )
+        spans = supported
     try:
         return build_plan(
             project,

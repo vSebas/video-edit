@@ -166,9 +166,10 @@ function storyCard(concept) {
   const missing = concept.missing_shots || [];
   const required = missing.filter((shot) => shot.priority === 'required').length;
   const beats = (concept.structure || []).length;
+  const unchecked = conceptPendingClaims(concept).length;
   return `
     <article class="concept-card story-card">
-      <div class="concept-top"><span class="eyebrow">${concept.target_duration_seconds}s · ${beats} scenes</span></div>
+      <div class="concept-top"><span class="eyebrow">${concept.target_duration_seconds}s · ${beats} scenes${unchecked ? ` · asks about ${unchecked} unchecked moment${unchecked === 1 ? '' : 's'}` : ''}</span></div>
       <h3>${escapeHtml(concept.title)}</h3>
       <p class="hook">${escapeHtml(concept.hook)}</p>
       ${(concept.weaknesses || []).length ? `<p class="muted">Honest caveat: ${escapeHtml(concept.weaknesses[0])}</p>` : ''}
@@ -278,53 +279,119 @@ function claimReason(observation) {
   return reasons.join('; ') || 'held back by policy';
 }
 
+function knownContext(observation) {
+  // The approved shot caption covering this claim: what the editor already
+  // knows about the same footage, shown so the user judges the delta only.
+  const midpoint = (Number(observation.start_seconds) + Number(observation.end_seconds)) / 2;
+  for (const run of state.runs) {
+    for (const other of run.observations || []) {
+      if (
+        other.asset_id === observation.asset_id
+        && other.review_status === 'reviewed'
+        && !(other.clip_id || '').includes('_m')
+        && other.start_seconds <= midpoint && midpoint <= other.end_seconds
+      ) {
+        return other.reviewed_caption || other.caption;
+      }
+    }
+  }
+  return null;
+}
+
+function claimCard(observation) {
+  const projectId = state.activeProjectId;
+  const midpoint = ((Number(observation.start_seconds) + Number(observation.end_seconds)) / 2).toFixed(2);
+  const asset = state.activeProject.inventory.assets.find((item) => item.asset_id === observation.asset_id);
+  const playUrl = asset?.media_url
+    ? `${asset.media_url}#t=${Number(observation.start_seconds).toFixed(1)},${Number(observation.end_seconds).toFixed(1)}`
+    : null;
+  const known = knownContext(observation);
+  return `
+    <article class="evidence-item">
+      <a ${playUrl ? `href="${escapeHtml(playUrl)}" target="_blank" title="Open the clip at this moment"` : ''} class="claim-visual">
+        <img loading="lazy" src="/api/projects/${escapeHtml(projectId)}/frames/${escapeHtml(observation.asset_id)}?t=${midpoint}" alt="" />
+        <span class="play-hint">▶ ${Number(observation.start_seconds).toFixed(1)}–${Number(observation.end_seconds).toFixed(1)}s</span>
+      </a>
+      <div class="claim-body">
+        <div class="evidence-meta"><span>${escapeHtml(observation.filename || observation.asset_id)}</span></div>
+        <p>${escapeHtml(observation.caption)}</p>
+        ${known ? `<p class="muted known-context">Editor already knows: ${escapeHtml(known.slice(0, 160))}</p>` : ''}
+        <p class="muted why-flagged">Why it's flagged: ${escapeHtml(claimReason(observation))}.</p>
+        <div class="review-actions">
+          <button class="ghost approve" data-review-run="${escapeHtml(observation.run_key)}" data-review-id="${escapeHtml(observation.evidence_id)}" data-review-action="approve">True — use it</button>
+          <button class="ghost" data-review-run="${escapeHtml(observation.run_key)}" data-review-id="${escapeHtml(observation.evidence_id)}" data-review-action="edit">Fix wording</button>
+          <button class="ghost reject" data-review-run="${escapeHtml(observation.run_key)}" data-review-id="${escapeHtml(observation.evidence_id)}" data-review-action="reject">Wrong — ignore it</button>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
 function needsCheckSection() {
   const pending = pendingClaims();
   if (!pending.length) return '';
   const projectId = state.activeProjectId;
-  if (localStorage.getItem(`skipClaims:${projectId}`) === '1') {
+  if (localStorage.getItem(`showClaims:${projectId}`) !== '1') {
     return `
       <section id="pending-review" class="card skipped-claims">
-        <span>${pending.length} unchecked claim${pending.length === 1 ? '' : 's'} hidden — they are simply not used in editing.</span>
-        <button class="ghost" id="unskip-claims">Review them</button>
+        <span>${pending.length} unchecked claim${pending.length === 1 ? '' : 's'} set aside.
+        You don't need to review them — if a story wants one, you'll be asked about
+        just that one when you pick the story.</span>
+        <button class="ghost" id="unskip-claims">Review all anyway</button>
       </section>
     `;
   }
   return `
     <section id="pending-review">
       <div class="section-header">
-        <div><span class="eyebrow">Needs your check (optional)</span><h2>${pending.length} thing${pending.length === 1 ? '' : 's'} the editor won't rely on unchecked</h2></div>
-        <p>These aren't "unsure" guesses about your footage in general — each one tripped a
-        specific safety rule shown below. Unchecked claims are simply excluded from
-        editing (${approvedCount()} solid observations are already in use).</p>
-        <button class="secondary compact" id="skip-claims">Skip all for now</button>
+        <div><span class="eyebrow">Unchecked claims (optional)</span><h2>${pending.length} claim${pending.length === 1 ? '' : 's'} the editor won't rely on unchecked</h2></div>
+        <p>Each tripped a specific safety rule (shown per card). Unchecked claims are
+        excluded from editing; ${approvedCount()} solid observations are already in use.</p>
+        <button class="secondary compact" id="skip-claims">Set aside</button>
       </div>
-      <div class="pending-grid">
-        ${pending.map((observation) => {
-          const midpoint = ((Number(observation.start_seconds) + Number(observation.end_seconds)) / 2).toFixed(2);
-          const asset = state.activeProject.inventory.assets.find((item) => item.asset_id === observation.asset_id);
-          const playUrl = asset?.media_url
-            ? `${asset.media_url}#t=${Number(observation.start_seconds).toFixed(1)},${Number(observation.end_seconds).toFixed(1)}`
-            : null;
-          return `
-          <article class="evidence-item">
-            <a ${playUrl ? `href="${escapeHtml(playUrl)}" target="_blank" title="Open the clip at this moment"` : ''} class="claim-visual">
-              <img loading="lazy" src="/api/projects/${escapeHtml(projectId)}/frames/${escapeHtml(observation.asset_id)}?t=${midpoint}" alt="" />
-              <span class="play-hint">▶ ${Number(observation.start_seconds).toFixed(1)}–${Number(observation.end_seconds).toFixed(1)}s</span>
-            </a>
-            <div class="claim-body">
-              <div class="evidence-meta"><span>${escapeHtml(observation.filename || observation.asset_id)}</span></div>
-              <p>${escapeHtml(observation.caption)}</p>
-              <p class="muted why-flagged">Why it's here: ${escapeHtml(claimReason(observation))}.</p>
-              <div class="review-actions">
-                <button class="ghost approve" data-review-run="${escapeHtml(observation.run_key)}" data-review-id="${escapeHtml(observation.evidence_id)}" data-review-action="approve">True — use it</button>
-                <button class="ghost" data-review-run="${escapeHtml(observation.run_key)}" data-review-id="${escapeHtml(observation.evidence_id)}" data-review-action="edit">Fix wording</button>
-                <button class="ghost reject" data-review-run="${escapeHtml(observation.run_key)}" data-review-id="${escapeHtml(observation.evidence_id)}" data-review-action="reject">Wrong — ignore it</button>
-              </div>
-            </div>
-          </article>
-        `;
-        }).join('')}
+      <div class="pending-grid">${pending.map(claimCard).join('')}</div>
+    </section>
+  `;
+}
+
+function conceptPendingClaims(concept) {
+  const pending = pendingClaims();
+  const hits = [];
+  for (const beat of concept.structure || []) {
+    for (const evidence of beat.evidence || []) {
+      for (const claim of pending) {
+        if (
+          claim.asset_id === evidence.asset_id
+          && claim.start_seconds < evidence.end_seconds
+          && claim.end_seconds > evidence.start_seconds
+          && !hits.some((item) => item.evidence_id === claim.evidence_id)
+        ) {
+          hits.push(claim);
+        }
+      }
+    }
+  }
+  return hits;
+}
+
+function confirmStorySection(project) {
+  const concept = (project.concepts || []).find(
+    (item) => item.concept_id === state.pendingStory
+  );
+  if (!concept) { state.pendingStory = null; return ''; }
+  const claims = conceptPendingClaims(concept);
+  return `
+    <section>
+      <div class="section-header">
+        <div><span class="eyebrow">One quick check</span>
+        <h2>"${escapeHtml(concept.title)}" wants ${claims.length} unchecked moment${claims.length === 1 ? '' : 's'}</h2></div>
+        <p>Confirm the ones that are true; anything you reject or leave unchecked is
+        cut around automatically. Then continue.</p>
+      </div>
+      <div class="pending-grid">${claims.map(claimCard).join('')}</div>
+      <div class="confirm-actions">
+        <button class="ghost" id="cancel-confirm">← Back to stories</button>
+        <button class="primary" id="continue-story">Continue — make the video</button>
       </div>
     </section>
   `;
@@ -384,6 +451,8 @@ function renderProject() {
   let main;
   if (state.busy) {
     main = busyCard();
+  } else if (state.pendingStory) {
+    main = confirmStorySection(project) + advancedSection(project);
   } else if (isFixture(project)) {
     main = `
       <section class="card start-card">
@@ -412,7 +481,16 @@ function renderProject() {
   $('#prepare-export')?.addEventListener('click', prepareExport);
   $('#revision-form')?.addEventListener('submit', submitRevision);
   document.querySelectorAll('[data-make-story]').forEach((button) => {
-    button.addEventListener('click', () => makeStory(button.dataset.makeStory));
+    button.addEventListener('click', () => startStory(button.dataset.makeStory));
+  });
+  $('#cancel-confirm')?.addEventListener('click', () => {
+    state.pendingStory = null;
+    renderProject();
+  });
+  $('#continue-story')?.addEventListener('click', () => {
+    const conceptId = state.pendingStory;
+    state.pendingStory = null;
+    makeStory(conceptId);
   });
   document.querySelectorAll('[data-review-action]').forEach((button) => {
     button.addEventListener('click', () => reviewClaim(button));
@@ -422,11 +500,11 @@ function renderProject() {
   });
   $('#delete-project')?.addEventListener('click', deleteProject);
   $('#skip-claims')?.addEventListener('click', () => {
-    localStorage.setItem(`skipClaims:${state.activeProjectId}`, '1');
+    localStorage.removeItem(`showClaims:${state.activeProjectId}`);
     renderProject();
   });
   $('#unskip-claims')?.addEventListener('click', () => {
-    localStorage.removeItem(`skipClaims:${state.activeProjectId}`);
+    localStorage.setItem(`showClaims:${state.activeProjectId}`, '1');
     renderProject();
   });
 }
@@ -524,6 +602,18 @@ async function createVlog() {
     notice(error.message, true);
     await loadProject(state.activeProjectId);
   }
+}
+
+function startStory(conceptId) {
+  const concept = (state.activeProject.concepts || []).find(
+    (item) => item.concept_id === conceptId
+  );
+  if (concept && conceptPendingClaims(concept).length) {
+    state.pendingStory = conceptId;
+    renderProject();
+    return;
+  }
+  makeStory(conceptId);
 }
 
 async function makeStory(conceptId) {

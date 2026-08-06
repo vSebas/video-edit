@@ -613,6 +613,32 @@ class ProjectService:
                         or observation["caption"],
                         "evidence_type": observation.get("evidence_type") or "visual",
                         "confidence": observation.get("model_confidence") or 0.8,
+                        "verified": True,
+                    }
+                )
+        return items
+
+    def pending_evidence(self, project_id: str) -> list[dict]:
+        """Flagged-but-unreviewed observations. The planner may cite them,
+        but the compiler will not use a range supported only by unverified
+        claims unless the user confirms it."""
+        items: list[dict] = []
+        for manifest in self._semantic_run_manifests(project_id):
+            run = self.semantic_run(project_id, manifest["run_key"])
+            for observation in run["observations"]:
+                if observation["normalization_status"] != "accepted":
+                    continue
+                if observation.get("review_status") != "pending":
+                    continue
+                items.append(
+                    {
+                        "asset_id": observation["asset_id"],
+                        "start_seconds": observation["start_seconds"],
+                        "end_seconds": observation["end_seconds"],
+                        "caption": observation["caption"],
+                        "evidence_type": observation.get("evidence_type") or "visual",
+                        "confidence": observation.get("model_confidence") or 0.5,
+                        "verified": False,
                     }
                 )
         return items
@@ -628,7 +654,7 @@ class ProjectService:
         if project_id == FIXTURE_ID:
             raise ProjectError("The benchmark fixture already has reviewed concepts")
         project = self.get_project(project_id)
-        evidence = self.approved_evidence(project_id)
+        evidence = self.approved_evidence(project_id) + self.pending_evidence(project_id)
         try:
             client = ChatClient(resolve_provider(provider, model))
             document = generate_concepts(client, project, evidence)
@@ -673,6 +699,11 @@ class ProjectService:
         selected = concept_id or (selection or {}).get("concept_id")
         if not selected:
             raise ProjectError("Select a concept before compiling the edit plan")
+        approved_ranges: dict[str, list[tuple[float, float]]] = {}
+        for item in self.approved_evidence(project_id):
+            approved_ranges.setdefault(item["asset_id"], []).append(
+                (item["start_seconds"], item["end_seconds"])
+            )
         try:
             plan = compile_edit_plan(
                 project,
@@ -682,6 +713,7 @@ class ProjectService:
                 height,
                 fps,
                 speech_words=self._speech_words(project_id),
+                approved_ranges=approved_ranges,
             )
             validate_edit_plan(
                 plan,

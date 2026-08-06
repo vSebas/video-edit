@@ -443,3 +443,6 @@ textarea { resize: vertical; }
 .claim-body { min-width: 0; flex: 1; }
 .why-flagged { margin: 4px 0; }
 .skipped-claims { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+
+.known-context { font-style: italic; }
+.confirm-actions { display: flex; justify-content: space-between; margin-top: 14px; }
