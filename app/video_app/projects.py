@@ -333,7 +333,7 @@ class ProjectService:
             "project_id": project_id,
             "concept_id": concept_id,
             "selected_at": utc_now(),
-            "plan_available": project.get("plan", {}).get("concept_id") == concept_id,
+            "plan_available": (project.get("plan") or {}).get("concept_id") == concept_id,
         }
         write_json(self.settings.runtime / project_id / "selection.json", selection)
         return selection
