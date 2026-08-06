@@ -35,6 +35,8 @@ class AnalyzeSpeechRequest(BaseModel):
 class GenerateConceptsRequest(BaseModel):
     provider: str = Field(default="qwen", pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
     model: str | None = Field(default=None, max_length=160)
+    guidance: str | None = Field(default=None, max_length=2000)
+    keep_concept_ids: list[str] | None = Field(default=None, max_length=10)
 
 
 class CompilePlanRequest(BaseModel):
@@ -169,7 +171,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "concept_generation",
             project_id,
             lambda: projects.generate_concepts(
-                project_id, options.provider, options.model
+                project_id,
+                options.provider,
+                options.model,
+                options.guidance,
+                options.keep_concept_ids,
             ),
         )
 

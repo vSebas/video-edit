@@ -162,14 +162,32 @@ function startSection(project) {
   `;
 }
 
+function keptStoryIds() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(`keptStories:${state.activeProjectId}`) || '[]'));
+  } catch { return new Set(); }
+}
+
+function toggleKeptStory(conceptId) {
+  const kept = keptStoryIds();
+  if (kept.has(conceptId)) kept.delete(conceptId);
+  else kept.add(conceptId);
+  localStorage.setItem(`keptStories:${state.activeProjectId}`, JSON.stringify([...kept]));
+  renderProject();
+}
+
 function storyCard(concept) {
   const missing = concept.missing_shots || [];
   const required = missing.filter((shot) => shot.priority === 'required').length;
   const beats = (concept.structure || []).length;
   const unchecked = conceptPendingClaims(concept).length;
+  const kept = keptStoryIds().has(concept.concept_id);
   return `
-    <article class="concept-card story-card">
-      <div class="concept-top"><span class="eyebrow">${concept.target_duration_seconds}s · ${beats} scenes${unchecked ? ` · asks about ${unchecked} unchecked moment${unchecked === 1 ? '' : 's'}` : ''}</span></div>
+    <article class="concept-card story-card ${kept ? 'kept' : ''}">
+      <div class="concept-top">
+        <span class="eyebrow">${concept.target_duration_seconds}s · ${beats} scenes${unchecked ? ` · asks about ${unchecked} unchecked moment${unchecked === 1 ? '' : 's'}` : ''}</span>
+        <button class="ghost keep-toggle" data-keep-story="${escapeHtml(concept.concept_id)}" title="Kept stories survive when you ask for new ideas">${kept ? '★ kept' : '☆ keep'}</button>
+      </div>
       <h3>${escapeHtml(concept.title)}</h3>
       <p class="hook">${escapeHtml(concept.hook)}</p>
       ${(concept.weaknesses || []).length ? `<p class="muted">Honest caveat: ${escapeHtml(concept.weaknesses[0])}</p>` : ''}
@@ -188,15 +206,21 @@ function storyCard(concept) {
 }
 
 function pickSection(project) {
+  const keptCount = keptStoryIds().size;
   return `
     <section>
       <div class="section-header">
         <div><span class="eyebrow">Pick a story</span><h2>The editor proposes, you decide</h2></div>
-        <button class="secondary compact" id="more-ideas">More ideas</button>
       </div>
       <p class="muted">Every scene cites real moments in your clips. "Make this one" cuts the
-      video, renders a preview, and prepares editor files — all in one go.</p>
+      video, renders a preview, and prepares editor files — all in one go. Not happy?
+      Mark what's worth keeping (★), tell the editor what you want, and ask for new ideas.</p>
       <div class="concept-grid">${(project.concepts || []).map(storyCard).join('')}</div>
+      <form id="more-ideas-form" class="revision-form">
+        <textarea name="guidance" rows="2"
+          placeholder="What do you want instead? e.g. focus on the class project demo, more energy, under 40 seconds, skip the game footage…"></textarea>
+        <button type="submit" class="secondary">New ideas${keptCount ? ` (keeping ${keptCount} ★)` : ''}</button>
+      </form>
       ${project.plan ? '<button class="ghost" id="back-to-result">← Back to the current cut</button>' : ''}
     </section>
   `;
@@ -475,7 +499,13 @@ function renderProject() {
   $('#project-view').innerHTML = main;
 
   $('#create-vlog')?.addEventListener('click', createVlog);
-  $('#more-ideas')?.addEventListener('click', regenerateIdeas);
+  $('#more-ideas-form')?.addEventListener('submit', regenerateIdeas);
+  document.querySelectorAll('[data-keep-story]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      toggleKeptStory(button.dataset.keepStory);
+    });
+  });
   $('#back-to-result')?.addEventListener('click', () => { state.forcePick = false; renderProject(); });
   $('#change-story')?.addEventListener('click', () => { state.forcePick = true; renderProject(); });
   $('#prepare-export')?.addEventListener('click', prepareExport);
@@ -642,12 +672,20 @@ async function makeStory(conceptId) {
   }
 }
 
-async function regenerateIdeas() {
+async function regenerateIdeas(event) {
+  event?.preventDefault?.();
+  const guidance = event?.currentTarget
+    ? new FormData(event.currentTarget).get('guidance')?.toString().trim()
+    : '';
+  const kept = [...keptStoryIds()];
   try {
     setBusy('Thinking of new angles', ['Writing story ideas'], 0);
-    await runStep('concepts');
+    await runStep('concepts', {
+      guidance: guidance || null,
+      keep_concept_ids: kept.length ? kept : null,
+    });
     state.busy = null;
-    notice('Fresh ideas below.');
+    notice(kept.length ? `Fresh ideas below (kept ${kept.length}).` : 'Fresh ideas below.');
     await loadProject(state.activeProjectId);
   } catch (error) {
     state.busy = null;

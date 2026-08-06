@@ -446,3 +446,7 @@ textarea { resize: vertical; }
 
 .known-context { font-style: italic; }
 .confirm-actions { display: flex; justify-content: space-between; margin-top: 14px; }
+
+.story-card.kept { border-color: var(--accent); }
+.keep-toggle { font-size: 11px; padding: 2px 8px; }
+.story-card.kept .keep-toggle { color: var(--accent); }

@@ -648,16 +648,35 @@ class ProjectService:
         project_id: str,
         provider: str = "qwen",
         model: str | None = None,
+        guidance: str | None = None,
+        keep_concept_ids: list[str] | None = None,
     ) -> dict:
         """Generate grounded creative concepts with missing-shot advice from
-        the project's approved evidence."""
+        the project's approved evidence. Kept concepts survive regeneration;
+        guidance steers the new ones."""
         if project_id == FIXTURE_ID:
             raise ProjectError("The benchmark fixture already has reviewed concepts")
         project = self.get_project(project_id)
         evidence = self.approved_evidence(project_id) + self.pending_evidence(project_id)
+        keep_concepts: list[dict] = []
+        if keep_concept_ids:
+            concepts_path = (
+                self.settings.runtime / project_id / "analysis" / "concepts.json"
+            )
+            if concepts_path.is_file():
+                existing = load_json(concepts_path).get("concepts", [])
+                keep_concepts = [
+                    item for item in existing if item["concept_id"] in keep_concept_ids
+                ]
         try:
             client = ChatClient(resolve_provider(provider, model))
-            document = generate_concepts(client, project, evidence)
+            document = generate_concepts(
+                client,
+                project,
+                evidence,
+                guidance=guidance,
+                keep_concepts=keep_concepts,
+            )
             self._validate_schema(
                 document,
                 self.settings.poc_root / "schemas" / "creative-concepts.schema.json",

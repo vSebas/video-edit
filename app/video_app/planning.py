@@ -63,15 +63,31 @@ def generate_concepts(
     project: dict,
     evidence: list[dict],
     concept_count: int = 2,
+    guidance: str | None = None,
+    keep_concepts: list[dict] | None = None,
 ) -> dict:
     if not evidence:
         raise PlanningError("No approved semantic evidence is available for planning")
     prompt = project.get("prompt") or (
         "Create a concise, engaging vertical short-form video from this footage."
     )
+    guidance_block = (
+        f"\nDirection from the user for THIS round (weigh it heavily): {guidance.strip()}\n"
+        if guidance and guidance.strip()
+        else ""
+    )
+    kept_block = ""
+    if keep_concepts:
+        kept_lines = "\n".join(
+            f"- {item['title']}: {item['topic']}" for item in keep_concepts
+        )
+        kept_block = (
+            "\nThe user already KEPT these concepts — do not repeat their angle, "
+            f"propose genuinely different ones:\n{kept_lines}\n"
+        )
     pack = evidence_pack(project, evidence)
     instruction = f"""User request: {prompt}
-
+{guidance_block}{kept_block}
 {pack}
 
 Propose exactly {concept_count} genuinely different short-form video concepts.
@@ -138,13 +154,15 @@ duration and at least {MIN_EVENT_SECONDS}s long."""
         "generated_at": utc_now(),
         "benchmark_id": f"{project['project_id']}-auto-{PROMPT_VERSION}",
         "footage_summary": str(parsed.get("footage_summary", "")).strip(),
-        "concepts": parsed.get("concepts") or [],
+        "concepts": list(keep_concepts or []) + (parsed.get("concepts") or []),
         "provenance": {
             "adapter": "owned-planning",
             "provider": client.config.provider,
             "model": client.config.model,
             "prompt_version": PROMPT_VERSION,
             "evidence_count": len(evidence),
+            "guidance": (guidance or "").strip() or None,
+            "kept_concept_ids": [item["concept_id"] for item in keep_concepts or []],
         },
     }
     _sanitize_concepts(document, project)
