@@ -10,7 +10,6 @@ class Settings:
     root: Path
     runtime: Path
     poc_root: Path
-    semantic_source_root: Path | None = None
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -23,15 +22,4 @@ class Settings:
         poc_root = Path(
             os.environ.get("VIDEO_EDITING_POC_ROOT", str(root / "poc-morning-routine"))
         ).resolve()
-        semantic_source_root = Path(
-            os.environ.get(
-                "VIDEO_EDITING_SEMANTIC_SOURCE_ROOT",
-                str(root / "runtime" / "openstoryline"),
-            )
-        ).resolve()
-        return cls(
-            root=root,
-            runtime=runtime,
-            poc_root=poc_root,
-            semantic_source_root=semantic_source_root,
-        )
+        return cls(root=root, runtime=runtime, poc_root=poc_root)

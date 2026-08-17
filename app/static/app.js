@@ -40,10 +40,6 @@ function notice(message, error = false) {
 /* ------------------------------------------------------------------ */
 /* State helpers                                                       */
 
-function isFixture(project) {
-  return project.project_id === 'morning-routine';
-}
-
 function hasRun(adapter) {
   return state.runs.some((run) => run.provider?.adapter === adapter);
 }
@@ -76,33 +72,18 @@ const PHASE_LABEL = {
 /* ------------------------------------------------------------------ */
 /* Sidebar                                                             */
 
-function visibleProjects() {
-  const showArchive = localStorage.getItem('showArchive') === '1';
-  return state.projects.filter((project) =>
-    showArchive || project.project_id !== 'morning-routine');
-}
-
 function renderProjectList() {
-  const hasArchive = state.projects.some((project) => project.project_id === 'morning-routine');
-  const showArchive = localStorage.getItem('showArchive') === '1';
-  $('#project-list').innerHTML = visibleProjects().map((project) => `
+  $('#project-list').innerHTML = state.projects.map((project) => `
     <button class="project-button ${project.project_id === state.activeProjectId ? 'active' : ''}" data-project-id="${escapeHtml(project.project_id)}">
       <span class="project-dot ${project.has_plan || project.status === 'ready' ? 'ready' : ''}"></span>
       <span class="project-copy">
-        <strong>${escapeHtml(project.name)}${project.project_id === 'morning-routine' ? ' (archive)' : ''}</strong>
+        <strong>${escapeHtml(project.name)}</strong>
         <span>${project.asset_count} clips${project.has_plan ? ' · edited' : ''}</span>
       </span>
     </button>
-  `).join('') + (hasArchive ? `
-    <button class="ghost archive-toggle" id="toggle-archive">
-      ${showArchive ? 'Hide archive' : 'Show archive (1)'}
-    </button>` : '');
+  `).join('');
   document.querySelectorAll('[data-project-id]').forEach((button) => {
     button.addEventListener('click', () => loadProject(button.dataset.projectId));
-  });
-  $('#toggle-archive')?.addEventListener('click', () => {
-    localStorage.setItem('showArchive', showArchive ? '0' : '1');
-    renderProjectList();
   });
 }
 
@@ -537,16 +518,6 @@ function renderProject() {
     main = busyCard();
   } else if (state.pendingStory) {
     main = confirmStorySection(project) + advancedSection(project);
-  } else if (isFixture(project)) {
-    main = `
-      <section class="card start-card">
-        <span class="eyebrow">Archived benchmark</span>
-        <h2>${escapeHtml(project.name)}</h2>
-        <p class="muted">This is the July proof-of-concept, kept for reference. Its evidence
-        and outputs are readable through the API but it is not part of the daily flow.</p>
-        ${project.outputs?.render?.url ? `<video controls preload="metadata" src="${escapeHtml(project.outputs.render.url)}"></video>` : ''}
-      </section>
-    `;
   } else {
     main = phase === 'start' ? startSection(project)
       : phase === 'pick' ? pickSection(project)
@@ -892,8 +863,7 @@ async function loadProject(projectId) {
 
 async function refreshProjects() {
   const payload = await api('/api/projects');
-  state.projects = payload.projects.sort((a, b) =>
-    (a.project_id === 'morning-routine') - (b.project_id === 'morning-routine'));
+  state.projects = payload.projects;
   renderProjectList();
 }
 
@@ -922,12 +892,10 @@ async function initialize() {
   try {
     const [status, projects] = await Promise.all([api('/api/status'), api('/api/projects')]);
     state.status = status;
-    state.projects = projects.projects.sort((a, b) =>
-      (a.project_id === 'morning-routine') - (b.project_id === 'morning-routine'));
+    state.projects = projects.projects;
     renderCapabilities();
-    const preferred = state.projects.find((project) => project.project_id !== 'morning-routine')
-      || state.projects[0];
-    if (preferred) await loadProject(preferred.project_id);
+    if (state.projects[0]) await loadProject(state.projects[0].project_id);
+    else $('#project-view').innerHTML = '<div class="empty-state">No vlogs yet — add your clips.</div>';
   } catch (error) {
     notice(error.message, true);
   }

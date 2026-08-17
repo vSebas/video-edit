@@ -16,12 +16,6 @@ from pathlib import Path
 from typing import Any
 
 from .config import Settings
-from .finalization import (
-    ReviewOutcomeError,
-    build_review_outcome,
-    load_benchmark_findings,
-    validate_review_outcome,
-)
 from .planning import (
     PlanningError,
     compile_edit_plan,
@@ -30,8 +24,7 @@ from .planning import (
     validate_edit_plan,
 )
 from .providers import ChatClient, ProviderError, make_client, resolve_provider
-from .semantic import SemanticEvidenceError, load_json as load_semantic_json
-from .semantic import normalize_openstoryline_run, validate_semantic_evidence
+from .semantic import SemanticEvidenceError, validate_semantic_evidence
 from .visual import VisualAnalysisError, analyze_assets, auto_review_decisions
 
 
@@ -39,8 +32,6 @@ VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 AUDIO_EXTENSIONS = {".wav", ".mp3", ".m4a", ".flac", ".aac", ".ogg"}
 SUPPORTED_EXTENSIONS = VIDEO_EXTENSIONS | IMAGE_EXTENSIONS | AUDIO_EXTENSIONS
-FIXTURE_ID = "morning-routine"
-
 # Writer chosen by blind video screening (bench/planner, 2026-08-17): the
 # user preferred deepseek's and fable's cuts over both Qwens'; deepseek is
 # the default (available on the existing workspace key).
@@ -96,12 +87,6 @@ class ProjectService:
                         else "Set DASHSCOPE_API_KEY or GEMINI_API_KEY to enable."
                     ),
                 },
-                {
-                    "id": "reviewed-fixture",
-                    "label": "Reviewed fixture observations",
-                    "ready": True,
-                    "detail": "Available only for the completed morning-routine benchmark.",
-                },
             ],
             "speech": [
                 {
@@ -128,15 +113,13 @@ class ProjectService:
         }
 
     def list_projects(self) -> list[dict]:
-        projects = [self._fixture_summary()]
+        projects = []
         for path in sorted(self.settings.runtime.glob("*/project.json")):
             data = load_json(path)
             projects.append(self._summary(data))
         return projects
 
     def get_project(self, project_id: str) -> dict:
-        if project_id == FIXTURE_ID:
-            return self._fixture()
         path = self.settings.runtime / project_id / "project.json"
         if not path.is_file():
             raise ProjectError(f"Unknown project: {project_id}")
@@ -145,8 +128,6 @@ class ProjectService:
 
     def create_project(self, name: str, source_directory: str, prompt: str) -> dict:
         project_id = slugify(name)
-        if project_id == FIXTURE_ID:
-            raise ProjectError(f"The project id '{FIXTURE_ID}' is reserved")
         final_dir = self.settings.runtime / project_id
         if final_dir.exists():
             raise ProjectError(f"Project already exists: {project_id}")
@@ -216,11 +197,6 @@ class ProjectService:
     def delete_project(self, project_id: str) -> dict:
         """Delete a runtime project's derived state. Source media is never
         touched; the archived benchmark fixture cannot be deleted."""
-        if project_id == FIXTURE_ID:
-            raise ProjectError(
-                "The archived benchmark is built into the repository; hide it "
-                "in the sidebar instead"
-            )
         target = (self.settings.runtime / project_id).resolve()
         try:
             target.relative_to(self.settings.runtime)
@@ -297,115 +273,6 @@ class ProjectService:
         write_json(self.settings.runtime / project_id / "selection.json", selection)
         return selection
 
-    def import_openstoryline_run(
-        self,
-        project_id: str,
-        provider: str,
-        session_id: str,
-        model: str | None = None,
-    ) -> dict:
-        project = self.get_project(project_id)
-        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", provider):
-            raise ProjectError("Invalid provider id")
-        if not re.fullmatch(r"[a-f0-9]{12,64}", session_id):
-            raise ProjectError("Invalid OpenStoryline session id")
-
-        semantic_source_root = (
-            self.settings.semantic_source_root
-            or self.settings.root / "runtime" / "openstoryline"
-        )
-        run_dir = (semantic_source_root / provider / "outputs" / session_id).resolve()
-        expected_parent = (semantic_source_root / provider / "outputs").resolve()
-        try:
-            run_dir.relative_to(expected_parent)
-        except ValueError as exc:
-            raise ProjectError("OpenStoryline run must be inside the provider output directory") from exc
-        if not run_dir.is_dir():
-            raise ProjectError(f"OpenStoryline run is not available: {session_id}")
-
-        try:
-            normalized, artifacts = normalize_openstoryline_run(
-                project, run_dir, provider, model
-            )
-            validate_semantic_evidence(
-                normalized,
-                self.settings.poc_root / "schemas" / "semantic-evidence.schema.json",
-            )
-        except (OSError, ValueError, json.JSONDecodeError, SemanticEvidenceError) as exc:
-            raise ProjectError(f"Semantic evidence import failed: {exc}") from exc
-
-        run_key = f"{provider}-{session_id}"
-        runs_dir = self.settings.runtime / project_id / "analysis" / "runs"
-        runs_dir.mkdir(parents=True, exist_ok=True)
-        final_dir = runs_dir / run_key
-        if final_dir.exists():
-            manifest = final_dir / "manifest.json"
-            if manifest.is_file():
-                return load_json(manifest)
-            raise ProjectError(f"Incomplete semantic run already exists: {run_key}")
-
-        staging = Path(tempfile.mkdtemp(prefix=f".{run_key}-", dir=runs_dir))
-        try:
-            raw_dir = staging / "raw"
-            raw_dir.mkdir()
-            shutil.copy2(artifacts.load_media, raw_dir / "load-media.json")
-            shutil.copy2(artifacts.split_shots, raw_dir / "split-shots.json")
-            shutil.copy2(artifacts.understand_clips, raw_dir / "provider-response.json")
-            session = load_semantic_json(artifacts.session_state)
-            media_map = [
-                {
-                    "upload_id": item.get("id"),
-                    "original_filename": item.get("name"),
-                    "media_id": Path(str(item.get("path") or "")).stem or None,
-                }
-                for item in (session.get("load_media") or {}).values()
-                if isinstance(item, dict)
-            ]
-            write_json(raw_dir / "session-media-map.json", {"media": media_map})
-            write_json(staging / "normalized.json", normalized)
-            manifest = {
-                "schema_version": "semantic-run-manifest.v1",
-                "run_key": run_key,
-                "run_id": session_id,
-                "project_id": project_id,
-                "provider": normalized["provider"],
-                "review_status": normalized["review_status"],
-                "safe_for_edit_plan": normalized["safe_for_edit_plan"],
-                "summary": normalized["summary"],
-                "warnings": normalized["warnings"],
-                "imported_at": normalized["generated_at"],
-                "detail_url": f"/api/projects/{project_id}/analysis/runs/{run_key}",
-            }
-            write_json(staging / "manifest.json", manifest)
-            os.replace(staging, final_dir)
-        except Exception:
-            shutil.rmtree(staging, ignore_errors=True)
-            raise
-
-        if project_id != FIXTURE_ID:
-            path = self.settings.runtime / project_id / "project.json"
-            stored = load_json(path)
-            stored["status"] = "semantic_review_required"
-            stored["updated_at"] = utc_now()
-            stored["analysis"]["visual"] = "awaiting_review"
-            stored["analysis"]["warning"] = (
-                "Provider captions were normalized as candidate evidence. "
-                "Review is required before concepts or an edit plan can be generated."
-            )
-            counts: dict[str, int] = {}
-            for observation in normalized["observations"]:
-                if observation["normalization_status"] != "accepted":
-                    continue
-                asset_id = observation.get("asset_id")
-                if asset_id:
-                    counts[asset_id] = counts.get(asset_id, 0) + 1
-            for asset in stored.get("inventory", {}).get("assets", []):
-                if asset["asset_id"] in counts:
-                    asset["analysis_status"] = "candidate_semantics"
-                    asset["candidate_observation_count"] = counts[asset["asset_id"]]
-            write_json(path, stored)
-        return manifest
-
     def analyze_visual(
         self,
         project_id: str,
@@ -418,7 +285,7 @@ class ProjectService:
         assets = project.get("inventory", {}).get("assets", [])
         if not assets:
             raise ProjectError("The project has no indexed media to analyze")
-        media_root = self.settings.poc_root if project_id == FIXTURE_ID else self.settings.root
+        media_root = self.settings.root
 
         run_id = uuid.uuid4().hex[:12]
         run_key = f"{provider}-live-{run_id}"
@@ -483,7 +350,7 @@ class ProjectService:
         assets = project.get("inventory", {}).get("assets", [])
         if not assets:
             raise ProjectError("The project has no indexed media to analyze")
-        media_root = self.settings.poc_root if project_id == FIXTURE_ID else self.settings.root
+        media_root = self.settings.root
 
         run_id = uuid.uuid4().hex[:12]
         run_key = f"asr-live-{run_id}"
@@ -603,8 +470,6 @@ class ProjectService:
         return corroborated
 
     def _mark_semantic_progress(self, project_id: str, kind: str) -> None:
-        if project_id == FIXTURE_ID:
-            return
         path = self.settings.runtime / project_id / "project.json"
         stored = load_json(path)
         stored["updated_at"] = utc_now()
@@ -698,8 +563,6 @@ class ProjectService:
         """Generate grounded creative concepts with missing-shot advice from
         the project's approved evidence. Kept concepts survive regeneration;
         guidance steers the new ones."""
-        if project_id == FIXTURE_ID:
-            raise ProjectError("The benchmark fixture already has reviewed concepts")
         project = self.get_project(project_id)
         evidence = self.approved_evidence(project_id) + self.pending_evidence(project_id)
         keep_concepts: list[dict] = []
@@ -754,8 +617,6 @@ class ProjectService:
     ) -> dict:
         """Deterministically compile the selected concept into a validated
         edit-plan.v1 and persist it with a matching media inventory."""
-        if project_id == FIXTURE_ID:
-            raise ProjectError("The benchmark fixture already has a compiled plan")
         project = self.get_project(project_id)
         concepts_path = self.settings.runtime / project_id / "analysis" / "concepts.json"
         if not concepts_path.is_file():
@@ -822,8 +683,6 @@ class ProjectService:
     ) -> dict:
         """Revise the compiled plan from a natural-language instruction
         without re-running media analysis. Prior revisions are retained."""
-        if project_id == FIXTURE_ID:
-            raise ProjectError("The benchmark fixture plan is immutable")
         project = self.get_project(project_id)
         plan_dir = self.settings.runtime / project_id / "plan"
         plan_path = plan_dir / "edit-plan.json"
@@ -1041,72 +900,6 @@ class ProjectService:
             write_json(reviews_path, reviews)
         return self.semantic_run(project_id, run_key)
 
-    def finalize_review_outcome(
-        self, project_id: str, run_keys: list[str] | None = None
-    ) -> dict:
-        self.get_project(project_id)
-        available = {item["run_key"] for item in self._semantic_run_manifests(project_id)}
-        selected = sorted(run_keys or available)
-        if not selected:
-            raise ProjectError("No provider runs are available to finalize")
-        unknown = [run_key for run_key in selected if run_key not in available]
-        if unknown:
-            raise ProjectError(f"Unknown semantic run: {unknown[0]}")
-        runs = []
-        for run_key in selected:
-            run = self.semantic_run(project_id, run_key)
-            run["run_key"] = run_key
-            runs.append(run)
-        benchmark = load_benchmark_findings(
-            self.settings.poc_root / "semantic" / "provider-benchmark-findings.json",
-            project_id,
-        )
-        try:
-            outcome = build_review_outcome(project_id, runs, benchmark, utc_now())
-            validate_review_outcome(
-                outcome,
-                self.settings.poc_root
-                / "schemas"
-                / "reviewed-evidence-set.schema.json",
-            )
-        except (OSError, json.JSONDecodeError, ReviewOutcomeError) as exc:
-            raise ProjectError(f"Review finalization failed: {exc}") from exc
-
-        output_dir = self.settings.runtime / project_id / "analysis" / "finalized"
-        version_path = output_dir / "versions" / f"{outcome['revision_id']}.json"
-        if version_path.is_file():
-            outcome = load_json(version_path)
-        else:
-            write_json(version_path, outcome)
-        write_json(output_dir / "review-outcome.json", outcome)
-        return self.review_outcome(project_id)
-
-    def review_outcome(self, project_id: str) -> dict:
-        self.get_project(project_id)
-        path = (
-            self.settings.runtime
-            / project_id
-            / "analysis"
-            / "finalized"
-            / "review-outcome.json"
-        )
-        result = load_json(self._require_file(path))
-        review_paths = [
-            self.settings.runtime
-            / project_id
-            / "analysis"
-            / "runs"
-            / item["run_key"]
-            / "reviews.json"
-            for item in result["candidate_sets"]
-        ]
-        result["freshness"] = (
-            "stale"
-            if any(item.is_file() and item.stat().st_mtime > path.stat().st_mtime for item in review_paths)
-            else "current"
-        )
-        return result
-
     def render(self, project_id: str) -> dict:
         project = self.get_project(project_id)
         plan = project.get("plan")
@@ -1151,27 +944,6 @@ class ProjectService:
         script = self.settings.poc_root / "scripts/export_timelines.py"
         output_dir = self.settings.runtime / project_id / "outputs"
         output_dir.mkdir(parents=True, exist_ok=True)
-        if project_id == FIXTURE_ID:
-            result = subprocess.run(
-                [sys.executable, str(script)], capture_output=True, text=True, check=False
-            )
-            if result.returncode:
-                detail = (result.stderr or result.stdout).strip()
-                raise ProjectError(f"Timeline export failed: {detail[-1000:]}")
-            source_dir = self.settings.poc_root / "artifacts/timelines"
-            outputs = {
-                "otio": (source_dir / "morning-routine.otio", output_dir / "timeline.otio"),
-                "xmeml": (
-                    source_dir / "morning-routine-davinci.xml",
-                    output_dir / "timeline-davinci.xml",
-                ),
-            }
-            for source, destination in outputs.values():
-                shutil.copy2(source, destination)
-            return {
-                key: f"/api/projects/{project_id}/outputs/{key}" for key in outputs
-            }
-
         plan_path, inventory_path, media_root = self._plan_sources(project_id)
         command = [
             sys.executable,
@@ -1265,12 +1037,6 @@ class ProjectService:
 
     def _plan_sources(self, project_id: str) -> tuple[Path, Path, Path]:
         """Plan, inventory, and media-root paths for render/export scripts."""
-        if project_id == FIXTURE_ID:
-            return (
-                self.settings.poc_root / "artifacts/edit-plan.json",
-                self.settings.poc_root / "artifacts/media-inventory.json",
-                self.settings.poc_root,
-            )
         plan_dir = self.settings.runtime / project_id / "plan"
         plan_path = plan_dir / "edit-plan.json"
         if not plan_path.is_file():
@@ -1289,10 +1055,7 @@ class ProjectService:
         )
         if asset is None:
             raise ProjectError(f"Unknown asset: {asset_id}")
-        if project_id == FIXTURE_ID:
-            path = (self.settings.poc_root / asset["source_path"]).resolve()
-        else:
-            path = (self.settings.root / asset["source_path"]).resolve()
+        path = (self.settings.root / asset["source_path"]).resolve()
         return self._require_file(path)
 
     def frame_at(self, project_id: str, asset_id: str, timestamp: float) -> bytes:
@@ -1313,14 +1076,7 @@ class ProjectService:
         return result.stdout
 
     def thumbnail_path(self, project_id: str, asset_id: str) -> Path:
-        if project_id == FIXTURE_ID:
-            analysis = self.settings.poc_root / "artifacts/assets" / asset_id / "analysis.json"
-            data = load_json(analysis)
-            if not data.get("keyframes"):
-                raise ProjectError(f"No thumbnail for asset: {asset_id}")
-            path = (self.settings.poc_root / data["keyframes"][0]["path"]).resolve()
-        else:
-            path = self.settings.runtime / project_id / "thumbnails" / f"{asset_id}.jpg"
+        path = self.settings.runtime / project_id / "thumbnails" / f"{asset_id}.jpg"
         return self._require_file(path)
 
     def output_path(self, project_id: str, kind: str) -> Path:
@@ -1332,22 +1088,9 @@ class ProjectService:
             "xmeml_proxies": runtime_outputs / "timeline-davinci-proxies.xml",
         }
         path = mapping.get(kind)
-        if kind == "render" and (path is None or not path.is_file()) and project_id == FIXTURE_ID:
-            docker_render = (
-                self.settings.poc_root
-                / "artifacts/reference-edit/morning-routine-review-docker.mp4"
-            )
-            original_render = (
-                self.settings.poc_root / "artifacts/reference-edit/morning-routine-review.mp4"
-            )
-            path = docker_render if docker_render.is_file() else original_render
         if path is None:
             raise ProjectError(f"Unknown output type: {kind}")
         return self._require_file(path)
-
-    def _fixture_summary(self) -> dict:
-        data = self._fixture()
-        return self._summary(data)
 
     def _summary(self, data: dict) -> dict:
         return {
@@ -1358,68 +1101,6 @@ class ProjectService:
             "asset_count": len(data.get("inventory", {}).get("assets", [])),
             "concept_count": len(data.get("concepts", [])),
             "has_plan": bool(data.get("plan")),
-        }
-
-    def _fixture(self) -> dict:
-        inventory = load_json(self.settings.poc_root / "artifacts/media-inventory.json")
-        concepts_data = load_json(self.settings.poc_root / "artifacts/creative-concepts.json")
-        plan = load_json(self.settings.poc_root / "artifacts/edit-plan.json")
-        analyses = {}
-        for asset in inventory["assets"]:
-            path = (
-                self.settings.poc_root
-                / "artifacts/assets"
-                / asset["asset_id"]
-                / "analysis.json"
-            )
-            if path.is_file():
-                analyses[asset["asset_id"]] = load_json(path)
-        assets = []
-        for asset in inventory["assets"]:
-            item = dict(asset)
-            item["media_url"] = f"/api/projects/{FIXTURE_ID}/media/{asset['asset_id']}"
-            analysis = analyses.get(asset["asset_id"], {})
-            if analysis.get("keyframes"):
-                item["thumbnail_url"] = (
-                    f"/api/projects/{FIXTURE_ID}/thumbnails/{asset['asset_id']}"
-                )
-            item["semantic_observations"] = analysis.get("semantic_observations", [])
-            item["transcript"] = analysis.get("transcript")
-            assets.append(item)
-        selection = self._selection(FIXTURE_ID)
-        selected = selection.get("concept_id") if selection else plan["concept_id"]
-        outputs = self._output_manifest(FIXTURE_ID)
-        return {
-            "schema_version": "video-app-project.v1",
-            "project_id": FIXTURE_ID,
-            "name": "Morning Routine POC",
-            "created_at": concepts_data["generated_at"],
-            "updated_at": concepts_data["generated_at"],
-            "source_directory": "Crayotter/crayotter-data/user_temp",
-            "prompt": "Create a concise Instagram Reel or TikTok from the supplied morning-routine footage.",
-            "status": "ready",
-            "footage_summary": concepts_data["footage_summary"],
-            "analysis": {
-                "technical": "completed",
-                "visual": "reviewed",
-                "speech": "unavailable",
-                "warning": "No spoken-content claims are used; visual observations were independently checked.",
-            },
-            "inventory": {"assets": assets},
-            "concepts": concepts_data["concepts"],
-            "selected_concept_id": selected,
-            "plan": plan,
-            "plan_summary": {
-                "concept_id": plan["concept_id"],
-                "duration_seconds": plan["project"]["duration_seconds"],
-                "format": f"{plan['project']['width']}x{plan['project']['height']} @ {plan['project']['fps']}fps",
-                "tracks": {
-                    track["kind"]: len(track["events"]) for track in plan["tracks"]
-                },
-            },
-            "outputs": outputs,
-            "provider_runs": self._semantic_run_manifests(FIXTURE_ID),
-            "review_outcome": self._review_outcome_manifest(FIXTURE_ID),
         }
 
     def _decorate_runtime_project(self, data: dict) -> dict:
@@ -1433,7 +1114,6 @@ class ProjectService:
                 )
         result["outputs"] = self._output_manifest(project_id)
         result["provider_runs"] = self._semantic_run_manifests(project_id)
-        result["review_outcome"] = self._review_outcome_manifest(project_id)
         return result
 
     def _semantic_run_manifests(self, project_id: str) -> list[dict]:
@@ -1443,40 +1123,6 @@ class ProjectService:
             for path in sorted(runs_dir.glob("*/manifest.json"))
             if path.is_file()
         ]
-
-    def _review_outcome_manifest(self, project_id: str) -> dict | None:
-        path = (
-            self.settings.runtime
-            / project_id
-            / "analysis"
-            / "finalized"
-            / "review-outcome.json"
-        )
-        if not path.is_file():
-            return None
-        outcome = load_json(path)
-        review_paths = [
-            self.settings.runtime
-            / project_id
-            / "analysis"
-            / "runs"
-            / item["run_key"]
-            / "reviews.json"
-            for item in outcome.get("candidate_sets", [])
-        ]
-        freshness = (
-            "stale"
-            if any(item.is_file() and item.stat().st_mtime > path.stat().st_mtime for item in review_paths)
-            else "current"
-        )
-        return {
-            "revision_id": outcome["revision_id"],
-            "status": outcome["status"],
-            "planning_eligible": outcome["planning_eligible"],
-            "material_conflict_count": len(outcome["material_conflicts"]),
-            "freshness": freshness,
-            "detail_url": f"/api/projects/{project_id}/analysis/finalized",
-        }
 
     def _semantic_run_path(self, project_id: str, run_key: str) -> Path:
         self.get_project(project_id)

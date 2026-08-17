@@ -272,7 +272,7 @@ def test_delete_project_removes_runtime_state_only(tmp_path: Path) -> None:
             project_id = created.json()["project_id"]
             assert (tmp_path / "runtime" / project_id / "project.json").is_file()
 
-            assert current.delete("/api/projects/morning-routine").status_code == 400
+            assert current.delete("/api/projects/no-such-project").status_code == 400
             deleted = current.delete(f"/api/projects/{project_id}")
             assert deleted.status_code == 200
             assert not (tmp_path / "runtime" / project_id).exists()
