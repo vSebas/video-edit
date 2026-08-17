@@ -11,7 +11,6 @@ import subprocess
 import sys
 import tempfile
 import threading
-import tomllib
 import uuid
 from pathlib import Path
 from typing import Any
@@ -75,44 +74,6 @@ class ProjectService:
         self._semantic_review_lock = threading.Lock()
 
     def capabilities(self) -> dict:
-        openstoryline_config = self.settings.root / "repos/FireRed-OpenStoryline/config.toml"
-        semantic_source_root = (
-            self.settings.semantic_source_root
-            or self.settings.root / "runtime" / "openstoryline"
-        )
-        saved_run_count = len(
-            list(semantic_source_root.glob("*/outputs/*/session_state.json"))
-        )
-        openstoryline = {
-            "id": "openstoryline",
-            "label": "OpenStoryline evidence adapter",
-            "ready": saved_run_count > 0,
-            "detail": (
-                f"{saved_run_count} saved provider run(s) are importable; "
-                "live invocation is not integrated yet."
-                if saved_run_count
-                else "A saved run or live LLM/VLM integration is required."
-            ),
-        }
-        if openstoryline_config.is_file():
-            try:
-                data = tomllib.loads(openstoryline_config.read_text(encoding="utf-8"))
-                configured = all(
-                    bool(data.get(section, {}).get(field))
-                    for section in ("llm", "vlm")
-                    for field in ("model", "base_url", "api_key")
-                )
-                if configured:
-                    openstoryline["ready"] = True
-                    openstoryline["detail"] = "LLM/VLM configuration is present."
-                elif not saved_run_count:
-                    openstoryline["detail"] = (
-                        "Source and model resources are present; no saved run or complete "
-                        "TOML credentials are available to the app."
-                    )
-            except (OSError, tomllib.TOMLDecodeError):
-                pass
-
         faster_whisper = importlib.util.find_spec("faster_whisper") is not None
         live_visual_ready = bool(os.environ.get("DASHSCOPE_API_KEY")) or bool(
             os.environ.get("GEMINI_API_KEY")
@@ -136,7 +97,6 @@ class ProjectService:
                     "ready": True,
                     "detail": "Available only for the completed morning-routine benchmark.",
                 },
-                openstoryline,
             ],
             "speech": [
                 {
@@ -148,12 +108,6 @@ class ProjectService:
                         if faster_whisper
                         else "Adapter boundary is defined; runtime/model are not installed in the app image yet."
                     ),
-                },
-                {
-                    "id": "cutscript-reference",
-                    "label": "CutScript transcript workflow",
-                    "ready": (self.settings.root / "repos/CutScript").is_dir(),
-                    "detail": "Pinned source is available as a component and UI reference.",
                 },
             ],
             "render": {

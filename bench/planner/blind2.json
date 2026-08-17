@@ -1360,5 +1360,464 @@
     ]
    }
   ]
+ },
+ {
+  "label": "D",
+  "concepts": [
+   {
+    "concept_id": "concept_ultimo_dia_spring",
+    "title": "Mi \u00faltimo d\u00eda del quarter de primavera en Stanford",
+    "topic": "A day-in-the-life reel following the creator's last spring-quarter day: failed intro takes, cafeteria lunch with a friend, the final deep learning and CS25 Transformers lectures, and a startup brainstorm call.",
+    "audience": "Spanish-speaking students, tech people, and friends/followers who enjoy university day-in-the-life vlogs.",
+    "platforms": [
+     "instagram_reel",
+     "tiktok"
+    ],
+    "target_duration_seconds": 80,
+    "hook": "Opens with a rapid-fire montage of the failed intro takes \u2014 the same '\u00bfQu\u00e9 onda? Acomp\u00e1\u00f1enme...' line stumbling three times with jump cuts and a take counter ('Toma 1... Toma 2... Toma 5') \u2014 before landing the clean take. On-screen text: 'Grabar un vlog es m\u00e1s dif\u00edcil de lo que parece'. The repetition + payoff instantly signals humor and authenticity.",
+    "structure": [
+     {
+      "beat_id": "hook_tomas_falladas",
+      "purpose": "Comedic cold open: stack the failed takes with jump cuts, then land the clean intro line that sets up the whole day.",
+      "target_duration_seconds": 11.0,
+      "evidence": [
+       {
+        "asset_id": "img_2541",
+        "start_seconds": 2.83,
+        "end_seconds": 5.2,
+        "observed_content": "Man puts on backpack and stumbles through the intro: '\u00bfQu\u00e9 onda? Acomp\u00e1\u00f1enme... \u00bfQu\u00e9 onda? Acomp\u00e1\u00f1enme...'",
+        "confidence": 0.9
+       },
+       {
+        "asset_id": "img_2540",
+        "start_seconds": 3.49,
+        "end_seconds": 8.11,
+        "observed_content": "Another take: '\u00bfQu\u00e9 onda? Acomp\u00e1\u00f1enme a una de mis \u00faltimas clases... Del Spring C' \u2014 trails off, visibly a flubbed take.",
+        "confidence": 0.85
+       },
+       {
+        "asset_id": "img_2544",
+        "start_seconds": 8.82,
+        "end_seconds": 14.52,
+        "observed_content": "The clean take, delivered to camera with lapel mic: '\u00bfQu\u00e9 onda? Acomp\u00e1\u00f1enme a una de mis \u00faltimas clases de primavera ac\u00e1 a Stanford y voy a comer primero.'",
+        "confidence": 0.92
+       }
+      ]
+     },
+     {
+      "beat_id": "salida_mochila",
+      "purpose": "Quick getting-ready beat: packing the laptop and zipping the backpack gives the day a starting point.",
+      "target_duration_seconds": 5.0,
+      "evidence": [
+       {
+        "asset_id": "img_2537",
+        "start_seconds": 12.8,
+        "end_seconds": 14.8,
+        "observed_content": "Man slides the laptop into the main compartment of the backpack.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2537",
+        "start_seconds": 59.13,
+        "end_seconds": 61.44,
+        "observed_content": "He pulls the zipper to close the backpack.",
+        "confidence": 0.95
+       }
+      ]
+     },
+     {
+      "beat_id": "camino_edificio",
+      "purpose": "Movement beat: entering EVGR-A and the elevator ride carry us from home mode into campus mode.",
+      "target_duration_seconds": 8.0,
+      "evidence": [
+       {
+        "asset_id": "img_2545",
+        "start_seconds": 3.8,
+        "end_seconds": 9.19,
+        "observed_content": "Man taps his card at the EVGR-A entrance, pulls open the glass door and steps into the hallway.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2545",
+        "start_seconds": 32.77,
+        "end_seconds": 34.77,
+        "observed_content": "Man in red Stanford shirt steps into the elevator and presses a floor button.",
+        "confidence": 0.95
+       }
+      ]
+     },
+     {
+      "beat_id": "cafeteria_buffet",
+      "purpose": "Sensory food beat ('voy a comer primero' pays off): fast POV cuts of serving food at the buffet stations.",
+      "target_duration_seconds": 9.0,
+      "evidence": [
+       {
+        "asset_id": "img_2547",
+        "start_seconds": 105.97,
+        "end_seconds": 108.47,
+        "observed_content": "First-person view serving roasted potatoes onto a plate with tongs at the 'Grilled Chicken' station.",
+        "confidence": 0.9
+       },
+       {
+        "asset_id": "img_2547",
+        "start_seconds": 135.69,
+        "end_seconds": 140.19,
+        "observed_content": "POV scooping 'Artichoke with Salami' salad from the salad bar onto a white plate.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2547",
+        "start_seconds": 36.72,
+        "end_seconds": 38.22,
+        "observed_content": "Hand uses tongs to pick a dessert from the circular pastry display.",
+        "confidence": 0.95
+       }
+      ]
+     },
+     {
+      "beat_id": "comida_con_amigo",
+      "purpose": "Human warmth beat: laughing across the table with the friend in the red Stanford Engineering shirt.",
+      "target_duration_seconds": 8.0,
+      "evidence": [
+       {
+        "asset_id": "img_2547",
+        "start_seconds": 176.72,
+        "end_seconds": 180.52,
+        "observed_content": "Friend in red Stanford Engineering shirt looks at the camera, laughs, then gives a thumbs up over a table full of food.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2548",
+        "start_seconds": 74.08,
+        "end_seconds": 76.08,
+        "observed_content": "Friend bursts into laughter, covering his face at the dining table.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2548",
+        "start_seconds": 92.87,
+        "end_seconds": 94.37,
+        "observed_content": "Friend gives a prominent double thumbs-up toward the camera.",
+        "confidence": 0.95
+       }
+      ]
+     },
+     {
+      "beat_id": "ultima_clase_dl",
+      "purpose": "The 'why' of the day part 1: last deep learning for computer vision class \u2014 lecture hall wide shot with real lecture audio underneath.",
+      "target_duration_seconds": 8.0,
+      "evidence": [
+       {
+        "asset_id": "img_2549",
+        "start_seconds": 0.8,
+        "end_seconds": 7.27,
+        "observed_content": "Camera tilts up to reveal the full lecture hall, presenter at the podium and a 'Spatial Long-term Memory' slide, with lecture audio about depth maps.",
+        "confidence": 0.9
+       },
+       {
+        "asset_id": "img_2551",
+        "start_seconds": 8.76,
+        "end_seconds": 12.26,
+        "observed_content": "Slide highlights yellow 'MULTIPLAYER' text and split-screen gameplay footage during the video world models talk.",
+        "confidence": 0.9
+       }
+      ]
+     },
+     {
+      "beat_id": "cs25_ultima_leccion",
+      "purpose": "The emotional core: the CS25 host literally says it's the last lecture \u2014 this line does the storytelling for us.",
+      "target_duration_seconds": 10.0,
+      "evidence": [
+       {
+        "asset_id": "img_2566",
+        "start_seconds": 2.1,
+        "end_seconds": 10.92,
+        "observed_content": "Camera tilts from a laptop showing the CS25: Transformers page up to the lecture hall while the host says: 'welcome back to cs25 today is unfortunately the last lecture of this iteration of the course'.",
+        "confidence": 0.9
+       },
+       {
+        "asset_id": "img_2564",
+        "start_seconds": 3.0,
+        "end_seconds": 5.0,
+        "observed_content": "Pull-back reveals the full lecture hall with the 'Serving Transformers' slide on screen.",
+        "confidence": 0.95
+       }
+      ]
+     },
+     {
+      "beat_id": "campus_respiro",
+      "purpose": "Breathing-room beat: campus exteriors (Huang Engineering Center, plaza, tower) give scale and a wistful tone before the last chapter.",
+      "target_duration_seconds": 6.0,
+      "evidence": [
+       {
+        "asset_id": "img_2557",
+        "start_seconds": 2.0,
+        "end_seconds": 6.0,
+        "observed_content": "Camera pulls back from the Jen-Hsun Huang Engineering Center sign to reveal the plaza under a cloudy sky.",
+        "confidence": 1.0
+       },
+       {
+        "asset_id": "img_2567",
+        "start_seconds": 5.0,
+        "end_seconds": 7.5,
+        "observed_content": "A cyclist rides past an arched walkway near the campus tower on a sunny day.",
+        "confidence": 0.95
+       }
+      ]
+     },
+     {
+      "beat_id": "llamada_startup",
+      "purpose": "Final chapter: the online call about the startup idea \u2014 real Spanish audio explaining the radar/health-monitoring concept, then the celebratory chair-dance as the day's closer.",
+      "target_duration_seconds": 12.0,
+      "evidence": [
+       {
+        "asset_id": "img_2572",
+        "start_seconds": 31.71,
+        "end_seconds": 39.93,
+        "observed_content": "At his desk in an orange jacket he points at the laptop while saying: 'pero lo he visto los chinitos, en unos papers, lo est\u00e1n poniendo en hospitales, entonces en las camas hospitalarias, est\u00e1n monitoreando a pacientes'.",
+        "confidence": 0.85
+       },
+       {
+        "asset_id": "img_2569",
+        "start_seconds": 45.34,
+        "end_seconds": 47.34,
+        "observed_content": "Camera zooms into the laptop showing the 'FOV test' presentation slide.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2574",
+        "start_seconds": 86.91,
+        "end_seconds": 89.91,
+        "observed_content": "Camera pans back to reveal him dancing in his chair with raised hands to 'This Time for Africa' on the laptop.",
+        "confidence": 0.95
+       }
+      ]
+     },
+     {
+      "beat_id": "cierre_reflexivo",
+      "purpose": "Quiet outro: sipping a drink under the sky and a last look to camera, with a short recorded voiceover reflecting on the quarter (see missing_shots). On-screen text: '\u00daltimo d\u00eda. \u00daltimo quarter de primavera.'",
+      "target_duration_seconds": 5.0,
+      "evidence": [
+       {
+        "asset_id": "img_2556",
+        "start_seconds": 0.8,
+        "end_seconds": 3.8,
+        "observed_content": "Low-angle shot of him drinking from a cup against a cloudy sky, then looking at the camera.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2550",
+        "start_seconds": 4.25,
+        "end_seconds": 6.05,
+        "observed_content": "He removes his glasses and looks at the camera under a wooden ceiling \u2014 a natural 'ending' gesture.",
+        "confidence": 0.9
+       }
+      ]
+     }
+    ],
+    "strengths": [
+     "The repeated failed intros are a gift: they build an instantly relatable comedic hook with a clean payoff take (img_2544).",
+     "CS25 host audibly saying 'today is unfortunately the last lecture' (img_2566) gives the reel an authentic emotional anchor without any narration.",
+     "Verified Spanish speech in the startup call (img_2572) and the chair-dance ending (img_2574) close the day with personality.",
+     "Strong variety of coverage: home, hallway/elevator POV, buffet POV, lecture halls, campus exteriors, desk call."
+    ],
+    "weaknesses": [
+     "There is no captured narration tying the day together; the deep learning class beat relies on lecture audio in English, which may clash with the Spanish voice of the reel.",
+     "The lunch conversation with the friend has no verified audio \u2014 his laughter reads well visually but we can't quote what was said.",
+     "No footage of leaving the last class or a clear 'end of day' exterior; the outro is assembled from short selfie fragments.",
+     "Some of the strongest talking-head cafeteria moments are marked unverified, so the beat leans on confirmed laughter/gesture shots instead."
+    ],
+    "missing_shots": [
+     {
+      "purpose": "Narrative glue and emotional closure the footage lacks.",
+      "recording_instruction": "Record a 15\u201320s voiceover in Spanish, tono nost\u00e1lgico pero ligero, sobre qu\u00e9 signific\u00f3 este \u00faltimo quarter de primavera: qu\u00e9 aprendiste, qu\u00e9 extra\u00f1ar\u00e1s y qu\u00e9 sigue (la idea de startup). Gr\u00e1balo en un cuarto silencioso, cerca del micr\u00f3fono, ritmo pausado.",
+      "priority": "required",
+      "fallback": "Use on-screen text cards in Spanish ('\u00daltima clase', '\u00daltimo buffet', 'Lo que sigue...') over instrumental music instead of narration."
+     },
+     {
+      "purpose": "A proper ending shot: the day visually never 'closes'.",
+      "recording_instruction": "Film a 6\u20138s static or slow handheld shot walking away from a campus landmark (Huang Center or the tower) at golden hour, back to camera, backpack on, then turn and wave. Horizontal or vertical, keep it steady.",
+      "priority": "recommended",
+      "fallback": "End on img_2550 (removing glasses) plus a text card 'Hasta la pr\u00f3xima, Stanford'."
+     },
+     {
+      "purpose": "The friend at lunch has no usable quote, weakening the social beat.",
+      "recording_instruction": "Record a 5\u201310s clip (or voice note) of your friend saying in Spanish one line about the lunch or the quarter (e.g., recordando el momento m\u00e1s gracioso de la comida). Phone mic close to the mouth is fine.",
+      "priority": "optional",
+      "fallback": "Keep the beat purely visual with music and a caption like 'la \u00faltima comida del quarter con este wey'."
+     }
+    ]
+   },
+   {
+    "concept_id": "concept_toma_7",
+    "title": "Toma 7: lo que no ves detr\u00e1s de un vlog",
+    "topic": "A meta, comedic reel about how many takes it actually takes to record one vlog intro, using the heavily repeated failed intro footage as the star, then rewarding the viewer with a lightning summary of the day that finally got filmed.",
+    "audience": "Creators and students who relate to the awkwardness of filming yourself; followers who enjoy self-deprecating behind-the-scenes humor in Spanish.",
+    "platforms": [
+     "instagram_reel",
+     "tiktok"
+    ],
+    "target_duration_seconds": 55,
+    "hook": "Text on black: '\u00bfCu\u00e1ntas tomas se necesitan para decir UNA frase?' \u2014 hard cut into take after take of the same '\u00bfQu\u00e9 onda? Acomp\u00e1\u00f1enme...' with an on-screen counter climbing. The visible repetition is the joke and keeps viewers waiting for the take that finally works.",
+    "structure": [
+     {
+      "beat_id": "hook_contador_tomas",
+      "purpose": "Stack three visibly flubbed takes with a take counter to establish the running gag.",
+      "target_duration_seconds": 12.0,
+      "evidence": [
+       {
+        "asset_id": "img_2539",
+        "start_seconds": 13.26,
+        "end_seconds": 18.8,
+        "observed_content": "Take: '\u00bfQu\u00e9 onda? Acomp\u00e1\u00f1enme a uno de mis \u00faltimos d\u00edas... Del quarter de Spring... Ac\u00e1' \u2014 hesitant delivery while putting on the backpack.",
+        "confidence": 0.85
+       },
+       {
+        "asset_id": "img_2540",
+        "start_seconds": 3.49,
+        "end_seconds": 9.01,
+        "observed_content": "Take: '\u00bfQu\u00e9 onda? Acomp\u00e1\u00f1enme a una de mis \u00faltimas clases... Del Spring C... Del Cuarto y despu\u00e9s' \u2014 mixes languages and trails off.",
+        "confidence": 0.85
+       },
+       {
+        "asset_id": "img_2541",
+        "start_seconds": 2.83,
+        "end_seconds": 5.2,
+        "observed_content": "Take restarts mid-line: '\u00bfQu\u00e9 onda? Acomp\u00e1\u00f1enme... \u00bfQu\u00e9 onda? Acomp\u00e1\u00f1enme...'",
+        "confidence": 0.9
+       }
+      ]
+     },
+     {
+      "beat_id": "ritual_preparacion",
+      "purpose": "Show the absurd behind-the-scenes ritual: re-packing the same backpack, re-placing it on the chair, walking to camera to stop recording \u2014 the labor behind every take.",
+      "target_duration_seconds": 10.0,
+      "evidence": [
+       {
+        "asset_id": "img_2537",
+        "start_seconds": 67.94,
+        "end_seconds": 69.44,
+        "observed_content": "He walks up to the camera and reaches toward it to stop recording after a take.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2538",
+        "start_seconds": 16.55,
+        "end_seconds": 18.55,
+        "observed_content": "He grips and pulls the backpack zippers on the office chair, resetting for another take.",
+        "confidence": 1.0
+       },
+       {
+        "asset_id": "img_2541",
+        "start_seconds": 5.64,
+        "end_seconds": 7.44,
+        "observed_content": "He removes the backpack and sets it back on the chair \u2014 literally resetting the scene.",
+        "confidence": 0.95
+       }
+      ]
+     },
+     {
+      "beat_id": "la_toma_buena",
+      "purpose": "The payoff: the clean, confident take delivered in full. Counter text: 'Toma 7 \u2705'.",
+      "target_duration_seconds": 7.0,
+      "evidence": [
+       {
+        "asset_id": "img_2544",
+        "start_seconds": 8.82,
+        "end_seconds": 14.7,
+        "observed_content": "Complete line to camera with mic: '\u00bfQu\u00e9 onda? Acomp\u00e1\u00f1enme a una de mis \u00faltimas clases de primavera ac\u00e1 a Stanford y voy a comer primero.' He steps closer to camera at the end.",
+        "confidence": 0.92
+       }
+      ]
+     },
+     {
+      "beat_id": "el_dia_en_10_segundos",
+      "purpose": "Reward montage: since the intro finally worked, deliver the promised day at hyper-speed \u2014 buffet, friend laughing, last lecture, startup call dance.",
+      "target_duration_seconds": 16.0,
+      "evidence": [
+       {
+        "asset_id": "img_2547",
+        "start_seconds": 109.28,
+        "end_seconds": 112.28,
+        "observed_content": "POV grabbing roasted potatoes with tongs at the buffet.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2548",
+        "start_seconds": 74.08,
+        "end_seconds": 76.08,
+        "observed_content": "Friend in red Stanford shirt laughs hard, covering his face at the table.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2566",
+        "start_seconds": 6.19,
+        "end_seconds": 10.92,
+        "observed_content": "Reveal of the CS25 lecture hall while the host says it's the last lecture of the course.",
+        "confidence": 0.9
+       },
+       {
+        "asset_id": "img_2574",
+        "start_seconds": 86.91,
+        "end_seconds": 89.91,
+        "observed_content": "He dances in his chair with raised hands to music playing on the laptop.",
+        "confidence": 0.95
+       }
+      ]
+     },
+     {
+      "beat_id": "remate",
+      "purpose": "Punchline outro: a last deadpan look to camera. Text: 'Y as\u00ed se graba un vlog. M\u00e1s o menos.'",
+      "target_duration_seconds": 5.0,
+      "evidence": [
+       {
+        "asset_id": "img_2550",
+        "start_seconds": 4.25,
+        "end_seconds": 7.45,
+        "observed_content": "Low-angle selfie: he removes his glasses and looks at the camera.",
+        "confidence": 0.9
+       },
+       {
+        "asset_id": "img_2556",
+        "start_seconds": 0.8,
+        "end_seconds": 2.2,
+        "observed_content": "He sips from a cup against a cloudy sky \u2014 a calm final beat.",
+        "confidence": 0.95
+       }
+      ]
+     }
+    ],
+    "strengths": [
+     "The failed takes are abundant (img_2539\u20132544) and nearly identical, which is exactly what this format needs \u2014 the footage weakness becomes the concept.",
+     "Clear comedic arc: attempts \u2192 ritual \u2192 clean take \u2192 reward montage \u2192 punchline.",
+     "Short runtime with high cut density fits Reels/TikTok retention patterns."
+    ],
+    "weaknesses": [
+     "No captured reaction of frustration between takes (sighs, laughing at himself), so the humor relies on editing and on-screen counters rather than performance.",
+     "The reward montage compresses the whole day, so the classes and startup call get only a flash each.",
+     "Take counter numbers are an editorial device \u2014 the footage doesn't confirm the actual take count, so the text should stay playful, not literal."
+    ],
+    "missing_shots": [
+     {
+      "purpose": "A genuine frustration/laughing-at-yourself reaction to intercut between takes would supercharge the comedy.",
+      "recording_instruction": "Record a 3\u20135s clip in the same room/outfit if possible: suspiras, te r\u00edes y miras a la c\u00e1mara negando con la cabeza despu\u00e9s de equivocarte. Framing igual al de las tomas originales (c\u00e1mara baja, est\u00e1tica).",
+      "priority": "recommended",
+      "fallback": "Use a freeze-frame with zoom-in and a sound effect (record scratch) plus text 'otra vez...' between takes."
+     },
+     {
+      "purpose": "A short voiceover to open the meta framing.",
+      "recording_instruction": "Graba una voz en off de 6\u20138s en espa\u00f1ol, tono ir\u00f3nico: 'Nadie te dice que la parte m\u00e1s dif\u00edcil de un vlog es... decir la primera frase.' Cuarto silencioso, cerca del mic.",
+      "priority": "recommended",
+      "fallback": "Open with the black text card only ('\u00bfCu\u00e1ntas tomas se necesitan para decir UNA frase?')."
+     },
+     {
+      "purpose": "Cleaner ending beat than repurposed selfie fragments.",
+      "recording_instruction": "Film a 4\u20136s take where finally you nail the line, smile, and dramatically drop the mic or collapse on the chair in relief. Same low static framing as the original takes.",
+      "priority": "optional",
+      "fallback": "End on img_2550 with the punchline text overlay."
+     }
+    ]
+   }
+  ]
  }
 ]

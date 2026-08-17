@@ -1,0 +1,620 @@
+{
+ "schema_version": "edit-plan.v1",
+ "generated_at": "2026-08-17T08:49:49.400758Z",
+ "benchmark_id": "last-spring-quarter-class-auto-planning-v1",
+ "concept_id": "concept_ultimo_dia_spring",
+ "revision": 1,
+ "project": {
+  "width": 1080,
+  "height": 1920,
+  "fps": 30,
+  "duration_seconds": 62.79,
+  "background_color": "#000000"
+ },
+ "tracks": [
+  {
+   "track_id": "v1",
+   "kind": "video",
+   "events": [
+    {
+     "event_id": "v01_hook_mochila",
+     "asset_id": "img_2543",
+     "source_start_seconds": 4.0,
+     "source_end_seconds": 7.98,
+     "timeline_start_seconds": 0.0,
+     "duration_seconds": 3.98,
+     "playback_rate": 1.0,
+     "intent": "Establecer el contexto del \u00faltimo d\u00eda y enganchar con el creator hablando a c\u00e1mara.",
+     "observed_content": "El creator se pone la mochila mirando a c\u00e1mara y dice: '\u00bfQu\u00e9 onda? Acomp\u00e1\u00f1enme en una de mis \u00faltimas clases de primavera, ac\u00e1 en Stanford.'",
+     "confidence": 0.75,
+     "transition_out": {
+      "type": "cut",
+      "duration_seconds": 0.0
+     },
+     "text": null,
+     "reframe": {
+      "mode": "fit",
+      "center_x": 0.5,
+      "center_y": 0.5,
+      "scale": 1.0,
+      "rotation_degrees": 0,
+      "manual_review": false
+     },
+     "volume_db": null
+    },
+    {
+     "event_id": "v02_camino_comer",
+     "asset_id": "img_2543",
+     "source_start_seconds": 10.1,
+     "source_end_seconds": 12.24,
+     "timeline_start_seconds": 3.98,
+     "duration_seconds": 2.14,
+     "playback_rate": 1.0,
+     "intent": "Transici\u00f3n ligera: camino a la cafeter\u00eda antes de clase.",
+     "observed_content": "El creator dice 'Esto... voy a comer primero.' mientras camina.",
+     "confidence": 0.75,
+     "transition_out": {
+      "type": "cut",
+      "duration_seconds": 0.0
+     },
+     "text": null,
+     "reframe": {
+      "mode": "fit",
+      "center_x": 0.5,
+      "center_y": 0.5,
+      "scale": 1.0,
+      "rotation_degrees": 0,
+      "manual_review": false
+     },
+     "volume_db": null
+    },
+    {
+     "event_id": "v03_cafeteria_food",
+     "asset_id": "img_2547",
+     "source_start_seconds": 109.28,
+     "source_end_seconds": 116.0,
+     "timeline_start_seconds": 6.12,
+     "duration_seconds": 6.72,
+     "playback_rate": 1.0,
+     "intent": "Mostrar el ambiente de la cafeter\u00eda de Stanford sirviendo comida.",
+     "observed_content": "Vista en primera persona sirviendo papas asadas con pinzas en el buffet de la cafeter\u00eda.",
+     "confidence": 0.95,
+     "transition_out": {
+      "type": "cut",
+      "duration_seconds": 0.0
+     },
+     "text": null,
+     "reframe": {
+      "mode": "fit",
+      "center_x": 0.5,
+      "center_y": 0.5,
+      "scale": 1.0,
+      "rotation_degrees": 0,
+      "manual_review": false
+     },
+     "volume_db": null
+    },
+    {
+     "event_id": "v04_cafeteria_ambiente",
+     "asset_id": "img_2547",
+     "source_start_seconds": 148.3,
+     "source_end_seconds": 153.0,
+     "timeline_start_seconds": 12.84,
+     "duration_seconds": 4.7,
+     "playback_rate": 1.0,
+     "intent": "Ampliar el contexto visual del comedor: gente comiendo, mesas, ambiente universitario.",
+     "observed_content": "La c\u00e1mara pasa el mostrador frontal y revela el \u00e1rea principal del comedor con gente sentada.",
+     "confidence": 0.95,
+     "transition_out": {
+      "type": "cut",
+      "duration_seconds": 0.0
+     },
+     "text": null,
+     "reframe": {
+      "mode": "fit",
+      "center_x": 0.5,
+      "center_y": 0.5,
+      "scale": 1.0,
+      "rotation_degrees": 0,
+      "manual_review": false
+     },
+     "volume_db": null
+    },
+    {
+     "event_id": "v05_caminando_campus",
+     "asset_id": "img_2545",
+     "source_start_seconds": 7.69,
+     "source_end_seconds": 13.2,
+     "timeline_start_seconds": 17.54,
+     "duration_seconds": 5.51,
+     "playback_rate": 1.0,
+     "intent": "Transici\u00f3n de la cafeter\u00eda hacia el edificio de ingenier\u00eda.",
+     "observed_content": "El creator abre la puerta de vidrio de EVGR-A (Stanford Engineering) y camina por el pasillo alfombrado.",
+     "confidence": 0.95,
+     "transition_out": {
+      "type": "cut",
+      "duration_seconds": 0.0
+     },
+     "text": null,
+     "reframe": {
+      "mode": "fit",
+      "center_x": 0.5,
+      "center_y": 0.5,
+      "scale": 1.0,
+      "rotation_degrees": 0,
+      "manual_review": false
+     },
+     "volume_db": null
+    },
+    {
+     "event_id": "v06_elevador",
+     "asset_id": "img_2545",
+     "source_start_seconds": 76.92,
+     "source_end_seconds": 81.4,
+     "timeline_start_seconds": 23.05,
+     "duration_seconds": 4.48,
+     "playback_rate": 1.0,
+     "intent": "Subida al sal\u00f3n de clases \u2014 momento din\u00e1mico en el elevador.",
+     "observed_content": "Dentro del elevador, el creator sonr\u00ede a la c\u00e1mara, presiona el bot\u00f3n y el scooter el\u00e9ctrico est\u00e1 en el piso.",
+     "confidence": 0.95,
+     "transition_out": {
+      "type": "cut",
+      "duration_seconds": 0.0
+     },
+     "text": null,
+     "reframe": {
+      "mode": "fit",
+      "center_x": 0.5,
+      "center_y": 0.5,
+      "scale": 1.0,
+      "rotation_degrees": 0,
+      "manual_review": false
+     },
+     "volume_db": null
+    },
+    {
+     "event_id": "v07_entrada_salon",
+     "asset_id": "img_2545",
+     "source_start_seconds": 107.68,
+     "source_end_seconds": 111.7,
+     "timeline_start_seconds": 27.53,
+     "duration_seconds": 4.02,
+     "playback_rate": 1.0,
+     "intent": "Llegada al sal\u00f3n \u2014 usar keycard en la puerta 1071.",
+     "observed_content": "El creator camina por el pasillo, usa su keycard en la puerta 1071 y la abre.",
+     "confidence": 0.95,
+     "transition_out": {
+      "type": "cut",
+      "duration_seconds": 0.0
+     },
+     "text": null,
+     "reframe": {
+      "mode": "fit",
+      "center_x": 0.5,
+      "center_y": 0.5,
+      "scale": 1.0,
+      "rotation_degrees": 0,
+      "manual_review": false
+     },
+     "volume_db": null
+    },
+    {
+     "event_id": "v08_clase_transformers",
+     "asset_id": "img_2566",
+     "source_start_seconds": 6.32,
+     "source_end_seconds": 9.48,
+     "timeline_start_seconds": 31.55,
+     "duration_seconds": 3.16,
+     "playback_rate": 1.0,
+     "intent": "Momento central: la \u00faltima clase de CS25 Transformers United.",
+     "observed_content": "La c\u00e1mara se inclina desde la laptop mostrando 'CS25: Transformers United' y revela el sal\u00f3n de clases con presentadores frente a la audiencia.",
+     "confidence": 0.95,
+     "transition_out": {
+      "type": "cut",
+      "duration_seconds": 0.0
+     },
+     "text": null,
+     "reframe": {
+      "mode": "fit",
+      "center_x": 0.5,
+      "center_y": 0.5,
+      "scale": 1.0,
+      "rotation_degrees": 0,
+      "manual_review": false
+     },
+     "volume_db": null
+    },
+    {
+     "event_id": "v09_clase_transformers",
+     "asset_id": "img_2566",
+     "source_start_seconds": 6.54,
+     "source_end_seconds": 11.04,
+     "timeline_start_seconds": 34.71,
+     "duration_seconds": 4.5,
+     "playback_rate": 1.0,
+     "intent": "Momento central: la \u00faltima clase de CS25 Transformers United.",
+     "observed_content": "Audio del presentador: 'all right so hello everybody uh welcome back to cs25 today is unfortunately the last lecture of this iteration of the course'",
+     "confidence": 0.76,
+     "transition_out": {
+      "type": "cut",
+      "duration_seconds": 0.0
+     },
+     "text": null,
+     "reframe": {
+      "mode": "fit",
+      "center_x": 0.5,
+      "center_y": 0.5,
+      "scale": 1.0,
+      "rotation_degrees": 0,
+      "manual_review": false
+     },
+     "volume_db": null
+    },
+    {
+     "event_id": "v10_clase_contenido",
+     "asset_id": "img_2551",
+     "source_start_seconds": 13.26,
+     "source_end_seconds": 19.9,
+     "timeline_start_seconds": 39.21,
+     "duration_seconds": 6.64,
+     "playback_rate": 1.0,
+     "intent": "Mostrar el contenido t\u00e9cnico de la clase: modelos de mundo de video y game engines.",
+     "observed_content": "Pantalla de proyecci\u00f3n muestra 'diffusion models are MULTIPLAYER real-time game engines' con gameplay de video dividido.",
+     "confidence": 0.95,
+     "transition_out": {
+      "type": "cut",
+      "duration_seconds": 0.0
+     },
+     "text": null,
+     "reframe": {
+      "mode": "fit",
+      "center_x": 0.5,
+      "center_y": 0.5,
+      "scale": 1.0,
+      "rotation_degrees": 0,
+      "manual_review": false
+     },
+     "volume_db": null
+    },
+    {
+     "event_id": "v11_clase_audiencia",
+     "asset_id": "img_2552",
+     "source_start_seconds": 82.05,
+     "source_end_seconds": 87.5,
+     "timeline_start_seconds": 45.85,
+     "duration_seconds": 5.45,
+     "playback_rate": 1.0,
+     "intent": "Reforzar la escala del evento: auditorio lleno de estudiantes.",
+     "observed_content": "Vista est\u00e1tica amplia del auditorio con audiencia sentada viendo la presentaci\u00f3n 'Multi-player Video World Models'.",
+     "confidence": 1.0,
+     "transition_out": {
+      "type": "cut",
+      "duration_seconds": 0.0
+     },
+     "text": null,
+     "reframe": {
+      "mode": "fit",
+      "center_x": 0.5,
+      "center_y": 0.5,
+      "scale": 1.0,
+      "rotation_degrees": 0,
+      "manual_review": false
+     },
+     "volume_db": null
+    },
+    {
+     "event_id": "v12_llamada_startup",
+     "asset_id": "img_2574",
+     "source_start_seconds": 0.0,
+     "source_end_seconds": 5.5,
+     "timeline_start_seconds": 51.3,
+     "duration_seconds": 5.5,
+     "playback_rate": 1.0,
+     "intent": "Cierre: despu\u00e9s de clase, llamada con amigo sobre idea de startup.",
+     "observed_content": "El creator est\u00e1 en su escritorio con laptop, r\u00ede y aplaude mirando la pantalla en una videollamada.",
+     "confidence": 0.95,
+     "transition_out": {
+      "type": "cut",
+      "duration_seconds": 0.0
+     },
+     "text": null,
+     "reframe": {
+      "mode": "fit",
+      "center_x": 0.5,
+      "center_y": 0.5,
+      "scale": 1.0,
+      "rotation_degrees": 0,
+      "manual_review": false
+     },
+     "volume_db": null
+    },
+    {
+     "event_id": "v13_llamada_startup",
+     "asset_id": "img_2574",
+     "source_start_seconds": 83.91,
+     "source_end_seconds": 89.9,
+     "timeline_start_seconds": 56.8,
+     "duration_seconds": 5.99,
+     "playback_rate": 1.0,
+     "intent": "Cierre: despu\u00e9s de clase, llamada con amigo sobre idea de startup.",
+     "observed_content": "La c\u00e1mara muestra la laptop reproduciendo un video ('This Time for Africa') y luego revela al creator bailando con las manos levantadas en su silla.",
+     "confidence": 0.95,
+     "transition_out": {
+      "type": "cut",
+      "duration_seconds": 0.0
+     },
+     "text": null,
+     "reframe": {
+      "mode": "fit",
+      "center_x": 0.5,
+      "center_y": 0.5,
+      "scale": 1.0,
+      "rotation_degrees": 0,
+      "manual_review": false
+     },
+     "volume_db": null
+    }
+   ]
+  },
+  {
+   "track_id": "a1",
+   "kind": "audio",
+   "events": [
+    {
+     "event_id": "a01_hook_mochila",
+     "asset_id": "img_2543",
+     "source_start_seconds": 4.0,
+     "source_end_seconds": 7.98,
+     "timeline_start_seconds": 0.0,
+     "duration_seconds": 3.98,
+     "playback_rate": 1.0,
+     "intent": "Establecer el contexto del \u00faltimo d\u00eda y enganchar con el creator hablando a c\u00e1mara.",
+     "observed_content": "El creator se pone la mochila mirando a c\u00e1mara y dice: '\u00bfQu\u00e9 onda? Acomp\u00e1\u00f1enme en una de mis \u00faltimas clases de primavera, ac\u00e1 en Stanford.'",
+     "confidence": 0.75,
+     "transition_out": {
+      "type": "cut",
+      "duration_seconds": 0.0
+     },
+     "text": null,
+     "volume_db": 0.0
+    },
+    {
+     "event_id": "a02_camino_comer",
+     "asset_id": "img_2543",
+     "source_start_seconds": 10.1,
+     "source_end_seconds": 12.24,
+     "timeline_start_seconds": 3.98,
+     "duration_seconds": 2.14,
+     "playback_rate": 1.0,
+     "intent": "Transici\u00f3n ligera: camino a la cafeter\u00eda antes de clase.",
+     "observed_content": "El creator dice 'Esto... voy a comer primero.' mientras camina.",
+     "confidence": 0.75,
+     "transition_out": {
+      "type": "cut",
+      "duration_seconds": 0.0
+     },
+     "text": null,
+     "volume_db": 0.0
+    },
+    {
+     "event_id": "a03_cafeteria_food",
+     "asset_id": "img_2547",
+     "source_start_seconds": 109.28,
+     "source_end_seconds": 116.0,
+     "timeline_start_seconds": 6.12,
+     "duration_seconds": 6.72,
+     "playback_rate": 1.0,
+     "intent": "Mostrar el ambiente de la cafeter\u00eda de Stanford sirviendo comida.",
+     "observed_content": "Vista en primera persona sirviendo papas asadas con pinzas en el buffet de la cafeter\u00eda.",
+     "confidence": 0.95,
+     "transition_out": {
+      "type": "cut",
+      "duration_seconds": 0.0
+     },
+     "text": null,
+     "volume_db": 0.0
+    },
+    {
+     "event_id": "a04_cafeteria_ambiente",
+     "asset_id": "img_2547",
+     "source_start_seconds": 148.3,
+     "source_end_seconds": 153.0,
+     "timeline_start_seconds": 12.84,
+     "duration_seconds": 4.7,
+     "playback_rate": 1.0,
+     "intent": "Ampliar el contexto visual del comedor: gente comiendo, mesas, ambiente universitario.",
+     "observed_content": "La c\u00e1mara pasa el mostrador frontal y revela el \u00e1rea principal del comedor con gente sentada.",
+     "confidence": 0.95,
+     "transition_out": {
+      "type": "cut",
+      "duration_seconds": 0.0
+     },
+     "text": null,
+     "volume_db": 0.0
+    },
+    {
+     "event_id": "a05_caminando_campus",
+     "asset_id": "img_2545",
+     "source_start_seconds": 7.69,
+     "source_end_seconds": 13.2,
+     "timeline_start_seconds": 17.54,
+     "duration_seconds": 5.51,
+     "playback_rate": 1.0,
+     "intent": "Transici\u00f3n de la cafeter\u00eda hacia el edificio de ingenier\u00eda.",
+     "observed_content": "El creator abre la puerta de vidrio de EVGR-A (Stanford Engineering) y camina por el pasillo alfombrado.",
+     "confidence": 0.95,
+     "transition_out": {
+      "type": "cut",
+      "duration_seconds": 0.0
+     },
+     "text": null,
+     "volume_db": 0.0
+    },
+    {
+     "event_id": "a06_elevador",
+     "asset_id": "img_2545",
+     "source_start_seconds": 76.92,
+     "source_end_seconds": 81.4,
+     "timeline_start_seconds": 23.05,
+     "duration_seconds": 4.48,
+     "playback_rate": 1.0,
+     "intent": "Subida al sal\u00f3n de clases \u2014 momento din\u00e1mico en el elevador.",
+     "observed_content": "Dentro del elevador, el creator sonr\u00ede a la c\u00e1mara, presiona el bot\u00f3n y el scooter el\u00e9ctrico est\u00e1 en el piso.",
+     "confidence": 0.95,
+     "transition_out": {
+      "type": "cut",
+      "duration_seconds": 0.0
+     },
+     "text": null,
+     "volume_db": 0.0
+    },
+    {
+     "event_id": "a07_entrada_salon",
+     "asset_id": "img_2545",
+     "source_start_seconds": 107.68,
+     "source_end_seconds": 111.7,
+     "timeline_start_seconds": 27.53,
+     "duration_seconds": 4.02,
+     "playback_rate": 1.0,
+     "intent": "Llegada al sal\u00f3n \u2014 usar keycard en la puerta 1071.",
+     "observed_content": "El creator camina por el pasillo, usa su keycard en la puerta 1071 y la abre.",
+     "confidence": 0.95,
+     "transition_out": {
+      "type": "cut",
+      "duration_seconds": 0.0
+     },
+     "text": null,
+     "volume_db": 0.0
+    },
+    {
+     "event_id": "a08_clase_transformers",
+     "asset_id": "img_2566",
+     "source_start_seconds": 6.32,
+     "source_end_seconds": 9.48,
+     "timeline_start_seconds": 31.55,
+     "duration_seconds": 3.16,
+     "playback_rate": 1.0,
+     "intent": "Momento central: la \u00faltima clase de CS25 Transformers United.",
+     "observed_content": "La c\u00e1mara se inclina desde la laptop mostrando 'CS25: Transformers United' y revela el sal\u00f3n de clases con presentadores frente a la audiencia.",
+     "confidence": 0.95,
+     "transition_out": {
+      "type": "cut",
+      "duration_seconds": 0.0
+     },
+     "text": null,
+     "volume_db": 0.0
+    },
+    {
+     "event_id": "a09_clase_transformers",
+     "asset_id": "img_2566",
+     "source_start_seconds": 6.54,
+     "source_end_seconds": 11.04,
+     "timeline_start_seconds": 34.71,
+     "duration_seconds": 4.5,
+     "playback_rate": 1.0,
+     "intent": "Momento central: la \u00faltima clase de CS25 Transformers United.",
+     "observed_content": "Audio del presentador: 'all right so hello everybody uh welcome back to cs25 today is unfortunately the last lecture of this iteration of the course'",
+     "confidence": 0.76,
+     "transition_out": {
+      "type": "cut",
+      "duration_seconds": 0.0
+     },
+     "text": null,
+     "volume_db": 0.0
+    },
+    {
+     "event_id": "a10_clase_contenido",
+     "asset_id": "img_2551",
+     "source_start_seconds": 13.26,
+     "source_end_seconds": 19.9,
+     "timeline_start_seconds": 39.21,
+     "duration_seconds": 6.64,
+     "playback_rate": 1.0,
+     "intent": "Mostrar el contenido t\u00e9cnico de la clase: modelos de mundo de video y game engines.",
+     "observed_content": "Pantalla de proyecci\u00f3n muestra 'diffusion models are MULTIPLAYER real-time game engines' con gameplay de video dividido.",
+     "confidence": 0.95,
+     "transition_out": {
+      "type": "cut",
+      "duration_seconds": 0.0
+     },
+     "text": null,
+     "volume_db": 0.0
+    },
+    {
+     "event_id": "a11_clase_audiencia",
+     "asset_id": "img_2552",
+     "source_start_seconds": 82.05,
+     "source_end_seconds": 87.5,
+     "timeline_start_seconds": 45.85,
+     "duration_seconds": 5.45,
+     "playback_rate": 1.0,
+     "intent": "Reforzar la escala del evento: auditorio lleno de estudiantes.",
+     "observed_content": "Vista est\u00e1tica amplia del auditorio con audiencia sentada viendo la presentaci\u00f3n 'Multi-player Video World Models'.",
+     "confidence": 1.0,
+     "transition_out": {
+      "type": "cut",
+      "duration_seconds": 0.0
+     },
+     "text": null,
+     "volume_db": 0.0
+    },
+    {
+     "event_id": "a12_llamada_startup",
+     "asset_id": "img_2574",
+     "source_start_seconds": 0.0,
+     "source_end_seconds": 5.5,
+     "timeline_start_seconds": 51.3,
+     "duration_seconds": 5.5,
+     "playback_rate": 1.0,
+     "intent": "Cierre: despu\u00e9s de clase, llamada con amigo sobre idea de startup.",
+     "observed_content": "El creator est\u00e1 en su escritorio con laptop, r\u00ede y aplaude mirando la pantalla en una videollamada.",
+     "confidence": 0.95,
+     "transition_out": {
+      "type": "cut",
+      "duration_seconds": 0.0
+     },
+     "text": null,
+     "volume_db": 0.0
+    },
+    {
+     "event_id": "a13_llamada_startup",
+     "asset_id": "img_2574",
+     "source_start_seconds": 83.91,
+     "source_end_seconds": 89.9,
+     "timeline_start_seconds": 56.8,
+     "duration_seconds": 5.99,
+     "playback_rate": 1.0,
+     "intent": "Cierre: despu\u00e9s de clase, llamada con amigo sobre idea de startup.",
+     "observed_content": "La c\u00e1mara muestra la laptop reproduciendo un video ('This Time for Africa') y luego revela al creator bailando con las manos levantadas en su silla.",
+     "confidence": 0.95,
+     "transition_out": {
+      "type": "cut",
+      "duration_seconds": 0.0
+     },
+     "text": null,
+     "volume_db": 0.0
+    }
+   ]
+  },
+  {
+   "track_id": "t1",
+   "kind": "title",
+   "events": [
+    {
+     "event_id": "t01_hook",
+     "asset_id": null,
+     "source_start_seconds": null,
+     "source_end_seconds": null,
+     "timeline_start_seconds": 0.0,
+     "duration_seconds": 2.5,
+     "playback_rate": 1.0,
+     "intent": "Open with the concept title as the text hook.",
+     "observed_content": null,
+     "confidence": 1.0,
+     "text": "Mi \u00faltimo d\u00eda del Spring Quarter",
+     "volume_db": null
+    }
+   ]
+  }
+ ]
+}
