@@ -12,7 +12,8 @@ padding is trimmable but missed action is unrecoverable), **midpoint-hit**
 
 | Model | Mean IoU | Mean recall | Midpoint-hit | Median latency |
 |---|---|---|---|---|
-| **gemini-3.6-flash** | **0.593** | **0.808** | **12/12** | 4.0 s |
+| **gemini-3.6-flash + audio track** | **0.614** | **0.855** | **12/12** | 4.0 s |
+| gemini-3.6-flash (video only) | 0.593 | 0.808 | 12/12 | 4.0 s |
 | qwen3.7-plus (previous default) | 0.386 | 0.761 | 10/12 | 15.8 s |
 | qwen3.8-max | 0.422 | 0.705 | 10/12 | 20.9 s |
 | gemini-3.7-flash | 0.482 | 0.668 | 10/12 | 4.5 s |
@@ -27,6 +28,13 @@ padding is trimmable but missed action is unrecoverable), **midpoint-hit**
 | Vidi1.5-9B (self-hosted, A6000) | 0.241 | — | 3/12 hits@0.3 | ~20 s + infra |
 
 ## Conclusions
+
+- **Audio audit (2026-08-17):** every model except TwelveLabs was originally
+  benched on silent clips because the pipeline strips audio from segments.
+  Re-benching the leader WITH the audio track improved every metric
+  (recall 0.808 → 0.855) at identical latency — on mostly-visual queries;
+  speech-driven footage should gain more. The upgraded adapter must send
+  audio-carrying segments.
 
 - **gemini-3.6-flash wins on every metric** including a perfect containment
   rate; it is the visual-adapter upgrade target.
