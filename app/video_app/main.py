@@ -24,7 +24,7 @@ class SelectConceptRequest(BaseModel):
 
 
 class AnalyzeVisualRequest(BaseModel):
-    provider: str = Field(default="qwen", pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
+    provider: str = Field(default="gemini", pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
     model: str | None = Field(default=None, max_length=160)
 
 

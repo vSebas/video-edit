@@ -100,9 +100,13 @@ def extract_frame(path: Path, timestamp: float) -> bytes:
     return result.stdout
 
 
-def extract_segment(path: Path, start: float, end: float) -> bytes | None:
-    """Downscaled, silent H.264 segment of the shot for native-video model
-    input. Returns None if it cannot be kept under the payload budget."""
+def extract_segment(
+    path: Path, start: float, end: float, keep_audio: bool = False
+) -> bytes | None:
+    """Downscaled H.264 segment of the shot for native-video model input,
+    with the audio track when the provider can hear (measured: audio
+    improves grounding). Returns None over the payload budget."""
+    audio_args = ["-c:a", "aac", "-b:a", "64k"] if keep_audio else ["-an"]
     for scale in SEGMENT_SCALES:
         command = [
             "ffmpeg", "-hide_banner", "-loglevel", "error",
@@ -110,7 +114,8 @@ def extract_segment(path: Path, start: float, end: float) -> bytes | None:
             "-i", str(path),
             "-vf", f"scale={scale}:-2",
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "30",
-            "-an", "-movflags", "+faststart+frag_keyframe+empty_moov",
+            *audio_args,
+            "-movflags", "+faststart+frag_keyframe+empty_moov",
             "-f", "mp4", "pipe:1",
         ]
         result = subprocess.run(command, capture_output=True, check=False)
@@ -153,17 +158,30 @@ def describe_shot(
     """Describe one shot, preferring native-video input (motion, order, and
     sub-shot timestamps) and falling back to sampled keyframes. Returns
     (parsed observation payload, raw exchange record)."""
-    segment = None if end - start < 0.5 else extract_segment(path, start, end)
+    hears = getattr(client.config, "provider", "") == "gemini"
+    segment = (
+        None
+        if end - start < 0.5
+        else extract_segment(path, start, end, keep_audio=hears)
+    )
     if segment is not None:
+        audio_note = (
+            "The audio track is included; use sounds and speech (may be "
+            "Spanish or English) to locate moments, but do NOT transcribe "
+            "speech — a dedicated transcriber handles that. You may note "
+            "that speech or a notable sound occurs.\n"
+            if hears
+            else ""
+        )
         instruction = (
             f"This video is one shot from the clip '{filename}' "
             f"(covering {start:.2f}s to {end:.2f}s of the source). Describe it, "
             "and give timestamps RELATIVE TO THIS VIDEO for the strongest "
             "moment and up to 3 notable moments (peaks of action, gestures, "
-            "reveals, eye contact).\n" + RESPONSE_SHAPE
+            "reveals, eye contact).\n" + audio_note + RESPONSE_SHAPE
         )
         content = [video_part(segment), text_part(instruction)]
-        input_mode = "video"
+        input_mode = "video+audio" if hears else "video"
     else:
         frames = [extract_frame(path, ts) for ts in frame_timestamps(start, end)]
         instruction = (

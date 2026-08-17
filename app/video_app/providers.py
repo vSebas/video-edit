@@ -25,8 +25,8 @@ PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
     "gemini": {
         "api_key_env": "GEMINI_API_KEY",
         "base_url_env": "GEMINI_BASE_URL",
-        "default_base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
-        "default_model": "gemini-3.5-flash",
+        "default_base_url": "https://generativelanguage.googleapis.com/v1beta",
+        "default_model": "gemini-3.6-flash",
     },
 }
 
@@ -100,6 +100,109 @@ def parse_json_content(content: str) -> Any:
         if start >= 0 and end > start:
             return json.loads(text[start : end + 1])
         raise
+
+
+class GeminiClient:
+    """Native Gemini client with the same .chat() surface as ChatClient.
+    Required because Gemini's video (with audio) input is only available on
+    its native API, not the OpenAI-compatible layer."""
+
+    def __init__(
+        self,
+        config: ProviderConfig,
+        timeout_seconds: float = 180.0,
+        max_attempts: int = 3,
+    ) -> None:
+        self.config = config
+        self._timeout = timeout_seconds
+        self._max_attempts = max_attempts
+
+    @staticmethod
+    def _convert_part(part: dict) -> dict:
+        if part.get("type") == "text":
+            return {"text": part["text"]}
+        if part.get("type") == "image_url":
+            data = part["image_url"]["url"].split(",", 1)[1]
+            return {"inline_data": {"mime_type": "image/jpeg", "data": data}}
+        if part.get("type") == "video_url":
+            data = part["video_url"]["url"].split(",", 1)[1]
+            return {"inline_data": {"mime_type": "video/mp4", "data": data}}
+        raise ProviderError(f"Unsupported content part: {part.get('type')}")
+
+    def chat(
+        self,
+        messages: list[dict],
+        *,
+        json_object: bool = False,
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
+    ) -> dict:
+        payload: dict[str, Any] = {
+            "contents": [],
+            "generationConfig": {"temperature": temperature},
+        }
+        if json_object:
+            payload["generationConfig"]["responseMimeType"] = "application/json"
+        if max_tokens is not None:
+            payload["generationConfig"]["maxOutputTokens"] = max_tokens
+        for message in messages:
+            content = message["content"]
+            parts = (
+                [{"text": content}]
+                if isinstance(content, str)
+                else [self._convert_part(part) for part in content]
+            )
+            if message["role"] == "system":
+                payload["systemInstruction"] = {"parts": parts}
+            else:
+                role = "model" if message["role"] == "assistant" else "user"
+                payload["contents"].append({"role": role, "parts": parts})
+
+        url = f"{self.config.base_url}/models/{self.config.model}:generateContent"
+        headers = {"x-goog-api-key": self.config.api_key}
+        last_error = "unknown provider error"
+        for attempt in range(1, self._max_attempts + 1):
+            try:
+                response = httpx.post(
+                    url, json=payload, headers=headers, timeout=self._timeout
+                )
+            except httpx.HTTPError as exc:
+                last_error = f"transport error: {type(exc).__name__}"
+            else:
+                if response.status_code == 200:
+                    body = response.json()
+                    try:
+                        text = body["candidates"][0]["content"]["parts"][0]["text"]
+                    except (KeyError, IndexError, TypeError) as exc:
+                        raise ProviderError(
+                            f"Unexpected gemini response shape: {str(body)[:200]}"
+                        ) from exc
+                    usage = body.get("usageMetadata") or {}
+                    return {
+                        "content": text,
+                        "model": self.config.model,
+                        "finish_reason": body["candidates"][0].get("finishReason"),
+                        "usage": {
+                            "prompt_tokens": usage.get("promptTokenCount"),
+                            "completion_tokens": usage.get("candidatesTokenCount"),
+                        },
+                    }
+                last_error = f"HTTP {response.status_code}: {response.text[:300]}"
+                if response.status_code not in RETRYABLE_STATUS:
+                    break
+            if attempt < self._max_attempts:
+                time.sleep(2**attempt)
+        raise ProviderError(
+            f"{self.config.provider}/{self.config.model} request failed: {last_error}"
+        )
+
+
+def make_client(provider: str, model: str | None = None):
+    """Provider-appropriate client with a uniform .chat() interface."""
+    config = resolve_provider(provider, model)
+    if provider == "gemini":
+        return GeminiClient(config)
+    return ChatClient(config)
 
 
 class ChatClient:

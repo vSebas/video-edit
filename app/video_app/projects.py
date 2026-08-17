@@ -30,7 +30,7 @@ from .planning import (
     revise_plan,
     validate_edit_plan,
 )
-from .providers import ChatClient, ProviderError, resolve_provider
+from .providers import ChatClient, ProviderError, make_client, resolve_provider
 from .semantic import SemanticEvidenceError, load_json as load_semantic_json
 from .semantic import normalize_openstoryline_run, validate_semantic_evidence
 from .visual import VisualAnalysisError, analyze_assets, auto_review_decisions
@@ -450,7 +450,7 @@ class ProjectService:
     def analyze_visual(
         self,
         project_id: str,
-        provider: str = "qwen",
+        provider: str = "gemini",
         model: str | None = None,
     ) -> dict:
         """Run the owned live visual adapter over the project's media and
@@ -464,7 +464,7 @@ class ProjectService:
         run_id = uuid.uuid4().hex[:12]
         run_key = f"{provider}-live-{run_id}"
         try:
-            client = ChatClient(resolve_provider(provider, model))
+            client = make_client(provider, model)
             normalized, raw_records = analyze_assets(
                 client, assets, media_root, project_id, run_id
             )
