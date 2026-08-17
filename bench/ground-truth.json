@@ -1,0 +1,101 @@
+{
+ "schema_version": "grounding-truth.v1",
+ "items": [
+  {
+   "asset_id": "img_0997",
+   "filename": "IMG_0997.mp4",
+   "clip_duration": 3.305,
+   "query": "the person looks toward the camera and waves",
+   "truth_start": 1.45,
+   "truth_end": 3.31
+  },
+  {
+   "asset_id": "img_0997",
+   "filename": "IMG_0997.mp4",
+   "clip_duration": 3.305,
+   "query": "the person eats from a bowl with a spoon",
+   "truth_start": 0.0,
+   "truth_end": 1.45
+  },
+  {
+   "asset_id": "img_0994",
+   "filename": "IMG_0994.mp4",
+   "clip_duration": 20.415,
+   "query": "the person's face is revealed from beneath the blanket",
+   "truth_start": 4.8,
+   "truth_end": 9.3
+  },
+  {
+   "asset_id": "img_0995",
+   "filename": "IMG_0995.mp4",
+   "clip_duration": 19.412,
+   "query": "the person walks near the bunk bed and touches their face",
+   "truth_start": 3.5,
+   "truth_end": 7.0
+  },
+  {
+   "asset_id": "img_0996",
+   "filename": "IMG_0996.mp4",
+   "clip_duration": 63.188,
+   "query": "the seated person brings a sneaker up toward the camera",
+   "truth_start": 8.5,
+   "truth_end": 11.3
+  },
+  {
+   "asset_id": "img_0996",
+   "filename": "IMG_0996.mp4",
+   "clip_duration": 63.188,
+   "query": "the person begins working the sneaker laces",
+   "truth_start": 12.0,
+   "truth_end": 14.0
+  },
+  {
+   "asset_id": "img_0996",
+   "filename": "IMG_0996.mp4",
+   "clip_duration": 63.188,
+   "query": "the person finishes tightening the shoe and begins to rise",
+   "truth_start": 53.0,
+   "truth_end": 57.2
+  },
+  {
+   "asset_id": "img_0991",
+   "filename": "IMG_0991.mp4",
+   "clip_duration": 30.271,
+   "query": "from inside the fridge, the person leans in and reaches toward the shelf",
+   "truth_start": 15.4,
+   "truth_end": 18.8
+  },
+  {
+   "asset_id": "img_0991",
+   "filename": "IMG_0991.mp4",
+   "clip_duration": 30.271,
+   "query": "the refrigerator view goes dark and then bright as the door closes and reopens",
+   "truth_start": 11.1,
+   "truth_end": 15.4
+  },
+  {
+   "asset_id": "img_0993",
+   "filename": "IMG_0993.mp4",
+   "clip_duration": 17.8,
+   "query": "the view changes from bright to dark to bright as the fridge door closes and opens",
+   "truth_start": 13.0,
+   "truth_end": 15.6
+  },
+  {
+   "asset_id": "img_0999",
+   "filename": "IMG_0999.mp4",
+   "clip_duration": 15.849167,
+   "query": "the person rides a scooter through an indoor hallway filming a selfie",
+   "truth_start": 1.0,
+   "truth_end": 8.5
+  },
+  {
+   "asset_id": "img_0999",
+   "filename": "IMG_0999.mp4",
+   "clip_duration": 15.849167,
+   "query": "the camera tilts down to reveal the scooter near elevator doors",
+   "truth_start": 15.0,
+   "truth_end": 15.8
+  }
+ ]
+}

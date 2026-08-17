@@ -1,0 +1,335 @@
+{
+ "summary": {
+  "provider": "gemini-3.5-flash",
+  "mean_iou": 0.323,
+  "hits_at_0.3": "6/12",
+  "errors": 2,
+  "median_latency_s": 13.2
+ },
+ "results": [
+  {
+   "query": "the person looks toward the camera and waves",
+   "asset": "img_0997",
+   "predicted": [
+    1.0,
+    3.0
+   ],
+   "truth": [
+    1.45,
+    3.31
+   ],
+   "iou": 0.671,
+   "seconds": 10.0,
+   "usage": {
+    "promptTokenCount": 253,
+    "candidatesTokenCount": 29,
+    "totalTokenCount": 625,
+    "promptTokensDetails": [
+     {
+      "modality": "TEXT",
+      "tokenCount": 55
+     },
+     {
+      "modality": "VIDEO",
+      "tokenCount": 198
+     }
+    ],
+    "thoughtsTokenCount": 343,
+    "serviceTier": "standard"
+   }
+  },
+  {
+   "query": "the person eats from a bowl with a spoon",
+   "asset": "img_0997",
+   "error": "Server error '503 Service Unavailable' for url 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent'\nFor more information check: https://developer.mozilla.org/en-U",
+   "iou": 0.0,
+   "seconds": 17.2
+  },
+  {
+   "query": "the person's face is revealed from beneath the blanket",
+   "asset": "img_0994",
+   "predicted": [
+    4.0,
+    6.0
+   ],
+   "truth": [
+    4.8,
+    9.3
+   ],
+   "iou": 0.226,
+   "seconds": 9.3,
+   "usage": {
+    "promptTokenCount": 1378,
+    "candidatesTokenCount": 20,
+    "totalTokenCount": 1775,
+    "promptTokensDetails": [
+     {
+      "modality": "VIDEO",
+      "tokenCount": 1320
+     },
+     {
+      "modality": "TEXT",
+      "tokenCount": 58
+     }
+    ],
+    "thoughtsTokenCount": 377,
+    "serviceTier": "standard"
+   }
+  },
+  {
+   "query": "the person walks near the bunk bed and touches their face",
+   "asset": "img_0995",
+   "error": "Server error '503 Service Unavailable' for url 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent'\nFor more information check: https://developer.mozilla.org/en-U",
+   "iou": 0.0,
+   "seconds": 14.3
+  },
+  {
+   "query": "the seated person brings a sneaker up toward the camera",
+   "asset": "img_0996",
+   "predicted": [
+    9.0,
+    13.0
+   ],
+   "truth": [
+    8.5,
+    11.3
+   ],
+   "iou": 0.511,
+   "seconds": 12.8,
+   "usage": {
+    "promptTokenCount": 4215,
+    "candidatesTokenCount": 26,
+    "totalTokenCount": 4824,
+    "promptTokensDetails": [
+     {
+      "modality": "VIDEO",
+      "tokenCount": 4158
+     },
+     {
+      "modality": "TEXT",
+      "tokenCount": 57
+     }
+    ],
+    "thoughtsTokenCount": 583,
+    "serviceTier": "standard"
+   }
+  },
+  {
+   "query": "the person begins working the sneaker laces",
+   "asset": "img_0996",
+   "predicted": [
+    11.0,
+    28.0
+   ],
+   "truth": [
+    12.0,
+    14.0
+   ],
+   "iou": 0.118,
+   "seconds": 13.6,
+   "usage": {
+    "promptTokenCount": 4212,
+    "candidatesTokenCount": 27,
+    "totalTokenCount": 4946,
+    "promptTokensDetails": [
+     {
+      "modality": "VIDEO",
+      "tokenCount": 4158
+     },
+     {
+      "modality": "TEXT",
+      "tokenCount": 54
+     }
+    ],
+    "thoughtsTokenCount": 707,
+    "serviceTier": "standard"
+   }
+  },
+  {
+   "query": "the person finishes tightening the shoe and begins to rise",
+   "asset": "img_0996",
+   "predicted": [
+    55.0,
+    58.0
+   ],
+   "truth": [
+    53.0,
+    57.2
+   ],
+   "iou": 0.44,
+   "seconds": 19.4,
+   "usage": {
+    "promptTokenCount": 4215,
+    "candidatesTokenCount": 22,
+    "totalTokenCount": 4603,
+    "promptTokensDetails": [
+     {
+      "modality": "VIDEO",
+      "tokenCount": 4158
+     },
+     {
+      "modality": "TEXT",
+      "tokenCount": 57
+     }
+    ],
+    "thoughtsTokenCount": 366,
+    "serviceTier": "standard"
+   }
+  },
+  {
+   "query": "from inside the fridge, the person leans in and reaches toward the shelf",
+   "asset": "img_0991",
+   "predicted": [
+    15.0,
+    18.0
+   ],
+   "truth": [
+    15.4,
+    18.8
+   ],
+   "iou": 0.684,
+   "seconds": 10.7,
+   "usage": {
+    "promptTokenCount": 2041,
+    "candidatesTokenCount": 27,
+    "totalTokenCount": 2860,
+    "promptTokensDetails": [
+     {
+      "modality": "TEXT",
+      "tokenCount": 61
+     },
+     {
+      "modality": "VIDEO",
+      "tokenCount": 1980
+     }
+    ],
+    "thoughtsTokenCount": 792,
+    "serviceTier": "standard"
+   }
+  },
+  {
+   "query": "the refrigerator view goes dark and then bright as the door closes and reopens",
+   "asset": "img_0991",
+   "predicted": [
+    10.0,
+    15.0
+   ],
+   "truth": [
+    11.1,
+    15.4
+   ],
+   "iou": 0.722,
+   "seconds": 15.1,
+   "usage": {
+    "promptTokenCount": 2042,
+    "candidatesTokenCount": 27,
+    "totalTokenCount": 2359,
+    "promptTokensDetails": [
+     {
+      "modality": "TEXT",
+      "tokenCount": 62
+     },
+     {
+      "modality": "VIDEO",
+      "tokenCount": 1980
+     }
+    ],
+    "thoughtsTokenCount": 290,
+    "serviceTier": "standard"
+   }
+  },
+  {
+   "query": "the view changes from bright to dark to bright as the fridge door closes and opens",
+   "asset": "img_0993",
+   "predicted": [
+    4.0,
+    8.0
+   ],
+   "truth": [
+    13.0,
+    15.6
+   ],
+   "iou": 0.0,
+   "seconds": 16.7,
+   "usage": {
+    "promptTokenCount": 1251,
+    "candidatesTokenCount": 25,
+    "totalTokenCount": 2326,
+    "promptTokensDetails": [
+     {
+      "modality": "VIDEO",
+      "tokenCount": 1188
+     },
+     {
+      "modality": "TEXT",
+      "tokenCount": 63
+     }
+    ],
+    "thoughtsTokenCount": 1050,
+    "serviceTier": "standard"
+   }
+  },
+  {
+   "query": "the person rides a scooter through an indoor hallway filming a selfie",
+   "asset": "img_0999",
+   "predicted": [
+    2.0,
+    14.0
+   ],
+   "truth": [
+    1.0,
+    8.5
+   ],
+   "iou": 0.5,
+   "seconds": 11.5,
+   "usage": {
+    "promptTokenCount": 1115,
+    "candidatesTokenCount": 30,
+    "totalTokenCount": 1464,
+    "promptTokensDetails": [
+     {
+      "modality": "VIDEO",
+      "tokenCount": 1056
+     },
+     {
+      "modality": "TEXT",
+      "tokenCount": 59
+     }
+    ],
+    "thoughtsTokenCount": 319,
+    "serviceTier": "standard"
+   }
+  },
+  {
+   "query": "the camera tilts down to reveal the scooter near elevator doors",
+   "asset": "img_0999",
+   "predicted": [
+    13.0,
+    15.0
+   ],
+   "truth": [
+    15.0,
+    15.8
+   ],
+   "iou": 0.0,
+   "seconds": 9.8,
+   "usage": {
+    "promptTokenCount": 1114,
+    "candidatesTokenCount": 27,
+    "totalTokenCount": 1634,
+    "promptTokensDetails": [
+     {
+      "modality": "TEXT",
+      "tokenCount": 58
+     },
+     {
+      "modality": "VIDEO",
+      "tokenCount": 1056
+     }
+    ],
+    "thoughtsTokenCount": 493,
+    "serviceTier": "standard"
+   }
+  }
+ ]
+}
