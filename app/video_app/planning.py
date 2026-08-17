@@ -421,15 +421,17 @@ def build_plan(
     audio_events = []
     timeline = 0.0
     for span in spans:
-        duration = round(
-            span["source_end_seconds"] - span["source_start_seconds"], 3
-        )
+        # Quantize to the frame grid so per-event frame rounding cannot
+        # accumulate drift between the plan, render, and OTIO/XMEML exports.
+        raw_duration = span["source_end_seconds"] - span["source_start_seconds"]
+        duration = max(1, round(raw_duration * fps)) / fps
+        duration = round(duration, 6)
         index = len(video_events) + 1
         base = {
             "asset_id": span["asset_id"],
             "source_start_seconds": span["source_start_seconds"],
-            "source_end_seconds": span["source_end_seconds"],
-            "timeline_start_seconds": round(timeline, 3),
+            "source_end_seconds": round(span["source_start_seconds"] + duration, 6),
+            "timeline_start_seconds": round(timeline, 6),
             "duration_seconds": duration,
             "playback_rate": 1.0,
             "intent": span["intent"],
@@ -460,7 +462,7 @@ def build_plan(
                 "volume_db": 0.0,
             }
         )
-        timeline = round(timeline + duration, 3)
+        timeline = round(timeline + duration, 6)
 
     title_events = [
         {
