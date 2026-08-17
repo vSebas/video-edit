@@ -1,7 +1,22 @@
 # Application validation
 
-**Verified:** 2026-08-05
-**Image:** `video-editing-app:local` (rebuilt with faster-whisper)
+**Verified:** 2026-08-17
+**Image:** `video-editing-app:local` (faster-whisper + CUDA runtime libs)
+
+## Perception-stack checks (2026-08-16/17)
+
+- GeminiClient (native API) live-verified: audiovisual shot description with
+  sub-moments on real footage; `input_mode: video+audio`.
+- faster-whisper large-v3 on CUDA verified inside the server container after
+  bundling cublas/cudnn (real clip: 8 Spanish segments, lang p=0.99); the
+  earlier silent degradation to small/cpu (missing libcublas at encode time)
+  is covered by the fallback chain plus baked-in libraries.
+- Class-vlog re-analysis: 806 audiovisual observations + 42 Spanish speech
+  segments; corroborate-v1 auto-approved 29 transcript-confirmed speech
+  mentions; concept generation produced Spanish titles/hooks with earned
+  durations (93 s / 10 scenes) honoring the encoded editorial preferences.
+- Full bake-off methodology and results: `bench/RESULTS.md`,
+  `bench/planner/` (blind brackets), 18 API/unit tests passing.
 
 ## Moment-level selection checks (2026-08-05)
 

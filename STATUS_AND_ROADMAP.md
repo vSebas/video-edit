@@ -85,6 +85,35 @@ licenses and optional research models from becoming inseparable from the core.
 
 ## Standing Today
 
+### Evidence-driven model stack (2026-08-16/17)
+
+Every model choice is now empirical (full data in `bench/RESULTS.md`):
+
+- **Perception: `gemini-3.6-flash` with audio-carrying segments** — won the
+  temporal-grounding bake-off (13 models incl. self-hosted Vidi1.5-9B and
+  TwelveLabs Marengo/Pegasus) on every metric across repeated runs
+  (0.855 recall, 12/12 containment with audio). Specialist hypotheses
+  (Vidi cloud-hosting, TwelveLabs) empirically retired.
+- **ASR: faster-whisper large-v3 on CUDA** (CUDA libs baked into the image;
+  small/CPU fallback). An incidental TwelveLabs finding exposed real
+  Spanish dialogue that the old 0.75 auto-approve gate discarded; gates are
+  now per-evidence-type (speech 0.55 + no-speech check), and visual speech
+  mentions corroborated by the transcript auto-approve (corroborate-v1).
+- **Writing: `qwen3.7-plus`, holder by blind verdict** — the user blindly
+  chose its stories over gemini-pro-latest (round 1). Round 2 in progress:
+  qwen3.7-plus vs qwen3.7-max vs deepseek-v4-pro vs claude-fable-5, judged
+  from RENDERED videos, not proposals (gpt-5.6-sol pending OpenAI billing;
+  glm-5.2/kimi-k2.5/gemini-3.6-flash eliminated on output validity).
+- **Language-aware narrative**: dominant speech language (detected by ASR)
+  drives titles/hooks/on-screen text (Spanish-first for this user); quotes
+  stay verbatim. Editorial preferences encoded: intent-first concepts,
+  IG ~90s as loose guide with content-derived durations, scene count from
+  content quality, missing-material recommendations may include voiceovers.
+- **Flow improvements**: analysis parallelized (6 concurrent calls, 2h→~20min
+  for 40 clips), just-in-time claim confirmation at story-pick time,
+  evidence uses only the newest run per adapter, providers now include
+  openai/anthropic via native clients.
+
 ### Daily-vlog walking skeleton (2026-08-04)
 
 Owned modules added under `app/video_app/`: `providers.py` (OpenAI-compatible
