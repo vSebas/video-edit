@@ -32,7 +32,7 @@ PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
         "api_key_env": "OPENAI_API_KEY",
         "base_url_env": "OPENAI_BASE_URL",
         "default_base_url": "https://api.openai.com/v1",
-        "default_model": "gpt-5.6-terra",
+        "default_model": "gpt-5.6-sol",
     },
     "anthropic": {
         "api_key_env": "ANTHROPIC_API_KEY",
