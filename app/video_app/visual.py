@@ -4,6 +4,7 @@ import json
 import re
 import subprocess
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from .providers import (
@@ -17,6 +18,7 @@ from .providers import (
 from .semantic import RISK_PATTERNS, utc_now
 
 PROMPT_VERSION = "live-visual-v2-video"
+MAX_CONCURRENT_CALLS = 6
 SEGMENT_MAX_BYTES = 7_000_000
 SEGMENT_SCALES = (480, 360)
 MIN_MOMENT_SECONDS = 0.6
@@ -242,8 +244,12 @@ def analyze_assets(
     raw_records: list[dict] = []
     warnings: list[str] = []
     risk_count = 0
-    sequence = 0
 
+    # Deterministic shot list first, then concurrent model calls (identical
+    # token cost, ~MAX_CONCURRENT_CALLS times faster wall clock), then
+    # sequential assembly so evidence ids and ordering stay stable.
+    tasks: list[tuple[int, dict, Path, float, float]] = []
+    sequence = 0
     for asset in assets:
         if asset.get("media_type") not in {"video", "image"}:
             continue
@@ -256,54 +262,103 @@ def analyze_assets(
             shots = [(0.0, 0.0)]
         else:
             shots = detect_shots(path, duration)
-
         for start, end in shots:
             sequence += 1
+            tasks.append((sequence, asset, path, start, end))
+
+    results: dict[int, tuple[dict, dict]] = {}
+    with ThreadPoolExecutor(max_workers=MAX_CONCURRENT_CALLS) as pool:
+        futures = {
+            pool.submit(
+                describe_shot, client, path, asset["filename"], start, end
+            ): (index, asset, start, end)
+            for index, asset, path, start, end in tasks
+        }
+        for future in as_completed(futures):
+            index, asset, start, end = futures[future]
             try:
-                parsed, raw = describe_shot(
-                    client, path, asset["filename"], start, end
-                )
+                results[index] = future.result()
             except (ProviderError, VisualAnalysisError, json.JSONDecodeError) as exc:
                 warnings.append(
                     f"Shot {asset['filename']} [{start:.2f}-{end:.2f}s] failed: {exc}"
                 )
-                continue
-            raw_records.append(raw)
-            caption = str(parsed["caption"]).strip()
-            extras = []
-            text = parsed.get("on_screen_text")
-            if isinstance(text, str) and text.strip():
-                extras.append(f"On-screen text: {text.strip()}")
-            camera = parsed.get("camera")
-            if isinstance(camera, str) and camera.strip() and camera != "unclear":
-                extras.append(f"Camera: {camera.strip()}")
-            if extras:
-                caption = f"{caption} ({'; '.join(extras)})"
-            try:
-                confidence = min(max(float(parsed.get("confidence", 0.0)), 0.0), 1.0)
-            except (TypeError, ValueError):
-                confidence = 0.0
-            flags = risk_flags_for(caption)
-            if flags:
+
+    for sequence, asset, path, start, end in tasks:
+        if sequence not in results:
+            continue
+        parsed, raw = results[sequence]
+        duration = float(asset.get("duration_seconds") or 0.0)
+        raw_records.append(raw)
+        caption = str(parsed["caption"]).strip()
+        extras = []
+        text = parsed.get("on_screen_text")
+        if isinstance(text, str) and text.strip():
+            extras.append(f"On-screen text: {text.strip()}")
+        camera = parsed.get("camera")
+        if isinstance(camera, str) and camera.strip() and camera != "unclear":
+            extras.append(f"Camera: {camera.strip()}")
+        if extras:
+            caption = f"{caption} ({'; '.join(extras)})"
+        try:
+            confidence = min(max(float(parsed.get("confidence", 0.0)), 0.0), 1.0)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        flags = risk_flags_for(caption)
+        if flags:
+            risk_count += 1
+        observations.append(
+            {
+                "evidence_id": f"{run_id}-{sequence:04d}",
+                "clip_id": f"shot_{sequence:04d}",
+                "media_id": asset["asset_id"],
+                "asset_id": asset["asset_id"],
+                "filename": asset["filename"],
+                "raw_start_seconds": start,
+                "raw_end_seconds": end,
+                "start_seconds": start,
+                "end_seconds": min(end, duration) if duration else end,
+                "caption": caption,
+                "source": "model",
+                "normalization_status": "accepted",
+                "review_status": "pending",
+                "adjustments": [],
+                "rejection_reasons": [],
+                "risk_flags": flags,
+                "reviewed_caption": None,
+                "review_note": None,
+                "reviewed_at": None,
+                "model_confidence": confidence,
+                "evidence_type": "visual",
+            }
+        )
+        for moment_index, moment in enumerate(
+            shot_moments(parsed, start, end), start=1
+        ):
+            moment_caption = (
+                f"{'Best moment' if moment['is_best'] else 'Moment'} of this "
+                f"shot: {moment['label']}"
+            )
+            moment_flags = risk_flags_for(moment_caption)
+            if moment_flags:
                 risk_count += 1
             observations.append(
                 {
-                    "evidence_id": f"{run_id}-{sequence:04d}",
-                    "clip_id": f"shot_{sequence:04d}",
+                    "evidence_id": f"{run_id}-{sequence:04d}m{moment_index}",
+                    "clip_id": f"shot_{sequence:04d}_m{moment_index}",
                     "media_id": asset["asset_id"],
                     "asset_id": asset["asset_id"],
                     "filename": asset["filename"],
-                    "raw_start_seconds": start,
-                    "raw_end_seconds": end,
-                    "start_seconds": start,
-                    "end_seconds": min(end, duration) if duration else end,
-                    "caption": caption,
+                    "raw_start_seconds": moment["start"],
+                    "raw_end_seconds": moment["end"],
+                    "start_seconds": moment["start"],
+                    "end_seconds": min(moment["end"], duration) if duration else moment["end"],
+                    "caption": moment_caption,
                     "source": "model",
                     "normalization_status": "accepted",
                     "review_status": "pending",
                     "adjustments": [],
                     "rejection_reasons": [],
-                    "risk_flags": flags,
+                    "risk_flags": moment_flags,
                     "reviewed_caption": None,
                     "review_note": None,
                     "reviewed_at": None,
@@ -311,41 +366,6 @@ def analyze_assets(
                     "evidence_type": "visual",
                 }
             )
-            for moment_index, moment in enumerate(
-                shot_moments(parsed, start, end), start=1
-            ):
-                moment_caption = (
-                    f"{'Best moment' if moment['is_best'] else 'Moment'} of this "
-                    f"shot: {moment['label']}"
-                )
-                moment_flags = risk_flags_for(moment_caption)
-                if moment_flags:
-                    risk_count += 1
-                observations.append(
-                    {
-                        "evidence_id": f"{run_id}-{sequence:04d}m{moment_index}",
-                        "clip_id": f"shot_{sequence:04d}_m{moment_index}",
-                        "media_id": asset["asset_id"],
-                        "asset_id": asset["asset_id"],
-                        "filename": asset["filename"],
-                        "raw_start_seconds": moment["start"],
-                        "raw_end_seconds": moment["end"],
-                        "start_seconds": moment["start"],
-                        "end_seconds": min(moment["end"], duration) if duration else moment["end"],
-                        "caption": moment_caption,
-                        "source": "model",
-                        "normalization_status": "accepted",
-                        "review_status": "pending",
-                        "adjustments": [],
-                        "rejection_reasons": [],
-                        "risk_flags": moment_flags,
-                        "reviewed_caption": None,
-                        "review_note": None,
-                        "reviewed_at": None,
-                        "model_confidence": confidence,
-                        "evidence_type": "visual",
-                    }
-                )
 
     analyzed_assets = [
         asset for asset in assets if asset.get("media_type") in {"video", "image"}
