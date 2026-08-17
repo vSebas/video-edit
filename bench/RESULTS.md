@@ -31,10 +31,15 @@ padding is trimmable but missed action is unrecoverable), **midpoint-hit**
 
 - **Audio audit (2026-08-17):** every model except TwelveLabs was originally
   benched on silent clips because the pipeline strips audio from segments.
-  Re-benching the leader WITH the audio track improved every metric
-  (recall 0.808 → 0.855) at identical latency — on mostly-visual queries;
-  speech-driven footage should gain more. The upgraded adapter must send
-  audio-carrying segments.
+  The full audio-enabled rerun (bench/results-audio/) shows
+  **gemini-3.6-flash leading under BOTH conditions** (recall 0.808 silent →
+  0.855 with audio, 12/12 containment both times) — the only model with a
+  stable top position across runs. Most other deltas sit inside the ±0.1
+  single-run noise band and should not be over-read. A hearing probe with
+  known Spanish dialogue showed no workspace model processes audio — and
+  qwen3-vl-plus and kimi-k2.5 CONFABULATED speech ("welcome back to the
+  channel" / invented Russian), vindicating the unverified-speech risk gate.
+  The upgraded adapter must send audio-carrying segments to Gemini.
 
 - **gemini-3.6-flash wins on every metric** including a perfect containment
   rate; it is the visual-adapter upgrade target.
