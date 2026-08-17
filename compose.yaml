@@ -9,6 +9,7 @@ services:
     init: true
     user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
     gpus: all
+    restart: unless-stopped
     # The workspace is mounted at its host path so that exported timelines
     # reference media locations that DaVinci Resolve can open directly.
     working_dir: ${PWD}/app

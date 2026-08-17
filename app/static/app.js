@@ -182,12 +182,19 @@ function storyCard(concept) {
   const beats = (concept.structure || []).length;
   const unchecked = conceptPendingClaims(concept).length;
   const kept = keptStoryIds().has(concept.concept_id);
+  const beatThumbs = (concept.structure || []).slice(0, 6).map((beat) => {
+    const evidence = (beat.evidence || [])[0];
+    if (!evidence) return '';
+    const mid = (evidence.start_seconds + evidence.end_seconds) / 2;
+    return `<img loading="lazy" src="${frameUrl(evidence.asset_id, mid)}" alt="" title="${escapeHtml(beat.purpose)}" />`;
+  }).join('');
   return `
     <article class="concept-card story-card ${kept ? 'kept' : ''}">
       <div class="concept-top">
         <span class="eyebrow">${concept.target_duration_seconds}s · ${beats} scenes${unchecked ? ` · asks about ${unchecked} unchecked moment${unchecked === 1 ? '' : 's'}` : ''}</span>
         <button class="ghost keep-toggle" data-keep-story="${escapeHtml(concept.concept_id)}" title="Kept stories survive when you ask for new ideas">${kept ? '★ kept' : '☆ keep'}</button>
       </div>
+      ${beatThumbs ? `<div class="beat-thumbs">${beatThumbs}</div>` : ''}
       <h3>${escapeHtml(concept.title)}</h3>
       <p class="hook">${escapeHtml(concept.hook)}</p>
       ${(concept.weaknesses || []).length ? `<p class="muted">Honest caveat: ${escapeHtml(concept.weaknesses[0])}</p>` : ''}
@@ -226,15 +233,43 @@ function pickSection(project) {
   `;
 }
 
-function cutList(project) {
+function frameUrl(assetId, seconds) {
+  return `/api/projects/${escapeHtml(state.activeProjectId)}/frames/${escapeHtml(assetId)}?t=${seconds.toFixed(2)}`;
+}
+
+function sceneStrip(project) {
   const events = (project.plan?.tracks || []).find((track) => track.kind === 'video')?.events || [];
-  return events.map((event, index) => `
-    <li>
-      <strong>${index + 1}.</strong> ${escapeHtml(event.asset_id)} ·
-      ${(event.source_end_seconds - event.source_start_seconds).toFixed(1)}s
-      <span class="muted">— ${escapeHtml(event.intent)}</span>
-    </li>
-  `).join('');
+  return events.map((event, index) => {
+    const mid = (event.source_start_seconds + event.source_end_seconds) / 2;
+    const asset = state.activeProject.inventory.assets.find((a) => a.asset_id === event.asset_id);
+    const playUrl = asset?.media_url
+      ? `${asset.media_url}#t=${event.source_start_seconds.toFixed(1)},${event.source_end_seconds.toFixed(1)}`
+      : null;
+    return `
+      <a class="scene-card" ${playUrl ? `href="${escapeHtml(playUrl)}" target="_blank" title="Ver este momento en el clip original"` : ''}>
+        <img loading="lazy" src="${frameUrl(event.asset_id, mid)}" alt="" />
+        <div class="scene-info">
+          <strong>${index + 1} · ${(event.source_end_seconds - event.source_start_seconds).toFixed(1)}s</strong>
+          <span>${escapeHtml(event.intent)}</span>
+        </div>
+      </a>
+    `;
+  }).join('');
+}
+
+function newIdeasBanner(project) {
+  // Story ideas newer than the current cut: the plan's concept no longer
+  // exists in the concepts list, so the cut predates the latest ideas.
+  const planConcept = project.plan?.concept_id;
+  if (!planConcept) return '';
+  const stillListed = (project.concepts || []).some((c) => c.concept_id === planConcept);
+  if (stillListed) return '';
+  return `
+    <div class="banner">
+      <span>Hay ideas de historia nuevas — este video es de una ronda anterior.</span>
+      <button class="primary compact" id="see-new-ideas">Ver ideas nuevas</button>
+    </div>
+  `;
 }
 
 function resultSection(project) {
@@ -243,6 +278,7 @@ function resultSection(project) {
   const proxyExport = project.outputs?.xmeml_proxies;
   const duration = project.plan?.project?.duration_seconds;
   return `
+    ${newIdeasBanner(project)}
     <section class="result-hero">
       <article class="card video-stage">
         ${renderUrl
@@ -277,10 +313,11 @@ function resultSection(project) {
     </section>
     ${resultRecommendations(project)}
     <section>
-      <details class="cut-details">
-        <summary>What's in this cut (${(project.plan?.tracks?.find((t) => t.kind === 'video')?.events || []).length} scenes)</summary>
-        <ol class="cut-list">${cutList(project)}</ol>
-      </details>
+      <div class="section-header"><div><span class="eyebrow">Escena por escena</span>
+      <h2>Qué hay en este corte y por qué</h2></div>
+      <p class="muted">Cada tarjeta muestra el momento usado y la intención del editor.
+      Click abre el clip original en ese segundo. ¿Algo no encaja? Dilo en el chat de arriba.</p></div>
+      <div class="scene-strip">${sceneStrip(project)}</div>
     </section>
   `;
 }
@@ -552,6 +589,10 @@ function renderProject() {
     button.addEventListener('click', () => runAdvancedStep(button.dataset.pipeline, button));
   });
   $('#delete-project')?.addEventListener('click', deleteProject);
+  $('#see-new-ideas')?.addEventListener('click', () => {
+    state.forcePick = true;
+    renderProject();
+  });
   $('#skip-claims')?.addEventListener('click', () => {
     localStorage.removeItem(`showClaims:${state.activeProjectId}`);
     renderProject();

@@ -453,3 +453,45 @@ textarea { resize: vertical; }
 
 .reco-card ul { list-style: none; padding: 0; margin: 10px 0 6px; display: flex; flex-direction: column; gap: 10px; }
 .reco-card .missing-shot { font-size: 13px; color: var(--text); }
+
+/* UI iteration 2: scene workspace, beat thumbnails, state banner */
+.scene-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 10px;
+}
+.scene-card {
+  display: block;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--panel-2);
+  text-decoration: none;
+  color: var(--text);
+}
+.scene-card:hover { border-color: var(--accent); }
+.scene-card img { width: 100%; aspect-ratio: 9/12; object-fit: cover; display: block; background: #000; }
+.scene-info { padding: 8px 10px; display: flex; flex-direction: column; gap: 3px; }
+.scene-info strong { font-size: 11px; color: var(--blue); }
+.scene-info span { font-size: 11.5px; color: var(--muted); line-height: 1.35; }
+.beat-thumbs { display: flex; gap: 4px; margin: 8px 0; }
+.beat-thumbs img {
+  width: calc((100% - 20px) / 6);
+  aspect-ratio: 9/12;
+  object-fit: cover;
+  border-radius: 6px;
+  background: #000;
+}
+.banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border: 1px solid var(--amber);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--amber) 8%, var(--panel));
+  margin-bottom: 14px;
+  font-size: 13px;
+}
+.primary.compact, .secondary.compact { padding: 6px 14px; font-size: 12px; }
