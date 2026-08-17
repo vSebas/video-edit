@@ -1,0 +1,263 @@
+{
+ "summary": {
+  "provider": "gemini-3.7-flash",
+  "mean_iou": 0.325,
+  "hits_at_0.3": "6/12",
+  "errors": 5,
+  "median_latency_s": 4.1
+ },
+ "results": [
+  {
+   "query": "the person looks toward the camera and waves",
+   "asset": "img_0997",
+   "error": "Server error '503 Service Unavailable' for url 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent'\nFor more information check: https://developer.mozilla.org/en-U",
+   "iou": 0.0,
+   "seconds": 4.2
+  },
+  {
+   "query": "the person eats from a bowl with a spoon",
+   "asset": "img_0997",
+   "predicted": [
+    0.0,
+    1.3
+   ],
+   "truth": [
+    0.0,
+    1.45
+   ],
+   "iou": 0.897,
+   "seconds": 3.1,
+   "usage": {
+    "promptTokenCount": 327,
+    "candidatesTokenCount": 25,
+    "totalTokenCount": 505,
+    "promptTokensDetails": [
+     {
+      "modality": "TEXT",
+      "tokenCount": 56
+     },
+     {
+      "modality": "VIDEO",
+      "tokenCount": 271
+     }
+    ],
+    "thoughtsTokenCount": 153,
+    "serviceTier": "standard"
+   }
+  },
+  {
+   "query": "the person's face is revealed from beneath the blanket",
+   "asset": "img_0994",
+   "predicted": [
+    4.0,
+    8.0
+   ],
+   "truth": [
+    4.8,
+    9.3
+   ],
+   "iou": 0.604,
+   "seconds": 3.8,
+   "usage": {
+    "promptTokenCount": 1876,
+    "candidatesTokenCount": 25,
+    "totalTokenCount": 2136,
+    "promptTokensDetails": [
+     {
+      "modality": "VIDEO",
+      "tokenCount": 1818
+     },
+     {
+      "modality": "TEXT",
+      "tokenCount": 58
+     }
+    ],
+    "thoughtsTokenCount": 235,
+    "serviceTier": "standard"
+   }
+  },
+  {
+   "query": "the person walks near the bunk bed and touches their face",
+   "asset": "img_0995",
+   "predicted": [
+    2.7,
+    8.5
+   ],
+   "truth": [
+    3.5,
+    7.0
+   ],
+   "iou": 0.603,
+   "seconds": 4.0,
+   "usage": {
+    "promptTokenCount": 1785,
+    "candidatesTokenCount": 25,
+    "totalTokenCount": 2062,
+    "promptTokensDetails": [
+     {
+      "modality": "TEXT",
+      "tokenCount": 58
+     },
+     {
+      "modality": "VIDEO",
+      "tokenCount": 1727
+     }
+    ],
+    "thoughtsTokenCount": 252,
+    "serviceTier": "standard"
+   }
+  },
+  {
+   "query": "the seated person brings a sneaker up toward the camera",
+   "asset": "img_0996",
+   "error": "Server error '503 Service Unavailable' for url 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent'\nFor more information check: https://developer.mozilla.org/en-U",
+   "iou": 0.0,
+   "seconds": 53.0
+  },
+  {
+   "query": "the person begins working the sneaker laces",
+   "asset": "img_0996",
+   "predicted": [
+    10.0,
+    28.0
+   ],
+   "truth": [
+    12.0,
+    14.0
+   ],
+   "iou": 0.111,
+   "seconds": 8.5,
+   "usage": {
+    "promptTokenCount": 5785,
+    "candidatesTokenCount": 27,
+    "totalTokenCount": 6177,
+    "promptTokensDetails": [
+     {
+      "modality": "TEXT",
+      "tokenCount": 54
+     },
+     {
+      "modality": "VIDEO",
+      "tokenCount": 5731
+     }
+    ],
+    "thoughtsTokenCount": 365,
+    "serviceTier": "standard"
+   }
+  },
+  {
+   "query": "the person finishes tightening the shoe and begins to rise",
+   "asset": "img_0996",
+   "predicted": [
+    53.0,
+    58.0
+   ],
+   "truth": [
+    53.0,
+    57.2
+   ],
+   "iou": 0.84,
+   "seconds": 6.6,
+   "usage": {
+    "promptTokenCount": 5788,
+    "candidatesTokenCount": 31,
+    "totalTokenCount": 6014,
+    "promptTokensDetails": [
+     {
+      "modality": "VIDEO",
+      "tokenCount": 5731
+     },
+     {
+      "modality": "TEXT",
+      "tokenCount": 57
+     }
+    ],
+    "thoughtsTokenCount": 195,
+    "serviceTier": "standard"
+   }
+  },
+  {
+   "query": "from inside the fridge, the person leans in and reaches toward the shelf",
+   "asset": "img_0991",
+   "error": "Server error '503 Service Unavailable' for url 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent'\nFor more information check: https://developer.mozilla.org/en-U",
+   "iou": 0.0,
+   "seconds": 6.2
+  },
+  {
+   "query": "the refrigerator view goes dark and then bright as the door closes and reopens",
+   "asset": "img_0991",
+   "error": "Server error '503 Service Unavailable' for url 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent'\nFor more information check: https://developer.mozilla.org/en-U",
+   "iou": 0.0,
+   "seconds": 3.2
+  },
+  {
+   "query": "the view changes from bright to dark to bright as the fridge door closes and opens",
+   "asset": "img_0993",
+   "error": "Server error '503 Service Unavailable' for url 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent'\nFor more information check: https://developer.mozilla.org/en-U",
+   "iou": 0.0,
+   "seconds": 2.7
+  },
+  {
+   "query": "the person rides a scooter through an indoor hallway filming a selfie",
+   "asset": "img_0999",
+   "predicted": [
+    1.5,
+    14.5
+   ],
+   "truth": [
+    1.0,
+    8.5
+   ],
+   "iou": 0.519,
+   "seconds": 5.3,
+   "usage": {
+    "promptTokenCount": 1511,
+    "candidatesTokenCount": 26,
+    "totalTokenCount": 1730,
+    "promptTokensDetails": [
+     {
+      "modality": "TEXT",
+      "tokenCount": 59
+     },
+     {
+      "modality": "VIDEO",
+      "tokenCount": 1452
+     }
+    ],
+    "thoughtsTokenCount": 193,
+    "serviceTier": "standard"
+   }
+  },
+  {
+   "query": "the camera tilts down to reveal the scooter near elevator doors",
+   "asset": "img_0999",
+   "predicted": [
+    13.5,
+    16.0
+   ],
+   "truth": [
+    15.0,
+    15.8
+   ],
+   "iou": 0.32,
+   "seconds": 2.8,
+   "usage": {
+    "promptTokenCount": 1510,
+    "candidatesTokenCount": 31,
+    "totalTokenCount": 1651,
+    "promptTokensDetails": [
+     {
+      "modality": "VIDEO",
+      "tokenCount": 1452
+     },
+     {
+      "modality": "TEXT",
+      "tokenCount": 58
+     }
+    ],
+    "thoughtsTokenCount": 110,
+    "serviceTier": "standard"
+   }
+  }
+ ]
+}
