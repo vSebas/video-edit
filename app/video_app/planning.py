@@ -114,11 +114,14 @@ angle, but only when the dominant footage content clearly supports it; do
 not invent tangents from minor evidence.
 
 Duration and structure rules:
-- Primary platform is Instagram Reels: aim for 60-100 seconds when the
-  footage supports it. Derive the exact duration from the content — 87 or
-  93 seconds are better answers than rounding to 60 or 90.
-- Scene count should scale with the footage: with 20+ clips available,
-  prefer 6-12 scenes over 4-5 so more of the day is used.
+- Primary platform is Instagram Reels. Around 90 seconds is a loose guide,
+  not a target or a cap: let the total duration emerge from the available
+  clips and the narrative — whatever length the story earns is right, round
+  or not. Never pad or trim just to land on a particular number.
+- Scene count follows content quality, not clip count: include a scene when
+  the footage for it is genuinely good or moves the story forward, and skip
+  weak material even if that means fewer scenes. A rich day may earn many
+  scenes; a thin one should not be stretched.
 Respond with JSON:
 {{
   "footage_summary": "<2-4 factual sentences about what the footage visibly covers>",
