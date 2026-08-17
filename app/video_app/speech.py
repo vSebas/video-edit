@@ -7,7 +7,11 @@ from .semantic import utc_now
 
 PROMPT_VERSION = "local-asr-v1"
 DEFAULT_MODEL_SIZE = "small"
-MIN_SEGMENT_CONFIDENCE = 0.30
+# Flag a segment only when the transcript itself is doubtful: very low
+# decode confidence OR Whisper's own no-speech detector fires. Ordinary
+# non-English speech scores ~0.65-0.75 and must not be flagged.
+MIN_SEGMENT_CONFIDENCE = 0.45
+MAX_NO_SPEECH_PROBABILITY = 0.5
 
 
 class SpeechAnalysisError(RuntimeError):
@@ -142,6 +146,7 @@ def analyze_speech(
                     "risk_flags": (
                         []
                         if segment["confidence"] >= MIN_SEGMENT_CONFIDENCE
+                        and segment["no_speech_probability"] <= MAX_NO_SPEECH_PROBABILITY
                         else ["low_confidence_transcription"]
                     ),
                     "reviewed_caption": None,

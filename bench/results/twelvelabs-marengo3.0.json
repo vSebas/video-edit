@@ -1,0 +1,179 @@
+{
+ "summary": {
+  "provider": "twelvelabs-marengo3.0",
+  "mean_iou": 0.227,
+  "hits_at_0.3": "5/12",
+  "errors": 0,
+  "median_latency_s": 0.3
+ },
+ "results": [
+  {
+   "query": "the person looks toward the camera and waves",
+   "asset": "img_0997",
+   "predicted": [
+    0.0,
+    4.3333330154418945
+   ],
+   "truth": [
+    1.45,
+    3.31
+   ],
+   "iou": 0.429,
+   "seconds": 0.3
+  },
+  {
+   "query": "the person eats from a bowl with a spoon",
+   "asset": "img_0997",
+   "predicted": [
+    0.0,
+    4.3333330154418945
+   ],
+   "truth": [
+    0.0,
+    1.45
+   ],
+   "iou": 0.335,
+   "seconds": 0.3
+  },
+  {
+   "query": "the person's face is revealed from beneath the blanket",
+   "asset": "img_0994",
+   "predicted": [
+    0.0,
+    10.199999809265137
+   ],
+   "truth": [
+    4.8,
+    9.3
+   ],
+   "iou": 0.441,
+   "seconds": 0.4
+  },
+  {
+   "query": "the person walks near the bunk bed and touches their face",
+   "asset": "img_0995",
+   "predicted": [
+    0.0,
+    9.733332633972168
+   ],
+   "truth": [
+    3.5,
+    7.0
+   ],
+   "iou": 0.36,
+   "seconds": 0.4
+  },
+  {
+   "query": "the seated person brings a sneaker up toward the camera",
+   "asset": "img_0996",
+   "predicted": [
+    9.066666603088379,
+    18.133333206176758
+   ],
+   "truth": [
+    8.5,
+    11.3
+   ],
+   "iou": 0.232,
+   "seconds": 0.4
+  },
+  {
+   "query": "the person begins working the sneaker laces",
+   "asset": "img_0996",
+   "predicted": [
+    18.133333206176758,
+    27.200000762939453
+   ],
+   "truth": [
+    12.0,
+    14.0
+   ],
+   "iou": 0.0,
+   "seconds": 0.3
+  },
+  {
+   "query": "the person finishes tightening the shoe and begins to rise",
+   "asset": "img_0996",
+   "predicted": [
+    18.133333206176758,
+    27.200000762939453
+   ],
+   "truth": [
+    53.0,
+    57.2
+   ],
+   "iou": 0.0,
+   "seconds": 0.3
+  },
+  {
+   "query": "from inside the fridge, the person leans in and reaches toward the shelf",
+   "asset": "img_0991",
+   "predicted": [
+    11.533332824707031,
+    14.933333396911621
+   ],
+   "truth": [
+    15.4,
+    18.8
+   ],
+   "iou": 0.0,
+   "seconds": 0.3
+  },
+  {
+   "query": "the refrigerator view goes dark and then bright as the door closes and reopens",
+   "asset": "img_0991",
+   "predicted": [
+    11.533332824707031,
+    14.933333396911621
+   ],
+   "truth": [
+    11.1,
+    15.4
+   ],
+   "iou": 0.791,
+   "seconds": 0.3
+  },
+  {
+   "query": "the view changes from bright to dark to bright as the fridge door closes and opens",
+   "asset": "img_0993",
+   "predicted": [
+    0.0,
+    7.0
+   ],
+   "truth": [
+    13.0,
+    15.6
+   ],
+   "iou": 0.0,
+   "seconds": 0.3
+  },
+  {
+   "query": "the person rides a scooter through an indoor hallway filming a selfie",
+   "asset": "img_0999",
+   "predicted": [
+    7.933332920074463,
+    15.866666793823242
+   ],
+   "truth": [
+    1.0,
+    8.5
+   ],
+   "iou": 0.038,
+   "seconds": 0.4
+  },
+  {
+   "query": "the camera tilts down to reveal the scooter near elevator doors",
+   "asset": "img_0999",
+   "predicted": [
+    7.933332920074463,
+    15.866666793823242
+   ],
+   "truth": [
+    15.0,
+    15.8
+   ],
+   "iou": 0.101,
+   "seconds": 0.4
+  }
+ ]
+}

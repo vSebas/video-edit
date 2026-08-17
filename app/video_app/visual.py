@@ -26,7 +26,12 @@ SCENE_THRESHOLD = 0.30
 MIN_SHOT_SECONDS = 1.5
 MAX_SHOT_SECONDS = 8.0
 FRAME_MAX_EDGE = 640
+# Visual captions hallucinate confidently, so the bar is high. Correct
+# non-English ASR routinely reports ~0.65-0.75 (verified: real Spanish
+# dialogue at 0.69-0.73 was being discarded), so speech gets a lower bar —
+# Whisper's own no-speech detector guards against noise separately.
 AUTO_APPROVE_MIN_CONFIDENCE = 0.75
+AUTO_APPROVE_MIN_CONFIDENCE_BY_TYPE = {"visual": 0.75, "speech": 0.55}
 
 SYSTEM_PROMPT = (
     "You are a footage logger for a video editing assistant. You describe only "
@@ -413,7 +418,11 @@ def auto_review_decisions(normalized: dict) -> dict:
         if observation["risk_flags"]:
             continue
         confidence = observation.get("model_confidence", 0.0)
-        if confidence < AUTO_APPROVE_MIN_CONFIDENCE:
+        threshold = AUTO_APPROVE_MIN_CONFIDENCE_BY_TYPE.get(
+            observation.get("evidence_type") or "visual",
+            AUTO_APPROVE_MIN_CONFIDENCE,
+        )
+        if confidence < threshold:
             continue
         event = {
             "event_id": uuid.uuid4().hex[:12],
