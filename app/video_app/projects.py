@@ -593,11 +593,24 @@ class ProjectService:
         )
         write_json(path, stored)
 
-    def approved_evidence(self, project_id: str) -> list[dict]:
-        """Approved observations across all evidence runs, with reviewed
-        wording taking precedence over the provider caption."""
-        items: list[dict] = []
+    def _current_run_manifests(self, project_id: str) -> list[dict]:
+        """Newest run per provider adapter — re-analysis supersedes older
+        runs so evidence never accumulates stale duplicates."""
+        latest: dict[str, dict] = {}
         for manifest in self._semantic_run_manifests(project_id):
+            adapter = manifest["provider"]["adapter"]
+            if (
+                adapter not in latest
+                or manifest["imported_at"] > latest[adapter]["imported_at"]
+            ):
+                latest[adapter] = manifest
+        return list(latest.values())
+
+    def approved_evidence(self, project_id: str) -> list[dict]:
+        """Approved observations from the current evidence runs, with
+        reviewed wording taking precedence over the provider caption."""
+        items: list[dict] = []
+        for manifest in self._current_run_manifests(project_id):
             run = self.semantic_run(project_id, manifest["run_key"])
             for observation in run["observations"]:
                 if observation["normalization_status"] != "accepted":
@@ -623,7 +636,7 @@ class ProjectService:
         but the compiler will not use a range supported only by unverified
         claims unless the user confirms it."""
         items: list[dict] = []
-        for manifest in self._semantic_run_manifests(project_id):
+        for manifest in self._current_run_manifests(project_id):
             run = self.semantic_run(project_id, manifest["run_key"])
             for observation in run["observations"]:
                 if observation["normalization_status"] != "accepted":

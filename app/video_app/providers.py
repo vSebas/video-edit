@@ -211,7 +211,7 @@ class ChatClient:
     def __init__(
         self,
         config: ProviderConfig,
-        timeout_seconds: float = 180.0,
+        timeout_seconds: float = 360.0,
         max_attempts: int = 3,
     ) -> None:
         self.config = config
