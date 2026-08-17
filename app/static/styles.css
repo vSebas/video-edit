@@ -450,3 +450,6 @@ textarea { resize: vertical; }
 .story-card.kept { border-color: var(--accent); }
 .keep-toggle { font-size: 11px; padding: 2px 8px; }
 .story-card.kept .keep-toggle { color: var(--accent); }
+
+.reco-card ul { list-style: none; padding: 0; margin: 10px 0 6px; display: flex; flex-direction: column; gap: 10px; }
+.reco-card .missing-shot { font-size: 13px; color: var(--text); }

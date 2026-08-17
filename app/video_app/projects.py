@@ -41,6 +41,11 @@ AUDIO_EXTENSIONS = {".wav", ".mp3", ".m4a", ".flac", ".aac", ".ogg"}
 SUPPORTED_EXTENSIONS = VIDEO_EXTENSIONS | IMAGE_EXTENSIONS | AUDIO_EXTENSIONS
 FIXTURE_ID = "morning-routine"
 
+# Writer chosen by blind video screening (bench/planner, 2026-08-17): the
+# user preferred deepseek's and fable's cuts over both Qwens'; deepseek is
+# the default (available on the existing workspace key).
+PLANNER_DEFAULT_MODELS = {"qwen": "deepseek-v4-pro"}
+
 
 def utc_now() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
@@ -708,7 +713,9 @@ class ProjectService:
                     item for item in existing if item["concept_id"] in keep_concept_ids
                 ]
         try:
-            client = ChatClient(resolve_provider(provider, model))
+            client = ChatClient(resolve_provider(
+                provider, model or PLANNER_DEFAULT_MODELS.get(provider)
+            ))
             document = generate_concepts(
                 client,
                 project,
@@ -825,7 +832,9 @@ class ProjectService:
         plan = load_json(plan_path)
         evidence = self.approved_evidence(project_id)
         try:
-            client = ChatClient(resolve_provider(provider, model))
+            client = ChatClient(resolve_provider(
+                provider, model or PLANNER_DEFAULT_MODELS.get(provider)
+            ))
             new_plan, note = revise_plan(
                 client,
                 project,

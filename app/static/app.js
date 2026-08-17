@@ -275,11 +275,34 @@ function resultSection(project) {
       </div>
       <button class="secondary" id="prepare-export">${proxyExport ? 'Rebuild editor files' : 'Prepare DaVinci files'}</button>
     </section>
+    ${resultRecommendations(project)}
     <section>
       <details class="cut-details">
         <summary>What's in this cut (${(project.plan?.tracks?.find((t) => t.kind === 'video')?.events || []).length} scenes)</summary>
         <ol class="cut-list">${cutList(project)}</ol>
       </details>
+    </section>
+  `;
+}
+
+function resultRecommendations(project) {
+  const concept = (project.concepts || []).find(
+    (item) => item.concept_id === project.plan?.concept_id
+  );
+  const missing = concept?.missing_shots || [];
+  if (!missing.length) return '';
+  return `
+    <section class="card reco-card">
+      <h3>Para fortalecer este video — graba y agrega a la carpeta</h3>
+      <ul>${missing.map((shot) => `
+        <li class="missing-shot">
+          <span class="priority ${escapeHtml(shot.priority)}">${escapeHtml(shot.priority)}</span>
+          ${escapeHtml(shot.recording_instruction)}
+          ${shot.fallback ? `<div class="muted">Si no: ${escapeHtml(shot.fallback)}</div>` : ''}
+        </li>
+      `).join('')}</ul>
+      <p class="muted">Graba estos clips o voz en off, déjalos en la carpeta del proyecto,
+      re-analiza, y pide el cambio en el chat — el resto del análisis queda cacheado.</p>
     </section>
   `;
 }
