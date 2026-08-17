@@ -181,7 +181,9 @@ duration and at least {MIN_EVENT_SECONDS}s long."""
         ],
         json_object=True,
         temperature=0.6,
-        max_tokens=8000,
+        # Reasoning-heavy models spend thousands of tokens thinking before
+        # writing; a tight cap silently truncates their answer to nothing.
+        max_tokens=24000,
     )
     try:
         parsed = parse_json_content(response["content"])

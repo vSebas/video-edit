@@ -28,6 +28,18 @@ PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
         "default_base_url": "https://generativelanguage.googleapis.com/v1beta",
         "default_model": "gemini-3.6-flash",
     },
+    "openai": {
+        "api_key_env": "OPENAI_API_KEY",
+        "base_url_env": "OPENAI_BASE_URL",
+        "default_base_url": "https://api.openai.com/v1",
+        "default_model": "gpt-5.6-terra",
+    },
+    "anthropic": {
+        "api_key_env": "ANTHROPIC_API_KEY",
+        "base_url_env": "ANTHROPIC_BASE_URL",
+        "default_base_url": "https://api.anthropic.com/v1",
+        "default_model": "claude-fable-5",
+    },
 }
 
 RETRYABLE_STATUS = {408, 429, 500, 502, 503, 504}
@@ -197,11 +209,90 @@ class GeminiClient:
         )
 
 
+class AnthropicClient:
+    """Native Anthropic messages client with the same .chat() surface."""
+
+    def __init__(
+        self,
+        config: ProviderConfig,
+        timeout_seconds: float = 360.0,
+        max_attempts: int = 3,
+    ) -> None:
+        self.config = config
+        self._timeout = timeout_seconds
+        self._max_attempts = max_attempts
+
+    def chat(
+        self,
+        messages: list[dict],
+        *,
+        json_object: bool = False,
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
+    ) -> dict:
+        system_parts = [m["content"] for m in messages if m["role"] == "system"]
+        payload: dict[str, Any] = {
+            "model": self.config.model,
+            "max_tokens": max_tokens or 16000,
+            "temperature": temperature,
+            "messages": [m for m in messages if m["role"] != "system"],
+        }
+        if system_parts:
+            payload["system"] = "\n".join(
+                p if isinstance(p, str) else json.dumps(p) for p in system_parts
+            )
+        headers = {
+            "x-api-key": self.config.api_key,
+            "anthropic-version": "2023-06-01",
+        }
+        url = f"{self.config.base_url}/messages"
+        last_error = "unknown provider error"
+        for attempt in range(1, self._max_attempts + 1):
+            try:
+                response = httpx.post(
+                    url, json=payload, headers=headers, timeout=self._timeout
+                )
+            except httpx.HTTPError as exc:
+                last_error = f"transport error: {type(exc).__name__}"
+            else:
+                if response.status_code == 200:
+                    body = response.json()
+                    text = "".join(
+                        part.get("text", "")
+                        for part in body.get("content", [])
+                        if part.get("type") == "text"
+                    )
+                    if not text.strip():
+                        raise ProviderError(
+                            f"{self.config.model} returned empty content"
+                        )
+                    usage = body.get("usage") or {}
+                    return {
+                        "content": text,
+                        "model": body.get("model") or self.config.model,
+                        "finish_reason": body.get("stop_reason"),
+                        "usage": {
+                            "prompt_tokens": usage.get("input_tokens"),
+                            "completion_tokens": usage.get("output_tokens"),
+                        },
+                    }
+                last_error = f"HTTP {response.status_code}: {response.text[:300]}"
+                if response.status_code not in RETRYABLE_STATUS:
+                    break
+            if attempt < self._max_attempts:
+                time.sleep(2**attempt)
+        raise ProviderError(
+            f"{self.config.provider}/{self.config.model} request failed: {last_error}"
+        )
+
+
 def make_client(provider: str, model: str | None = None):
     """Provider-appropriate client with a uniform .chat() interface."""
     config = resolve_provider(provider, model)
     if provider == "gemini":
         return GeminiClient(config)
+    if provider == "anthropic":
+        return AnthropicClient(config)
     return ChatClient(config)
 
 
@@ -229,12 +320,17 @@ class ChatClient:
         payload: dict[str, Any] = {
             "model": self.config.model,
             "messages": messages,
-            "temperature": temperature,
         }
+        if self.config.provider == "openai":
+            # gpt-5.x chat completions: fixed temperature, renamed cap.
+            if max_tokens is not None:
+                payload["max_completion_tokens"] = max_tokens
+        else:
+            payload["temperature"] = temperature
+            if max_tokens is not None:
+                payload["max_tokens"] = max_tokens
         if json_object:
             payload["response_format"] = {"type": "json_object"}
-        if max_tokens is not None:
-            payload["max_tokens"] = max_tokens
 
         url = f"{self.config.base_url}/chat/completions"
         headers = {"Authorization": f"Bearer {self.config.api_key}"}
