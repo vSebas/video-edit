@@ -107,7 +107,18 @@ def generate_concepts(
 {guidance_block}{kept_block}{language_instruction(footage_language)}
 {pack}
 
-Propose exactly {concept_count} genuinely different short-form video concepts.
+Propose {concept_count} short-form video concepts. The FIRST concept must
+follow the user's stated intention as faithfully as the footage allows — it
+is the primary proposal. Any additional concept may explore a different
+angle, but only when the dominant footage content clearly supports it; do
+not invent tangents from minor evidence.
+
+Duration and structure rules:
+- Primary platform is Instagram Reels: aim for 60-100 seconds when the
+  footage supports it. Derive the exact duration from the content — 87 or
+  93 seconds are better answers than rounding to 60 or 90.
+- Scene count should scale with the footage: with 20+ clips available,
+  prefer 6-12 scenes over 4-5 so more of the day is used.
 Respond with JSON:
 {{
   "footage_summary": "<2-4 factual sentences about what the footage visibly covers>",
@@ -118,7 +129,7 @@ Respond with JSON:
       "topic": "<one sentence>",
       "audience": "<one sentence>",
       "platforms": ["instagram_reel", "tiktok"],
-      "target_duration_seconds": <20-90>,
+      "target_duration_seconds": <exact seconds derived from content, not rounded>,
       "hook": "<how the video opens and why it holds attention>",
       "structure": [
         {{
