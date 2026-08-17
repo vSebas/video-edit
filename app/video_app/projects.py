@@ -511,6 +511,7 @@ class ProjectService:
             shutil.rmtree(staging, ignore_errors=True)
             raise
 
+        self._corroborate_speech_claims(project_id)
         self._mark_semantic_progress(project_id, "visual")
         return self.semantic_run(project_id, run_key)
 
@@ -568,8 +569,79 @@ class ProjectService:
             shutil.rmtree(staging, ignore_errors=True)
             raise
 
+        self._corroborate_speech_claims(project_id)
         self._mark_semantic_progress(project_id, "speech")
         return self.semantic_run(project_id, run_key)
+
+    def _corroborate_speech_claims(self, project_id: str) -> int:
+        """Auto-approve visual observations held back ONLY for mentioning
+        speech when the ASR transcript independently confirms speech in the
+        same range. Two agreeing senses need no human referee; the decision
+        is recorded in the audit trail like any other."""
+        from .visual import AUTO_APPROVE_MIN_CONFIDENCE
+
+        words = self._speech_words(project_id)
+        if not words:
+            return 0
+        corroborated = 0
+        for manifest in self._current_run_manifests(project_id):
+            if manifest["provider"]["adapter"] != "owned-live-visual":
+                continue
+            run_dir = (
+                self.settings.runtime / project_id / "analysis" / "runs"
+                / manifest["run_key"]
+            )
+            normalized = load_json(run_dir / "normalized.json")
+            reviews_path = run_dir / "reviews.json"
+            reviews = (
+                load_json(reviews_path)
+                if reviews_path.is_file()
+                else {
+                    "schema_version": "semantic-reviews.v1",
+                    "project_id": project_id,
+                    "run_key": manifest["run_key"],
+                    "updated_at": utc_now(),
+                    "decisions": {},
+                    "events": [],
+                }
+            )
+            changed = False
+            for observation in normalized["observations"]:
+                if observation["normalization_status"] != "accepted":
+                    continue
+                if observation["evidence_id"] in reviews["decisions"]:
+                    continue
+                if observation["risk_flags"] != ["unverified_speech_claim"]:
+                    continue
+                confidence = observation.get("model_confidence") or 0.0
+                if confidence < AUTO_APPROVE_MIN_CONFIDENCE:
+                    continue
+                asset_words = words.get(observation["asset_id"]) or []
+                if not any(
+                    word["start_seconds"] < observation["end_seconds"]
+                    and word["end_seconds"] > observation["start_seconds"]
+                    for word in asset_words
+                ):
+                    continue
+                event = {
+                    "event_id": uuid.uuid4().hex[:12],
+                    "evidence_id": observation["evidence_id"],
+                    "action": "approve",
+                    "caption": observation["caption"],
+                    "note": (
+                        "auto-approved (policy corroborate-v1): the speech "
+                        "mention is confirmed by the transcript in this range"
+                    ),
+                    "reviewed_at": utc_now(),
+                }
+                reviews["decisions"][observation["evidence_id"]] = event
+                reviews["events"].append(event)
+                changed = True
+                corroborated += 1
+            if changed:
+                reviews["updated_at"] = utc_now()
+                write_json(reviews_path, reviews)
+        return corroborated
 
     def _mark_semantic_progress(self, project_id: str, kind: str) -> None:
         if project_id == FIXTURE_ID:

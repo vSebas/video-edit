@@ -122,11 +122,14 @@ Duration and structure rules:
   the footage for it is genuinely good or moves the story forward, and skip
   weak material even if that means fewer scenes. A rich day may earn many
   scenes; a thin one should not be stretched.
-- Whenever the story is limited by what was filmed — you skip a beat for
+- Whenever the story is limited by what was captured — you skip a beat for
   weak coverage, a transition is missing, or extra material would clearly
   strengthen the narrative — you MUST tell the user through missing_shots:
-  a concrete, filmable instruction with priority and a fallback. Silent
-  compromises are not acceptable; the user wants to know what to film.
+  a concrete, recordable instruction with priority and a fallback. Silent
+  compromises are not acceptable; the user wants to know what to record.
+- Missing material is not only video: recommend VOICEOVERS (voz en off)
+  when narration would strengthen the story — say what to talk about, the
+  tone, and a target length, so the user can record it and drop it in.
 Respond with JSON:
 {{
   "footage_summary": "<2-4 factual sentences about what the footage visibly covers>",
