@@ -231,10 +231,10 @@ class AnthropicClient:
         max_tokens: int | None = None,
     ) -> dict:
         system_parts = [m["content"] for m in messages if m["role"] == "system"]
+        # temperature is deprecated on current Anthropic models; omit it.
         payload: dict[str, Any] = {
             "model": self.config.model,
             "max_tokens": max_tokens or 16000,
-            "temperature": temperature,
             "messages": [m for m in messages if m["role"] != "system"],
         }
         if system_parts:

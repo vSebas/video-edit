@@ -1,4 +1,5 @@
 {
  "A": "qwen3.7-max",
- "B": "qwen3.7-plus"
+ "B": "qwen3.7-plus",
+ "C": "deepseek-v4-pro"
 }

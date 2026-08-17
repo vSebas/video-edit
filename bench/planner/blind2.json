@@ -881,5 +881,484 @@
     ]
    }
   ]
+ },
+ {
+  "label": "C",
+  "concepts": [
+   {
+    "concept_id": "concept_ultimo_dia_clases",
+    "title": "Mi \u00faltimo d\u00eda de clases en Stanford",
+    "topic": "Un vlog sobre el \u00faltimo d\u00eda del trimestre de primavera, con clases, cafeter\u00eda y una sesi\u00f3n de brainstorming de startup.",
+    "audience": "Estudiantes y j\u00f3venes profesionales interesados en la vida en Stanford, inteligencia artificial y emprendimiento.",
+    "platforms": [
+     "instagram_reel",
+     "tiktok"
+    ],
+    "target_duration_seconds": 49.7,
+    "hook": "Una serie de tomas fallidas de '\u00bfQu\u00e9 onda?' enganchan con humor y autenticidad, mostrando el lado real de crear contenido.",
+    "structure": [
+     {
+      "beat_id": "failed_intros",
+      "purpose": "Establecer el tono divertido y aut\u00e9ntico, mostrando los intentos fallidos de arrancar el vlog.",
+      "target_duration_seconds": 10.6,
+      "evidence": [
+       {
+        "asset_id": "img_2539",
+        "start_seconds": 12.99,
+        "end_seconds": 14.99,
+        "observed_content": "El hombre se pone la mochila y habla directamente a la c\u00e1mara. Audio: '\u00bfQu\u00e9 onda?'",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2540",
+        "start_seconds": 3.5,
+        "end_seconds": 5.0,
+        "observed_content": "El hombre se cuelga la mochila al hombro y sonr\u00ede directamente a la c\u00e1mara. Audio: '\u00bfQu\u00e9 onda?'",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2541",
+        "start_seconds": 3.8,
+        "end_seconds": 5.2,
+        "observed_content": "El sujeto se pone la mochila y se dirige directamente a la c\u00e1mara.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2544",
+        "start_seconds": 8.82,
+        "end_seconds": 14.52,
+        "observed_content": "Toma exitosa: '\u00bfQu\u00e9 onda? Acomp\u00e1\u00f1enme a una de mis \u00faltimas clases de primavera ac\u00e1 a Stanford y voy a comer primero.'",
+        "confidence": 0.92
+       }
+      ]
+     },
+     {
+      "beat_id": "cafeteria",
+      "purpose": "Mostrar la pausa para comer y la interacci\u00f3n social con un amigo en la cafeter\u00eda.",
+      "target_duration_seconds": 19.0,
+      "evidence": [
+       {
+        "asset_id": "img_2547",
+        "start_seconds": 5.5,
+        "end_seconds": 7.5,
+        "observed_content": "La c\u00e1mara se estabiliza e inclina hacia arriba para revelar claramente el entorno principal de la cafeter\u00eda.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2547",
+        "start_seconds": 109.28,
+        "end_seconds": 112.28,
+        "observed_content": "Primer plano de la mano usando pinzas para servir papas del buffet.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2547",
+        "start_seconds": 114.28,
+        "end_seconds": 116.28,
+        "observed_content": "La comida se suelta de las pinzas sobre el plato.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2547",
+        "start_seconds": 163.91,
+        "end_seconds": 170.91,
+        "observed_content": "C\u00e1mara se acerca a una mesa en la cafeter\u00eda; un hombre sentado mira su tel\u00e9fono; una mano entra en cuadro para recoger un plato de comida.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2547",
+        "start_seconds": 176.72,
+        "end_seconds": 178.72,
+        "observed_content": "El hombre sentado mira directamente a la c\u00e1mara, sonr\u00ede y se r\u00ede.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2548",
+        "start_seconds": 44.99,
+        "end_seconds": 46.49,
+        "observed_content": "El hombre sonr\u00ede ampliamente y se r\u00ede entre dientes mientras mira hacia el hablante.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2548",
+        "start_seconds": 92.87,
+        "end_seconds": 94.37,
+        "observed_content": "El hombre hace un gesto prominente de doble pulgar hacia arriba mientras mira hacia la c\u00e1mara.",
+        "confidence": 0.95
+       }
+      ]
+     },
+     {
+      "beat_id": "classes",
+      "purpose": "Mostrar la parte acad\u00e9mica del d\u00eda: la clase de deep learning y el seminario Transformers United.",
+      "target_duration_seconds": 9.1,
+      "evidence": [
+       {
+        "asset_id": "img_2549",
+        "start_seconds": 0.8,
+        "end_seconds": 2.5,
+        "observed_content": "La c\u00e1mara se inclina hacia arriba y se detiene para mostrar claramente toda la sala de conferencias, el escenario y la pantalla de proyecci\u00f3n.",
+        "confidence": 0.9
+       },
+       {
+        "asset_id": "img_2551",
+        "start_seconds": 3.5,
+        "end_seconds": 4.5,
+        "observed_content": "La diapositiva de presentaci\u00f3n cambia para mostrar nuevo texto y ejemplos visuales.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2551",
+        "start_seconds": 24.08,
+        "end_seconds": 25.48,
+        "observed_content": "La diapositiva se actualiza para mostrar el encabezado 'MULTIPLAYER supports arbitrary number of players'.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2566",
+        "start_seconds": 2.0,
+        "end_seconds": 4.0,
+        "observed_content": "La c\u00e1mara se inclina hacia arriba desde el teclado para revelar el sitio web CS25: Transformers United V en la pantalla.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2566",
+        "start_seconds": 6.19,
+        "end_seconds": 9.19,
+        "observed_content": "La c\u00e1mara se inclina hacia arriba para revelar la sala de conferencias completa y la proyecci\u00f3n principal. Audio: 'all right so hello everybody uh welcome back to cs25 today is unfortunately the last lecture of this iteration of the course we hope you guys have really enjoyed'.",
+        "confidence": 0.95
+       }
+      ]
+     },
+     {
+      "beat_id": "startup_call",
+      "purpose": "Mostrar la discusi\u00f3n de la idea de startup sobre un sensor de radar para monitoreo de salud.",
+      "target_duration_seconds": 7.0,
+      "evidence": [
+       {
+        "asset_id": "img_2572",
+        "start_seconds": 27.96,
+        "end_seconds": 30.46,
+        "observed_content": "Primer plano claro del hombre se\u00f1alando directamente el texto en la pantalla de la laptop.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2572",
+        "start_seconds": 0.0,
+        "end_seconds": 25.15,
+        "observed_content": "Audio: 'sensor pueden trackear la respiraci\u00f3n, como te mueves en la cama, incluso heartbeat, con un solo radar, lo pones como si estuviera en la pared' (se usar\u00e1 un segmento, aproximadamente 5-7 segundos).",
+        "confidence": 0.58
+       },
+       {
+        "asset_id": "img_2572",
+        "start_seconds": 17.97,
+        "end_seconds": 19.47,
+        "observed_content": "El sujeto mira directamente hacia la c\u00e1mara mientras habla y gesticula.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2574",
+        "start_seconds": 86.91,
+        "end_seconds": 89.91,
+        "observed_content": "La c\u00e1mara retrocede para revelar a la persona sentada en el escritorio, bailando activamente con las manos levantadas.",
+        "confidence": 0.95
+       }
+      ]
+     },
+     {
+      "beat_id": "closing",
+      "purpose": "Cerrar el d\u00eda con una toma del campus y el apagado de la c\u00e1mara.",
+      "target_duration_seconds": 4.0,
+      "evidence": [
+       {
+        "asset_id": "img_2567",
+        "start_seconds": 5.0,
+        "end_seconds": 7.5,
+        "observed_content": "Un ciclista cruza el encuadre mientras el plano se acerca a la entrada arqueada del edificio.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2537",
+        "start_seconds": 67.94,
+        "end_seconds": 69.44,
+        "observed_content": "El hombre se acerca y estira la mano directamente hacia la c\u00e1mara para apagarla.",
+        "confidence": 0.95
+       }
+      ]
+     }
+    ],
+    "strengths": [
+     "Aut\u00e9ntica vida estudiantil, f\u00e1cil de identificar",
+     "Humor de las tomas fallidas",
+     "Buena mezcla de momentos acad\u00e9micos y sociales",
+     "Di\u00e1logo en espa\u00f1ol natural y fuerte",
+     "Visuales claros del campus y la cafeter\u00eda"
+    ],
+    "weaknesses": [
+     "No hay voz en off que conecte los beats; la narrativa depende de los clips y el texto en pantalla",
+     "La llamada de startup no se muestra visualmente como una llamada en l\u00ednea, solo el punto de vista del usuario",
+     "Faltan transiciones entre ubicaciones (por ejemplo, saliendo del aula, caminando al campus)",
+     "Algunas tomas son movidas o de baja calidad"
+    ],
+    "missing_shots": [
+     {
+      "purpose": "Dar cohesi\u00f3n narrativa y explicar el significado del d\u00eda",
+      "recording_instruction": "Graba una voz en off en espa\u00f1ol, con tono relajado y divertido, de unos 30-45 segundos, que cuente brevemente la experiencia del \u00faltimo d\u00eda: la lucha por grabar, la comida con un amigo, las clases intensas y la idea de startup que surgi\u00f3. Incluye una despedida.",
+      "priority": "recommended",
+      "fallback": "Usar texto en pantalla sobre los clips para guiar la historia."
+     },
+     {
+      "purpose": "Mostrar la transici\u00f3n entre la cafeter\u00eda y las clases",
+      "recording_instruction": "Toma en plano general del campus de Stanford, con el sujeto caminando hacia un edificio de aulas, llevando mochila. Duraci\u00f3n: 5-10 segundos, c\u00e1mara en mano o fija.",
+      "priority": "optional",
+      "fallback": "Cortar directamente de la cafeter\u00eda a la sala de conferencias con un cartel de texto."
+     }
+    ]
+   },
+   {
+    "concept_id": "concept_dia_productivo_caotico",
+    "title": "Un d\u00eda 'productivo' en Stanford",
+    "topic": "Un montaje c\u00f3mico de los intentos fallidos de grabar un d\u00eda productivo, con momentos de cafeter\u00eda, clase y una inesperada idea de startup.",
+    "audience": "J\u00f3venes que disfrutan del humor autocr\u00edtico sobre la vida universitaria y la creaci\u00f3n de contenido.",
+    "platforms": [
+     "instagram_reel",
+     "tiktok"
+    ],
+    "target_duration_seconds": 43.4,
+    "hook": "Compilaci\u00f3n r\u00e1pida de tomas fallidas de '\u00bfQu\u00e9 onda?' con texto 'Yo intentando grabar un d\u00eda productivo' que crea identificaci\u00f3n y humor inmediato.",
+    "structure": [
+     {
+      "beat_id": "blooper_reel",
+      "purpose": "Enganchar con humor mostrando los m\u00faltiples fracasos al intentar empezar el vlog.",
+      "target_duration_seconds": 11.5,
+      "evidence": [
+       {
+        "asset_id": "img_2539",
+        "start_seconds": 12.99,
+        "end_seconds": 14.49,
+        "observed_content": "El hombre se pone la mochila y habla a la c\u00e1mara. Audio: '\u00bfQu\u00e9 onda?'",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2540",
+        "start_seconds": 3.5,
+        "end_seconds": 4.5,
+        "observed_content": "El hombre sonr\u00ede directamente a la c\u00e1mara mientras se cuelga la mochila.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2541",
+        "start_seconds": 3.8,
+        "end_seconds": 4.8,
+        "observed_content": "El sujeto se pone la mochila y se dirige a la c\u00e1mara.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2542",
+        "start_seconds": 8.63,
+        "end_seconds": 9.63,
+        "observed_content": "El hombre se pone la mochila, enfrenta la c\u00e1mara y comienza a hablar.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2543",
+        "start_seconds": 4.0,
+        "end_seconds": 5.0,
+        "observed_content": "La persona se gira directamente hacia la c\u00e1mara y se coloca la mochila.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2544",
+        "start_seconds": 8.82,
+        "end_seconds": 9.82,
+        "observed_content": "El hombre se pone la correa de la mochila mientras habla.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2537",
+        "start_seconds": 0.0,
+        "end_seconds": 1.5,
+        "observed_content": "Primer plano del sujeto mirando a la c\u00e1mara antes de retroceder.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2537",
+        "start_seconds": 48.33,
+        "end_seconds": 49.33,
+        "observed_content": "El hombre hace contacto visual directo con la c\u00e1mara mientras empaca.",
+        "confidence": 0.95
+       }
+      ]
+     },
+     {
+      "beat_id": "cafeteria_caos",
+      "purpose": "Mostrar la salida a la cafeter\u00eda con momentos divertidos y exagerados junto a un amigo.",
+      "target_duration_seconds": 14.9,
+      "evidence": [
+       {
+        "asset_id": "img_2545",
+        "start_seconds": 0.0,
+        "end_seconds": 2.0,
+        "observed_content": "Hombre caminando hacia la puerta del edificio.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2545",
+        "start_seconds": 3.8,
+        "end_seconds": 5.2,
+        "observed_content": "El hombre extiende la mano para pasar su tarjeta o tel\u00e9fono cerca del panel de acceso.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2545",
+        "start_seconds": 8.19,
+        "end_seconds": 9.19,
+        "observed_content": "Acci\u00f3n clara de abrir la puerta de vidrio y entrar al edificio.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2547",
+        "start_seconds": 5.5,
+        "end_seconds": 7.5,
+        "observed_content": "La c\u00e1mara se estabiliza e inclina hacia arriba para revelar la cafeter\u00eda.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2547",
+        "start_seconds": 109.28,
+        "end_seconds": 112.28,
+        "observed_content": "Sirviendo papas con pinzas en el buffet.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2547",
+        "start_seconds": 114.28,
+        "end_seconds": 116.28,
+        "observed_content": "La comida cae sobre el plato.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2547",
+        "start_seconds": 176.72,
+        "end_seconds": 178.72,
+        "observed_content": "El amigo sentado mira a la c\u00e1mara, sonr\u00ede y se r\u00ede.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2548",
+        "start_seconds": 74.08,
+        "end_seconds": 76.08,
+        "observed_content": "El amigo se cubre la cara mientras se r\u00ede a carcajadas.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2548",
+        "start_seconds": 92.87,
+        "end_seconds": 94.37,
+        "observed_content": "El amigo hace un gesto de doble pulgar hacia arriba.",
+        "confidence": 0.95
+       }
+      ]
+     },
+     {
+      "beat_id": "clase_intensa",
+      "purpose": "Mostrar de forma c\u00f3mica la clase de deep learning con una diapositiva de 'YOU DIED'.",
+      "target_duration_seconds": 6.5,
+      "evidence": [
+       {
+        "asset_id": "img_2551",
+        "start_seconds": 17.52,
+        "end_seconds": 20.02,
+        "observed_content": "La pantalla de proyecci\u00f3n muestra una jugabilidad con el texto 'YOU DIED' y 'Killed by Player 2'.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2551",
+        "start_seconds": 3.5,
+        "end_seconds": 4.5,
+        "observed_content": "Transici\u00f3n de diapositiva en la clase.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2566",
+        "start_seconds": 6.19,
+        "end_seconds": 9.19,
+        "observed_content": "Revelaci\u00f3n de la sala de conferencias del seminario CS25. Audio: '... unfortunately the last lecture...'",
+        "confidence": 0.95
+       }
+      ]
+     },
+     {
+      "beat_id": "startup_inesperada",
+      "purpose": "Mostrar el giro positivo: una idea de startup surge durante una llamada.",
+      "target_duration_seconds": 6.0,
+      "evidence": [
+       {
+        "asset_id": "img_2572",
+        "start_seconds": 27.96,
+        "end_seconds": 30.46,
+        "observed_content": "El hombre se\u00f1ala el texto 'Your Health Insights, Without The Hassle' en la pantalla.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2572",
+        "start_seconds": 0.0,
+        "end_seconds": 25.15,
+        "observed_content": "Audio en espa\u00f1ol: 'sensor pueden trackear la respiraci\u00f3n...' (se usar\u00e1 un segmento corto, aprox. 4-5 segundos).",
+        "confidence": 0.58
+       },
+       {
+        "asset_id": "img_2572",
+        "start_seconds": 17.97,
+        "end_seconds": 19.47,
+        "observed_content": "El hombre gesticula y habla directamente a la c\u00e1mara.",
+        "confidence": 0.95
+       },
+       {
+        "asset_id": "img_2574",
+        "start_seconds": 86.91,
+        "end_seconds": 89.91,
+        "observed_content": "La persona baila en su silla con las manos levantadas.",
+        "confidence": 0.95
+       }
+      ]
+     },
+     {
+      "beat_id": "cierre_comico",
+      "purpose": "Cerrar con el apagado de c\u00e1mara y un cartel de 'Fin del quarter'.",
+      "target_duration_seconds": 1.5,
+      "evidence": [
+       {
+        "asset_id": "img_2537",
+        "start_seconds": 67.94,
+        "end_seconds": 69.44,
+        "observed_content": "El hombre se acerca y apaga la c\u00e1mara.",
+        "confidence": 0.95
+       }
+      ]
+     }
+    ],
+    "strengths": [
+     "Humor autocr\u00edtico y ritmo r\u00e1pido que funciona bien en reels",
+     "El texto 'YOU DIED' en la clase crea un gancho inesperado y divertido",
+     "La idea de startup agrega un giro positivo y sorprendente",
+     "Uso efectivo de los m\u00faltiples bloopers para empatizar con la audiencia"
+    ],
+    "weaknesses": [
+     "La historia omite el contexto acad\u00e9mico real y se apoya en el humor superficial",
+     "La llamada de startup no se ve como una llamada, solo el punto de vista del usuario",
+     "Falta una voz en off o texto que explique el cambio de la clase a la startup",
+     "Algunas tomas de la cafeter\u00eda son movidas y podr\u00edan marear"
+    ],
+    "missing_shots": [
+     {
+      "purpose": "Dar un tono c\u00f3mico a la transici\u00f3n de la clase a la startup",
+      "recording_instruction": "Graba un clip de 5 segundos donde el usuario pone cara de aburrimiento o confusi\u00f3n en clase, seguido de una expresi\u00f3n de iluminaci\u00f3n (eureka). C\u00e1mara selfie, plano medio.",
+      "priority": "optional",
+      "fallback": "Usar un efecto de sonido de 'ding' y texto en pantalla 'Pero entonces...'."
+     }
+    ]
+   }
+  ]
  }
 ]
