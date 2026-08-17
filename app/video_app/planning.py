@@ -58,6 +58,22 @@ def evidence_pack(project: dict, evidence: list[dict]) -> str:
     return "\n".join(lines)
 
 
+LANGUAGE_NAMES = {"es": "Spanish", "en": "English"}
+
+
+def language_instruction(footage_language: str | None) -> str:
+    if not footage_language:
+        return ""
+    name = LANGUAGE_NAMES.get(footage_language, footage_language)
+    return (
+        f"\nThe footage speech is primarily {name} (possibly mixed with "
+        "other languages). Write concept titles, hooks, and any on-screen "
+        f"text in {name} so they match the creator's voice and audience. "
+        "Keep quoted speech verbatim in its original language. Descriptions "
+        "of structure may remain in English.\n"
+    )
+
+
 def generate_concepts(
     client: ChatClient,
     project: dict,
@@ -65,6 +81,7 @@ def generate_concepts(
     concept_count: int = 2,
     guidance: str | None = None,
     keep_concepts: list[dict] | None = None,
+    footage_language: str | None = None,
 ) -> dict:
     if not evidence:
         raise PlanningError("No approved semantic evidence is available for planning")
@@ -87,7 +104,7 @@ def generate_concepts(
         )
     pack = evidence_pack(project, evidence)
     instruction = f"""User request: {prompt}
-{guidance_block}{kept_block}
+{guidance_block}{kept_block}{language_instruction(footage_language)}
 {pack}
 
 Propose exactly {concept_count} genuinely different short-form video concepts.
@@ -546,6 +563,7 @@ def revise_plan(
     evidence: list[dict],
     instruction: str,
     speech_words: dict[str, list[dict]] | None = None,
+    footage_language: str | None = None,
 ) -> tuple[dict, str]:
     """Revise the current plan per a natural-language instruction, keeping
     media analysis untouched. Returns (new plan, revision note)."""
@@ -567,7 +585,7 @@ def revise_plan(
         for index, event in enumerate(video_events, start=1)
     )
     pack = evidence_pack(project, evidence)
-    request = f"""Current cut list (timeline order):
+    request = f"""{language_instruction(footage_language)}Current cut list (timeline order):
 {current_lines}
 
 Current title text: {current_title!r}

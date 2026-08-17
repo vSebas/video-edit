@@ -676,6 +676,7 @@ class ProjectService:
                 evidence,
                 guidance=guidance,
                 keep_concepts=keep_concepts,
+                footage_language=self._footage_language(project_id),
             )
             self._validate_schema(
                 document,
@@ -793,6 +794,7 @@ class ProjectService:
                 evidence,
                 instruction,
                 speech_words=self._speech_words(project_id),
+                footage_language=self._footage_language(project_id),
             )
             validate_edit_plan(
                 new_plan,
@@ -828,6 +830,27 @@ class ProjectService:
         stored["status"] = "plan_ready"
         write_json(path, stored)
         return {"plan": new_plan, "revision_note": note}
+
+    def _footage_language(self, project_id: str) -> str | None:
+        """Dominant detected speech language from the most recent ASR run,
+        weighted by transcribed duration."""
+        runs_dir = self.settings.runtime / project_id / "analysis" / "runs"
+        candidates = sorted(runs_dir.glob("asr-live-*/raw/transcripts.json"))
+        if not candidates:
+            return None
+        weights: dict[str, float] = {}
+        for record in load_json(candidates[-1]).get("transcripts", []):
+            language = (record.get("detection") or {}).get("language")
+            if not language:
+                continue
+            spoken = sum(
+                segment["end_seconds"] - segment["start_seconds"]
+                for segment in record.get("segments", [])
+            )
+            weights[language] = weights.get(language, 0.0) + spoken
+        if not weights:
+            return None
+        return max(weights, key=weights.get)
 
     def _speech_words(self, project_id: str) -> dict[str, list[dict]]:
         """Word timings from the most recent ASR run, keyed by asset, for
