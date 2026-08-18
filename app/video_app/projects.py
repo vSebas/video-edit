@@ -759,6 +759,53 @@ class ProjectService:
             return None
         return max(weights, key=weights.get)
 
+    @staticmethod
+    def _srt_time(seconds: float) -> str:
+        millis = int(round(seconds * 1000))
+        hours, rem = divmod(millis, 3_600_000)
+        minutes, rem = divmod(rem, 60_000)
+        secs, ms = divmod(rem, 1000)
+        return f"{hours:02d}:{minutes:02d}:{secs:02d},{ms:03d}"
+
+    def export_captions(self, project_id: str) -> Path:
+        """Timeline-aligned SRT subtitles built from the ASR transcript:
+        each spoken segment that survives into the cut appears at its
+        position in the final video, verbatim in its original language."""
+        plan_path, _, _ = self._plan_sources(project_id)
+        plan = load_json(plan_path)
+        runs_dir = self.settings.runtime / project_id / "analysis" / "runs"
+        candidates = sorted(runs_dir.glob("asr-live-*/raw/transcripts.json"))
+        if not candidates:
+            raise ProjectError("Run speech analysis before exporting captions")
+        segments_by_asset: dict[str, list[dict]] = {}
+        for record in load_json(candidates[-1]).get("transcripts", []):
+            segments_by_asset[record["asset_id"]] = record.get("segments", [])
+
+        entries: list[tuple[float, float, str]] = []
+        video_events = next(
+            track["events"] for track in plan["tracks"] if track["kind"] == "video"
+        )
+        for event in video_events:
+            for segment in segments_by_asset.get(event["asset_id"], []):
+                start = max(segment["start_seconds"], event["source_start_seconds"])
+                end = min(segment["end_seconds"], event["source_end_seconds"])
+                if end - start < 0.2:
+                    continue
+                offset = event["timeline_start_seconds"] - event["source_start_seconds"]
+                entries.append((start + offset, end + offset, segment["text"].strip()))
+        entries.sort(key=lambda item: item[0])
+
+        output = self.settings.runtime / project_id / "outputs" / "captions.srt"
+        lines = []
+        for index, (start, end, text) in enumerate(entries, start=1):
+            lines.append(str(index))
+            lines.append(f"{self._srt_time(start)} --> {self._srt_time(end)}")
+            lines.append(text)
+            lines.append("")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text("\n".join(lines), encoding="utf-8")
+        return output
+
     def _speech_words(self, project_id: str) -> dict[str, list[dict]]:
         """Word timings from the most recent ASR run, keyed by asset, for
         snapping cut boundaries to speech."""
@@ -974,6 +1021,11 @@ class ProjectService:
             outputs["xmeml_proxies"] = (
                 f"/api/projects/{project_id}/outputs/xmeml_proxies"
             )
+        try:
+            self.export_captions(project_id)
+            outputs["captions"] = f"/api/projects/{project_id}/outputs/captions"
+        except ProjectError:
+            pass  # no transcript yet; captions are optional
         return outputs
 
     def _build_resolve_proxies(self, project_id: str) -> None:
@@ -1086,6 +1138,7 @@ class ProjectService:
             "otio": runtime_outputs / "timeline.otio",
             "xmeml": runtime_outputs / "timeline-davinci.xml",
             "xmeml_proxies": runtime_outputs / "timeline-davinci-proxies.xml",
+            "captions": runtime_outputs / "captions.srt",
         }
         path = mapping.get(kind)
         if path is None:
