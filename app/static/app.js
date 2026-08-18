@@ -1085,6 +1085,13 @@ $('#new-project-button').addEventListener('click', () => {
   dialog.showModal();
   browseTo('');
 });
+$('#upload-files')?.addEventListener('change', (event) => {
+  const files = [...event.currentTarget.files];
+  const totalMb = files.reduce((sum, file) => sum + file.size, 0) / 1e6;
+  notice(files.length
+    ? `${files.length} archivo(s) listos (${totalMb.toFixed(0)} MB) — pon nombre y pulsa "Add my clips".`
+    : 'Selección vacía.');
+});
 $('#close-dialog').addEventListener('click', () => dialog.close());
 $('#cancel-dialog').addEventListener('click', () => dialog.close());
 $('#new-project-form').addEventListener('submit', createProject);
