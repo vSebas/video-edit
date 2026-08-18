@@ -188,7 +188,10 @@ class ProjectService:
                 "outputs": {},
             }
             write_json(staging / "project.json", project)
-            os.replace(staging, final_dir)
+            try:
+                os.replace(staging, final_dir)
+            except OSError as exc:  # concurrent create of the same id
+                raise ProjectError(f"Project already exists: {project_id}") from exc
         except Exception:
             shutil.rmtree(staging, ignore_errors=True)
             raise
@@ -763,26 +766,55 @@ class ProjectService:
         """New independent project over the same source folder, reusing the
         original's analysis cache (same folder means identical asset ids, so
         evidence runs transfer verbatim). Creative state starts empty."""
-        source = self.get_project(project_id)
-        clone = self.create_project(
-            name, source["source_directory"], prompt or source.get("prompt", "")
+        clone_id = slugify(name)
+        source_root = self.settings.runtime / project_id
+        clone_root = self.settings.runtime / clone_id
+        if clone_root.exists():
+            raise ProjectError(f"Project already exists: {clone_id}")
+        source_stored = load_json(source_root / "project.json")
+
+        staging = Path(
+            tempfile.mkdtemp(prefix=f".{clone_id}-", dir=self.settings.runtime)
         )
-        runs_src = self.settings.runtime / project_id / "analysis" / "runs"
-        if runs_src.is_dir():
-            runs_dst = self.settings.runtime / clone["project_id"] / "analysis" / "runs"
-            shutil.copytree(runs_src, runs_dst, dirs_exist_ok=True)
-            path = self.settings.runtime / clone["project_id"] / "project.json"
-            stored = load_json(path)
-            stored["status"] = "semantic_ready"
-            stored["analysis"]["visual"] = "completed"
-            stored["analysis"]["speech"] = "completed"
-            stored["footage_summary"] = (
-                f"Indexed {len(stored['inventory']['assets'])} media file(s); "
-                f"analysis shared from '{source['name']}'."
+        try:
+            # Instant clone: inventory, thumbnails, and analysis are copied
+            # from the source instead of re-probing and re-analyzing.
+            if (source_root / "thumbnails").is_dir():
+                shutil.copytree(source_root / "thumbnails", staging / "thumbnails")
+            runs_src = source_root / "analysis" / "runs"
+            has_runs = runs_src.is_dir() and any(runs_src.iterdir())
+            if has_runs:
+                shutil.copytree(runs_src, staging / "analysis" / "runs")
+            stored = json.loads(json.dumps(source_stored))
+            stored.update(
+                {
+                    "project_id": clone_id,
+                    "name": name.strip(),
+                    "created_at": utc_now(),
+                    "updated_at": utc_now(),
+                    "prompt": (prompt or source_stored.get("prompt", "")).strip(),
+                    "status": "semantic_ready" if has_runs else "awaiting_semantic_analysis",
+                    "concepts": [],
+                    "selected_concept_id": None,
+                    "plan": None,
+                    "outputs": {},
+                    "footage_summary": (
+                        f"Indexed {len(stored['inventory']['assets'])} media file(s); "
+                        f"analysis shared from '{source_stored['name']}'."
+                    ),
+                }
             )
-            stored["updated_at"] = utc_now()
-            write_json(path, stored)
-        return self.get_project(clone["project_id"])
+            stored["analysis"]["visual"] = "completed" if has_runs else "unavailable"
+            stored["analysis"]["speech"] = "completed" if has_runs else "unavailable"
+            write_json(staging / "project.json", stored)
+            try:
+                os.replace(staging, clone_root)
+            except OSError as exc:  # concurrent create of the same id
+                raise ProjectError(f"Project already exists: {clone_id}") from exc
+        except Exception:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+        return self.get_project(clone_id)
 
     def reset_project(self, project_id: str, keep_analysis: bool = True) -> dict:
         """Return the project to step 1. Derived creative state (concepts,
@@ -1261,18 +1293,20 @@ class ProjectService:
         """A small JPEG of the asset at a given second, so review decisions
         can be made visually."""
         path = self.media_path(project_id, asset_id)
-        command = [
-            "ffmpeg", "-hide_banner", "-loglevel", "error",
-            "-ss", f"{max(0.0, min(timestamp, 36000.0)):.3f}",
-            "-i", str(path),
-            "-frames:v", "1",
-            "-vf", "scale=360:-2",
-            "-f", "image2", "-c:v", "mjpeg", "pipe:1",
-        ]
-        result = subprocess.run(command, capture_output=True, check=False)
-        if result.returncode or not result.stdout:
-            raise ProjectError(f"Could not extract a frame from {asset_id}")
-        return result.stdout
+        seek = ["-ss", f"{max(0.0, min(timestamp, 36000.0)):.3f}"]
+        for attempt_seek in (seek, []):  # still images reject seeking
+            command = [
+                "ffmpeg", "-hide_banner", "-loglevel", "error",
+                *attempt_seek,
+                "-i", str(path),
+                "-frames:v", "1",
+                "-vf", "scale=360:-2",
+                "-f", "image2", "-c:v", "mjpeg", "pipe:1",
+            ]
+            result = subprocess.run(command, capture_output=True, check=False)
+            if result.returncode == 0 and result.stdout:
+                return result.stdout
+        raise ProjectError(f"Could not extract a frame from {asset_id}")
 
     def thumbnail_path(self, project_id: str, asset_id: str) -> Path:
         path = self.settings.runtime / project_id / "thumbnails" / f"{asset_id}.jpg"
