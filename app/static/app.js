@@ -293,6 +293,14 @@ function resultSection(project) {
       <button class="secondary" id="prepare-export">${proxyExport ? 'Rebuild editor files' : 'Prepare DaVinci files'}</button>
     </section>
     ${resultRecommendations(project)}
+    <section id="clip-value">
+      <div class="section-header"><div><span class="eyebrow">Valor de cada clip</span>
+      <h2>Qué aporta cada clip a este vlog</h2></div>
+      <p class="muted">Puntaje transparente: segundos en el corte, citas en historias,
+      momentos destacados y tu voz. Los marcados «descartable» no aportan nada a esta
+      historia — puedes borrarlos de la carpeta con confianza.</p></div>
+      <div class="clip-score-list" id="clip-score-list">Cargando…</div>
+    </section>
     <section>
       <div class="section-header"><div><span class="eyebrow">Escena por escena</span>
       <h2>Qué hay en este corte y por qué</h2></div>
@@ -541,6 +549,7 @@ function renderProject() {
   $('#change-story')?.addEventListener('click', () => { state.forcePick = true; renderProject(); });
   $('#prepare-export')?.addEventListener('click', prepareExport);
   $('#revision-form')?.addEventListener('submit', submitRevision);
+  if ($('#clip-score-list')) loadClipScores();
   document.querySelectorAll('[data-make-story]').forEach((button) => {
     button.addEventListener('click', () => startStory(button.dataset.makeStory));
   });
@@ -726,6 +735,30 @@ async function regenerateIdeas(event) {
     state.busy = null;
     notice(error.message, true);
     await loadProject(state.activeProjectId);
+  }
+}
+
+async function loadClipScores() {
+  try {
+    const payload = await api(`/api/projects/${state.activeProjectId}/clip-scores`);
+    const container = $('#clip-score-list');
+    if (!container) return;
+    container.innerHTML = payload.clips.map((clip) => `
+      <div class="clip-score verdict-${escapeHtml(clip.verdict.replaceAll(' ', '-'))}">
+        <img loading="lazy" src="${frameUrl(clip.asset_id, clip.duration_seconds / 2)}" alt="" />
+        <div class="clip-score-body">
+          <div class="clip-score-head">
+            <strong>${escapeHtml(clip.filename)}</strong>
+            <span class="score-badge">${clip.score}</span>
+          </div>
+          <span class="verdict-label">${escapeHtml(clip.verdict)}</span>
+          <span class="muted">${escapeHtml(clip.reason)}</span>
+        </div>
+      </div>
+    `).join('');
+  } catch (error) {
+    const container = $('#clip-score-list');
+    if (container) container.textContent = error.message;
   }
 }
 

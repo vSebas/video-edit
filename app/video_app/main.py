@@ -108,6 +108,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def delete_project(project_id: str):
         return project_call(lambda: projects.delete_project(project_id))
 
+    @application.get("/api/projects/{project_id}/clip-scores")
+    def clip_scores(project_id: str):
+        return {"clips": project_call(lambda: projects.clip_scores(project_id))}
+
     @application.get("/api/browse")
     def browse(path: str = ""):
         return project_call(lambda: projects.browse_directories(path))

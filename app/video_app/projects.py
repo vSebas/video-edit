@@ -759,6 +759,90 @@ class ProjectService:
             return None
         return max(weights, key=weights.get)
 
+    def clip_scores(self, project_id: str) -> list[dict]:
+        """Deterministic per-clip value for the intended vlog, computed from
+        existing artifacts: seconds used in the cut, citations across story
+        ideas, strong moments found by perception, and transcribed speech.
+        Fully explainable — every point traces to evidence."""
+        project = self.get_project(project_id)
+        plan = project.get("plan")
+        used: dict[str, float] = {}
+        if plan:
+            for track in plan["tracks"]:
+                if track["kind"] != "video":
+                    continue
+                for event in track["events"]:
+                    if event.get("asset_id"):
+                        used[event["asset_id"]] = used.get(event["asset_id"], 0.0) + (
+                            event["source_end_seconds"] - event["source_start_seconds"]
+                        )
+        cited: dict[str, float] = {}
+        for concept in project.get("concepts", []):
+            for beat in concept.get("structure", []):
+                for evidence in beat.get("evidence", []):
+                    cited[evidence["asset_id"]] = cited.get(evidence["asset_id"], 0.0) + (
+                        evidence["end_seconds"] - evidence["start_seconds"]
+                    )
+        moments: dict[str, int] = {}
+        speech: dict[str, float] = {}
+        for manifest in self._current_run_manifests(project_id):
+            run = self.semantic_run(project_id, manifest["run_key"])
+            for observation in run["observations"]:
+                if observation.get("review_status") != "reviewed":
+                    continue
+                asset_id = observation.get("asset_id")
+                if not asset_id:
+                    continue
+                if observation.get("evidence_type") == "speech":
+                    speech[asset_id] = speech.get(asset_id, 0.0) + (
+                        observation["end_seconds"] - observation["start_seconds"]
+                    )
+                elif "_m" in (observation.get("clip_id") or ""):
+                    moments[asset_id] = moments.get(asset_id, 0) + 1
+
+        results = []
+        for asset in project.get("inventory", {}).get("assets", []):
+            asset_id = asset["asset_id"]
+            duration = float(asset.get("duration_seconds") or 0.0) or 1.0
+            used_s = round(used.get(asset_id, 0.0), 1)
+            cited_s = round(cited.get(asset_id, 0.0), 1)
+            moment_count = moments.get(asset_id, 0)
+            speech_s = round(speech.get(asset_id, 0.0), 1)
+            score = min(50.0, used_s * 10.0)
+            score += min(20.0, cited_s * 2.0)
+            score += min(15.0, moment_count * 3.0)
+            score += min(15.0, speech_s * 1.5)
+            score = round(min(score, 100.0))
+            if used_s > 0:
+                verdict = "esencial" if score >= 60 else "en uso"
+            elif cited_s > 0 or score >= 25:
+                verdict = "reserva"
+            else:
+                verdict = "descartable"
+            reasons = []
+            if used_s:
+                reasons.append(f"{used_s}s en el corte")
+            if cited_s:
+                reasons.append(f"{cited_s}s citados en historias")
+            if moment_count:
+                reasons.append(f"{moment_count} momentos destacados")
+            if speech_s:
+                reasons.append(f"{speech_s}s de tu voz")
+            if not reasons:
+                reasons.append("sin evidencia aprovechada")
+            results.append(
+                {
+                    "asset_id": asset_id,
+                    "filename": asset["filename"],
+                    "duration_seconds": round(duration, 1),
+                    "score": score,
+                    "verdict": verdict,
+                    "reason": ", ".join(reasons),
+                    "used_seconds": used_s,
+                }
+            )
+        return sorted(results, key=lambda item: -item["score"])
+
     @staticmethod
     def _srt_time(seconds: float) -> str:
         millis = int(round(seconds * 1000))

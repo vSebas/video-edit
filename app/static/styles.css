@@ -495,3 +495,30 @@ textarea { resize: vertical; }
   font-size: 13px;
 }
 .primary.compact, .secondary.compact { padding: 6px 14px; font-size: 12px; }
+
+/* Clip value scores */
+.clip-score-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 10px;
+}
+.clip-score {
+  display: flex;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 8px;
+  background: var(--panel-2);
+  align-items: center;
+}
+.clip-score img { width: 64px; aspect-ratio: 9/12; object-fit: cover; border-radius: 8px; background: #000; flex: none; }
+.clip-score-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: 12px; }
+.clip-score-head { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.clip-score-head strong { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.score-badge { font-weight: 700; font-size: 13px; color: var(--accent); }
+.verdict-label { text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; }
+.verdict-esencial .verdict-label { color: var(--accent); }
+.verdict-en-uso .verdict-label { color: var(--blue); }
+.verdict-reserva .verdict-label { color: var(--amber); }
+.verdict-descartable .verdict-label { color: var(--danger); }
+.verdict-descartable .score-badge { color: var(--danger); }
