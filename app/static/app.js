@@ -490,6 +490,7 @@ function advancedSection(project) {
         `).join('')}
       </div>
       <div class="advanced-actions">
+        <button class="ghost" id="clone-project">Duplicar vlog (comparte análisis)</button>
         <button class="ghost" id="reset-keep">Empezar de nuevo (mantener análisis)</button>
         <button class="ghost" id="reset-full">Empezar de cero (re-analizar todo)</button>
         <button class="ghost reject" id="delete-project">Delete this vlog (keeps your clips)</button>
@@ -573,6 +574,7 @@ function renderProject() {
     button.addEventListener('click', () => runAdvancedStep(button.dataset.pipeline, button));
   });
   $('#delete-project')?.addEventListener('click', deleteProject);
+  $('#clone-project')?.addEventListener('click', cloneProject);
   $('#reset-keep')?.addEventListener('click', () => resetProject(true));
   $('#reset-full')?.addEventListener('click', () => resetProject(false));
   $('#see-new-ideas')?.addEventListener('click', () => {
@@ -587,6 +589,25 @@ function renderProject() {
     localStorage.setItem(`showClaims:${state.activeProjectId}`, '1');
     renderProject();
   });
+}
+
+async function cloneProject() {
+  const name = window.prompt(
+    'Nombre del nuevo vlog (mismos clips, análisis compartido, historia desde cero):',
+    `${state.activeProject?.name || 'Vlog'} — v2`
+  );
+  if (!name) return;
+  try {
+    const clone = await api(`/api/projects/${state.activeProjectId}/clone`, {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    });
+    notice('Vlog duplicado — análisis compartido, listo para ideas nuevas.');
+    await refreshProjects();
+    await loadProject(clone.project_id);
+  } catch (error) {
+    notice(error.message, true);
+  }
 }
 
 async function resetProject(keepAnalysis) {

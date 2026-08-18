@@ -759,6 +759,31 @@ class ProjectService:
             return None
         return max(weights, key=weights.get)
 
+    def clone_project(self, project_id: str, name: str, prompt: str = "") -> dict:
+        """New independent project over the same source folder, reusing the
+        original's analysis cache (same folder means identical asset ids, so
+        evidence runs transfer verbatim). Creative state starts empty."""
+        source = self.get_project(project_id)
+        clone = self.create_project(
+            name, source["source_directory"], prompt or source.get("prompt", "")
+        )
+        runs_src = self.settings.runtime / project_id / "analysis" / "runs"
+        if runs_src.is_dir():
+            runs_dst = self.settings.runtime / clone["project_id"] / "analysis" / "runs"
+            shutil.copytree(runs_src, runs_dst, dirs_exist_ok=True)
+            path = self.settings.runtime / clone["project_id"] / "project.json"
+            stored = load_json(path)
+            stored["status"] = "semantic_ready"
+            stored["analysis"]["visual"] = "completed"
+            stored["analysis"]["speech"] = "completed"
+            stored["footage_summary"] = (
+                f"Indexed {len(stored['inventory']['assets'])} media file(s); "
+                f"analysis shared from '{source['name']}'."
+            )
+            stored["updated_at"] = utc_now()
+            write_json(path, stored)
+        return self.get_project(clone["project_id"])
+
     def reset_project(self, project_id: str, keep_analysis: bool = True) -> dict:
         """Return the project to step 1. Derived creative state (concepts,
         plan, outputs, selection) is always cleared; the analysis cache is

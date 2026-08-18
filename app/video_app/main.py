@@ -108,6 +108,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def delete_project(project_id: str):
         return project_call(lambda: projects.delete_project(project_id))
 
+    class CloneProjectRequest(BaseModel):
+        name: str = Field(min_length=1, max_length=120)
+        prompt: str = Field(default="", max_length=4000)
+
+    @application.post("/api/projects/{project_id}/clone", status_code=201)
+    def clone_project(project_id: str, request: CloneProjectRequest):
+        return project_call(
+            lambda: projects.clone_project(project_id, request.name, request.prompt)
+        )
+
     class ResetProjectRequest(BaseModel):
         keep_analysis: bool = True
 
