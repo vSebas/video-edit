@@ -519,7 +519,7 @@ function advancedSection(project) {
           return `
             <article class="media-card">
               <div class="media-thumb">${thumbnail}
-                <button class="remove-asset" data-remove-asset="${escapeHtml(asset.asset_id)}" title="Quitar del proyecto (el archivo se conserva)">✕</button>
+                <button class="remove-asset" data-remove-asset="${escapeHtml(asset.asset_id)}" title="Quitar del proyecto y borrar el archivo de la laptop">✕</button>
               </div>
               <div class="media-info">
                 <strong title="${escapeHtml(asset.filename)}">${escapeHtml(asset.filename)}</strong>
@@ -636,10 +636,13 @@ async function addClipsToProject(event) {
 }
 
 async function removeAsset(assetId) {
-  if (!window.confirm('¿Quitar este clip del proyecto? El archivo se conserva en la carpeta.')) return;
+  if (!window.confirm(
+    '¿Quitar este clip y BORRAR el archivo de la carpeta en la laptop? '
+    + '(El original en tu iPhone no se toca.)'
+  )) return;
   try {
-    await api(`/api/projects/${state.activeProjectId}/assets/${assetId}`, { method: 'DELETE' });
-    notice('Clip quitado del proyecto.');
+    await api(`/api/projects/${state.activeProjectId}/assets/${assetId}?delete_file=true`, { method: 'DELETE' });
+    notice('Clip quitado y archivo borrado de la laptop.');
     await loadProject(state.activeProjectId);
   } catch (error) {
     notice(error.message, true);
