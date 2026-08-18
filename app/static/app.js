@@ -1004,6 +1004,51 @@ async function refreshProjects() {
   const payload = await api('/api/projects');
   state.projects = payload.projects;
   renderProjectList();
+  refreshDriveInbox();
+}
+
+async function refreshDriveInbox() {
+  let banner = $('#drive-inbox');
+  try {
+    const payload = await api('/api/drive/inbox');
+    const waiting = (payload.folders || []).filter((folder) => !folder.imported);
+    if (!waiting.length) { banner?.remove(); return; }
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'drive-inbox';
+      banner.className = 'banner';
+      document.querySelector('.workspace')?.prepend(banner);
+    }
+    banner.innerHTML = `
+      <span>☁️ ${waiting.length} vlog${waiting.length === 1 ? '' : 's'} en tu Drive VlogInbox:</span>
+      ${waiting.slice(0, 3).map((folder) => `
+        <button class="primary compact" data-drive-import="${escapeHtml(folder.name)}">
+          Importar «${escapeHtml(folder.name)}»
+        </button>`).join('')}
+    `;
+    banner.querySelectorAll('[data-drive-import]').forEach((button) => {
+      button.addEventListener('click', () => importFromDrive(button.dataset.driveImport));
+    });
+  } catch { banner?.remove(); /* rclone not configured or offline */ }
+}
+
+async function importFromDrive(folder) {
+  try {
+    setBusy(`Importando «${folder}» desde Drive`, ['Descargando clips', 'Indexando'], 0);
+    const job = await api('/api/drive/import', {
+      method: 'POST',
+      body: JSON.stringify({ folder }),
+    });
+    const done = await pollJob(job.job_id);
+    state.busy = null;
+    notice(`«${folder}» importado.`);
+    await refreshProjects();
+    if (done.result?.project_id) await loadProject(done.result.project_id);
+  } catch (error) {
+    state.busy = null;
+    notice(error.message, true);
+    await refreshProjects();
+  }
 }
 
 async function createProject(event) {

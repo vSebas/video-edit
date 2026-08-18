@@ -20,7 +20,7 @@ def uuid_hex(length: int) -> str:
 
 from .config import Settings
 from .jobs import JobManager
-from .projects import ProjectError, ProjectService
+from .projects import ProjectError, ProjectService, slugify
 
 
 class CreateProjectRequest(BaseModel):
@@ -73,6 +73,10 @@ class RevisePlanRequest(BaseModel):
     instruction: str = Field(min_length=3, max_length=2000)
     provider: str = Field(default="qwen", pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
     model: str | None = Field(default=None, max_length=160)
+
+
+class DriveImportRequest(BaseModel):
+    folder: str = Field(min_length=1, max_length=200)
 
 
 class ReviewSemanticEvidenceRequest(BaseModel):
@@ -220,6 +224,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "clips": len(project["inventory"]["assets"]),
                 "created": True,
             }
+
+    @application.get("/api/drive/inbox")
+    def drive_inbox():
+        return {"folders": project_call(projects.drive_inbox)}
+
+    @application.post("/api/drive/import", status_code=202)
+    def drive_import(request: DriveImportRequest):
+        return jobs.submit(
+            "drive_import",
+            slugify(request.folder),
+            lambda: projects.import_drive_folder(request.folder),
+        )
 
     @application.get("/api/uploads/active")
     def active_uploads():

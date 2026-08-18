@@ -8,6 +8,7 @@ RUN apt-get update \
         ca-certificates \
         ffmpeg \
         fonts-liberation \
+        rclone \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/video-editing-app

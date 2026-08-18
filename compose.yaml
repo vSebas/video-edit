@@ -19,11 +19,14 @@ services:
       VIDEO_EDITING_RUNTIME: ${PWD}/runtime/projects
       VIDEO_EDITING_POC_ROOT: ${PWD}/poc-morning-routine
       HF_HOME: ${PWD}/runtime/model-cache
+      RCLONE_CONFIG: /rclone/rclone.conf
       DASHSCOPE_API_KEY: "${DASHSCOPE_API_KEY:-}"
       DASHSCOPE_BASE_URL: "${DASHSCOPE_BASE_URL:-}"
       GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
     volumes:
       - ./:${PWD}
+      # Read-write so rclone can refresh its OAuth token.
+      - ${HOME}/.config/rclone:/rclone
     ports:
       # Set VIDEO_EDITING_BIND=0.0.0.0 to reach the app from your phone on
       # the same WiFi (http://<laptop-ip>:8787). Default is laptop-only.

@@ -232,8 +232,10 @@ def test_browse_lists_workspace_directories(tmp_path: Path) -> None:
     with TestClient(create_app(settings)) as current:
         listing = current.get("/api/browse").json()
         names = [item["name"] for item in listing["directories"]]
-        assert "app" in names
-        assert "runtime" not in names  # skipped at the workspace root
+        assert "footage" in names
+        # Internal directories are hidden from the clip-folder picker.
+        assert "runtime" not in names
+        assert "app" not in names
         assert current.get("/api/browse", params={"path": "../etc"}).status_code == 400
 
 

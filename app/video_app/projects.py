@@ -212,7 +212,8 @@ class ProjectService:
 
     BROWSE_SKIP = {
         ".git", "node_modules", "__pycache__", ".venv", "repos",
-        "runtime", ".tmp", ".claude",
+        "runtime", ".tmp", ".claude", "app", "bench", "Crayotter",
+        "poc-morning-routine",
     }
 
     def browse_directories(self, relative: str = "") -> dict:
@@ -833,6 +834,54 @@ class ProjectService:
             except ValueError:
                 pass
         return {"removed": asset_id, "file_deleted": delete_file}
+
+    DRIVE_INBOX = "gdrive:VlogInbox"
+
+    def drive_inbox(self) -> list[dict]:
+        """Folders waiting in the Drive VlogInbox, with import status."""
+        result = subprocess.run(
+            ["rclone", "lsjson", "--dirs-only", self.DRIVE_INBOX],
+            capture_output=True, text=True, timeout=60,
+        )
+        if result.returncode:
+            raise ProjectError(f"Drive inbox unavailable: {result.stderr.strip()[-200:]}")
+        existing = {p["project_id"] for p in self.list_projects()}
+        folders = []
+        for entry in json.loads(result.stdout or "[]"):
+            name = entry["Name"]
+            folders.append(
+                {
+                    "name": name,
+                    "modified": entry.get("ModTime"),
+                    "imported": slugify(name) in existing,
+                }
+            )
+        return sorted(folders, key=lambda item: item["modified"] or "", reverse=True)
+
+    def import_drive_folder(self, folder: str) -> dict:
+        """Sync a VlogInbox folder down and create the project: folder name
+        becomes the title, a nota*/note* text file becomes the prompt.
+        Strictly read-only toward Drive — this tool never deletes there."""
+        if "/" in folder or folder.startswith("."):
+            raise ProjectError("Invalid inbox folder name")
+        slug = slugify(folder)
+        target = self.settings.root / "footage" / slug
+        target.mkdir(parents=True, exist_ok=True)
+        result = subprocess.run(
+            [
+                "rclone", "copy", f"{self.DRIVE_INBOX}/{folder}", str(target),
+                "--drive-export-formats", "txt", "--transfers", "4",
+            ],
+            capture_output=True, text=True, timeout=7200,
+        )
+        if result.returncode:
+            raise ProjectError(f"Drive sync failed: {result.stderr.strip()[-300:]}")
+        prompt = ""
+        for note in sorted(target.glob("*.txt")):
+            if note.stem.lower().startswith(("nota", "note")):
+                prompt = note.read_text(encoding="utf-8", errors="replace").strip()[:4000]
+                break
+        return self.create_project(folder, f"footage/{slug}", prompt)
 
     def clone_project(self, project_id: str, name: str, prompt: str = "") -> dict:
         """New independent project over the same source folder, reusing the
