@@ -33,13 +33,24 @@ class PlanningError(RuntimeError):
 def evidence_pack(project: dict, evidence: list[dict]) -> str:
     """Compact text pack of technical facts and approved evidence, ordered by
     asset and source time, for planning prompts."""
-    lines = ["## Assets"]
+    lines = [
+        "## Assets (recorded timestamps are the REAL chronology — use them "
+        "for ordering, time-of-day mood, and location continuity)"
+    ]
     for asset in project.get("inventory", {}).get("assets", []):
         video = asset.get("video") or {}
+        extras = []
+        if asset.get("recorded_at"):
+            extras.append(f"recorded {asset['recorded_at'][:16]}")
+        if asset.get("location"):
+            extras.append(
+                f"GPS {asset['location']['latitude']:.4f},{asset['location']['longitude']:.4f}"
+            )
+        suffix = f" | {' | '.join(extras)}" if extras else ""
         lines.append(
             f"- {asset['asset_id']}: {asset['filename']} | {asset['media_type']} | "
             f"{asset['duration_seconds']:.1f}s | "
-            f"{video.get('width')}x{video.get('height')}"
+            f"{video.get('width')}x{video.get('height')}{suffix}"
         )
     lines.append("")
     lines.append(

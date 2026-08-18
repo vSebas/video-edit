@@ -1417,6 +1417,24 @@ class ProjectService:
         if result.returncode:
             raise ProjectError(f"ffprobe failed for {path.name}: {result.stderr.strip()}")
         probe = json.loads(result.stdout)
+        tags = {
+            key.lower(): value
+            for key, value in (probe.get("format", {}).get("tags") or {}).items()
+        }
+        recorded_at = (
+            tags.get("com.apple.quicktime.creationdate")  # local timezone
+            or tags.get("creation_time")
+        )
+        location = None
+        iso6709 = tags.get("com.apple.quicktime.location.iso6709")
+        if iso6709:
+            match = re.match(r"([+-]\d+\.?\d*)([+-]\d+\.?\d*)", iso6709)
+            if match:
+                location = {
+                    "latitude": float(match.group(1)),
+                    "longitude": float(match.group(2)),
+                }
+        device = tags.get("com.apple.quicktime.model") or tags.get("model")
         streams = probe.get("streams", [])
         video = next((stream for stream in streams if stream.get("codec_type") == "video"), None)
         audio = next((stream for stream in streams if stream.get("codec_type") == "audio"), None)
@@ -1441,6 +1459,9 @@ class ProjectService:
             "size_bytes": path.stat().st_size,
             "sha256": self._sha256(path),
             "duration_seconds": round(duration, 6),
+            "recorded_at": recorded_at,
+            "location": location,
+            "device": device,
             "video": (
                 {
                     "codec": video.get("codec_name"),
