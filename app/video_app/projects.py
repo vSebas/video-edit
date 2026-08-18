@@ -762,6 +762,78 @@ class ProjectService:
             return None
         return max(weights, key=weights.get)
 
+    def sync_media(self, project_id: str) -> dict:
+        """Reconcile the inventory with the source folder: newly added files
+        are probed and thumbnailed in; vanished files drop out. Existing
+        asset ids and their analysis stay stable."""
+        stored = load_json(self.settings.runtime / project_id / "project.json")
+        source_dir = (self.settings.root / stored["source_directory"]).resolve()
+        on_disk = {
+            path.name: path
+            for path in sorted(source_dir.rglob("*"))
+            if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS
+        }
+        assets = stored["inventory"]["assets"]
+        kept = [asset for asset in assets if asset["filename"] in on_disk]
+        removed = [a["filename"] for a in assets if a["filename"] not in on_disk]
+        known = {asset["filename"] for asset in kept}
+        used_ids = {asset["asset_id"] for asset in kept}
+        thumbnails = self.settings.runtime / project_id / "thumbnails"
+        thumbnails.mkdir(parents=True, exist_ok=True)
+        added = []
+        for filename, path in on_disk.items():
+            if filename in known:
+                continue
+            asset_id = slugify(path.stem).replace("-", "_")
+            base_id, suffix = asset_id, 2
+            while asset_id in used_ids:
+                asset_id = f"{base_id}_{suffix}"
+                suffix += 1
+            used_ids.add(asset_id)
+            asset = self._probe_asset(asset_id, path)
+            if self._make_thumbnail(path, asset, thumbnails / f"{asset_id}.jpg"):
+                asset["thumbnail_available"] = True
+            kept.append(asset)
+            added.append(filename)
+        stored["inventory"]["assets"] = kept
+        stored["updated_at"] = utc_now()
+        if added:
+            stored["footage_summary"] = (
+                f"{len(kept)} media file(s); {len(added)} new since the last "
+                "analysis — re-analyze to include them in stories."
+            )
+        write_json(self.settings.runtime / project_id / "project.json", stored)
+        return {"added": added, "removed": removed, "total": len(kept)}
+
+    def remove_asset(
+        self, project_id: str, asset_id: str, delete_file: bool = False
+    ) -> dict:
+        """Remove a clip from the project's inventory. The file itself is
+        kept on disk unless delete_file is explicitly requested. Evidence
+        citing the clip becomes inert (grounding checks drop it)."""
+        path = self.settings.runtime / project_id / "project.json"
+        stored = load_json(path)
+        assets = stored["inventory"]["assets"]
+        asset = next((a for a in assets if a["asset_id"] == asset_id), None)
+        if asset is None:
+            raise ProjectError(f"Unknown asset: {asset_id}")
+        stored["inventory"]["assets"] = [
+            a for a in assets if a["asset_id"] != asset_id
+        ]
+        stored["updated_at"] = utc_now()
+        write_json(path, stored)
+        (self.settings.runtime / project_id / "thumbnails" / f"{asset_id}.jpg").unlink(
+            missing_ok=True
+        )
+        if delete_file:
+            source = (self.settings.root / asset["source_path"]).resolve()
+            try:
+                source.relative_to(self.settings.root)
+                source.unlink(missing_ok=True)
+            except ValueError:
+                pass
+        return {"removed": asset_id, "file_deleted": delete_file}
+
     def clone_project(self, project_id: str, name: str, prompt: str = "") -> dict:
         """New independent project over the same source folder, reusing the
         original's analysis cache (same folder means identical asset ids, so

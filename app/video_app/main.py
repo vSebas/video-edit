@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import re
+import uuid
 from pathlib import Path
 from typing import Literal
+
+
+def uuid_hex(length: int) -> str:
+    return uuid.uuid4().hex[:length]
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
@@ -164,6 +169,45 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail="No supported media files were uploaded")
         return project_call(
             lambda: projects.create_project(name, f"footage/{slug}", prompt)
+        )
+
+    @application.post("/api/projects/{project_id}/uploads", status_code=200)
+    async def upload_to_project(
+        project_id: str,
+        files: list[UploadFile] = File(...),
+    ):
+        """Add clips or voiceover recordings to an existing project's folder
+        and reconcile the inventory."""
+        project = project_call(lambda: projects.get_project(project_id))
+        target = current_settings.root / project["source_directory"]
+        saved = 0
+        for upload in files:
+            suffix = Path(upload.filename or "clip.mp4").suffix.lower()
+            if suffix not in {".mp4", ".mov", ".m4v", ".jpg", ".jpeg", ".png", ".m4a", ".wav", ".mp3"}:
+                continue
+            safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", upload.filename or f"extra{saved}{suffix}")
+            destination = target / safe_name
+            if destination.exists():
+                stem, ext = destination.stem, destination.suffix
+                destination = target / f"{stem}-{uuid_hex(6)}{ext}"
+            with destination.open("wb") as handle:
+                while chunk := await upload.read(8 * 1024 * 1024):
+                    handle.write(chunk)
+            saved += 1
+        if not saved:
+            raise HTTPException(status_code=400, detail="No supported media files were uploaded")
+        return project_call(lambda: projects.sync_media(project_id))
+
+    @application.post("/api/projects/{project_id}/sync-media")
+    def sync_media(project_id: str):
+        project_call(lambda: projects.get_project(project_id))
+        return project_call(lambda: projects.sync_media(project_id))
+
+    @application.delete("/api/projects/{project_id}/assets/{asset_id}")
+    def remove_asset(project_id: str, asset_id: str, delete_file: bool = False):
+        project_call(lambda: projects.get_project(project_id))
+        return project_call(
+            lambda: projects.remove_asset(project_id, asset_id, delete_file)
         )
 
     @application.get("/api/browse")

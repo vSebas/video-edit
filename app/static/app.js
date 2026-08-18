@@ -507,6 +507,10 @@ function advancedSection(project) {
           <span>Removes this project; your clips stay</span>
         </button>
       </div>
+      <label class="add-clips">
+        Add clips or voiceover recordings to this vlog
+        <input type="file" id="add-clips-input" multiple accept="video/*,image/*,audio/*" />
+      </label>
       <div class="media-grid">
         ${media.map((asset) => {
           const thumbnail = asset.thumbnail_url
@@ -514,7 +518,9 @@ function advancedSection(project) {
             : '<div class="video-placeholder">No preview</div>';
           return `
             <article class="media-card">
-              <div class="media-thumb">${thumbnail}</div>
+              <div class="media-thumb">${thumbnail}
+                <button class="remove-asset" data-remove-asset="${escapeHtml(asset.asset_id)}" title="Quitar del proyecto (el archivo se conserva)">✕</button>
+              </div>
               <div class="media-info">
                 <strong title="${escapeHtml(asset.filename)}">${escapeHtml(asset.filename)}</strong>
                 <span>${asset.duration_seconds ? `${Number(asset.duration_seconds).toFixed(0)}s` : 'still'}</span>
@@ -587,6 +593,13 @@ function renderProject() {
   });
   $('#delete-project')?.addEventListener('click', deleteProject);
   $('#clone-project')?.addEventListener('click', cloneProject);
+  $('#add-clips-input')?.addEventListener('change', addClipsToProject);
+  document.querySelectorAll('[data-remove-asset]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      removeAsset(button.dataset.removeAsset);
+    });
+  });
   $('#reset-keep')?.addEventListener('click', () => resetProject(true));
   $('#reset-full')?.addEventListener('click', () => resetProject(false));
   $('#see-new-ideas')?.addEventListener('click', () => {
@@ -601,6 +614,36 @@ function renderProject() {
     localStorage.setItem(`showClaims:${state.activeProjectId}`, '1');
     renderProject();
   });
+}
+
+async function addClipsToProject(event) {
+  const files = [...event.currentTarget.files].filter((file) => file.size > 0);
+  if (!files.length) return;
+  try {
+    notice(`Subiendo ${files.length} archivo${files.length === 1 ? '' : 's'}…`);
+    const body = new FormData();
+    files.forEach((file) => body.append('files', file));
+    const response = await fetch(`/api/projects/${state.activeProjectId}/uploads`, {
+      method: 'POST', body,
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.detail || `Upload failed (${response.status})`);
+    notice(`${payload.added.length} archivo(s) agregados. Re-analiza para incluirlos en historias.`);
+    await loadProject(state.activeProjectId);
+  } catch (error) {
+    notice(error.message, true);
+  }
+}
+
+async function removeAsset(assetId) {
+  if (!window.confirm('¿Quitar este clip del proyecto? El archivo se conserva en la carpeta.')) return;
+  try {
+    await api(`/api/projects/${state.activeProjectId}/assets/${assetId}`, { method: 'DELETE' });
+    notice('Clip quitado del proyecto.');
+    await loadProject(state.activeProjectId);
+  } catch (error) {
+    notice(error.message, true);
+  }
 }
 
 async function cloneProject() {
