@@ -1080,6 +1080,38 @@ async function initialize() {
   }
 }
 
+/* Receiver-side upload visibility: when a phone (or the Shortcut) is
+   sending media, every open browser shows the incoming transfer live. */
+let uploadsWereActive = false;
+window.setInterval(async () => {
+  try {
+    const payload = await api('/api/uploads/active');
+    const uploads = payload.uploads || [];
+    let banner = $('#incoming-uploads');
+    if (uploads.length) {
+      uploadsWereActive = true;
+      if (!banner) {
+        banner = document.createElement('div');
+        banner.id = 'incoming-uploads';
+        banner.className = 'banner';
+        document.querySelector('.workspace')?.prepend(banner);
+      }
+      banner.innerHTML = uploads.map((upload) => {
+        const pct = upload.total ? Math.round((upload.received / upload.total) * 100) : 0;
+        const mb = (upload.received / 1e6).toFixed(0);
+        return `<span>📥 Recibiendo ${escapeHtml(upload.label)} — ${pct}% (${mb} MB)</span>`;
+      }).join('');
+    } else if (banner) {
+      banner.remove();
+      if (uploadsWereActive) {
+        uploadsWereActive = false;
+        notice('Subida completada.');
+        await refreshProjects();
+      }
+    }
+  } catch { /* app may be restarting; ignore */ }
+}, 3000);
+
 const dialog = $('#new-project-dialog');
 $('#new-project-button').addEventListener('click', () => {
   dialog.showModal();

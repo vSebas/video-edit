@@ -1,18 +1,22 @@
 from __future__ import annotations
 
 import re
+import shutil
 import uuid
 from pathlib import Path
 from typing import Literal
 
-
-def uuid_hex(length: int) -> str:
-    return uuid.uuid4().hex[:length]
-
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+
+# Live receiver-side progress for in-flight uploads, keyed by upload id.
+ACTIVE_UPLOADS: dict[str, dict] = {}
+
+
+def uuid_hex(length: int) -> str:
+    return uuid.uuid4().hex[:length]
 
 from .config import Settings
 from .jobs import JobManager
@@ -84,6 +88,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     jobs = JobManager()
     application = FastAPI(title="Local Video Editing Workbench", version="0.1.0")
 
+    @application.middleware("http")
+    async def track_upload_progress(request: Request, call_next):
+        # Count bytes as they truly arrive from the network (the framework
+        # buffers the body before handlers run, so counting must happen at
+        # the ASGI receive layer).
+        if request.method == "POST" and "/uploads" in request.url.path:
+            upload_id = uuid_hex(8)
+            total = int(request.headers.get("content-length") or 0)
+            ACTIVE_UPLOADS[upload_id] = {
+                "label": "subida entrante", "received": 0, "total": total,
+            }
+            original_receive = request.receive
+
+            async def counting_receive():
+                message = await original_receive()
+                if message.get("type") == "http.request":
+                    ACTIVE_UPLOADS[upload_id]["received"] += len(
+                        message.get("body", b"")
+                    )
+                return message
+
+            request._receive = counting_receive
+            try:
+                return await call_next(request)
+            finally:
+                ACTIVE_UPLOADS.pop(upload_id, None)
+        return await call_next(request)
+
     def project_call(operation):
         try:
             return operation()
@@ -140,8 +172,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def clip_scores(project_id: str):
         return {"clips": project_call(lambda: projects.clip_scores(project_id))}
 
+    async def _save_uploads(
+        request: Request, files: list[UploadFile], target: Path, label: str
+    ) -> int:
+        saved = 0
+        for upload in files:
+            suffix = Path(upload.filename or "clip.mp4").suffix.lower()
+            if suffix not in {".mp4", ".mov", ".m4v", ".jpg", ".jpeg", ".png", ".m4a", ".wav", ".mp3"}:
+                continue
+            safe_name = re.sub(
+                r"[^A-Za-z0-9._-]", "_", upload.filename or f"clip{saved}{suffix}"
+            )
+            destination = target / safe_name
+            if destination.exists():
+                destination = target / f"{destination.stem}-{uuid_hex(6)}{destination.suffix}"
+            with destination.open("wb") as handle:
+                while chunk := await upload.read(8 * 1024 * 1024):
+                    handle.write(chunk)
+            saved += 1
+        return saved
+
+    @application.get("/api/uploads/active")
+    def active_uploads():
+        return {"uploads": list(ACTIVE_UPLOADS.values())}
+
     @application.post("/api/uploads", status_code=201)
     async def upload_project(
+        request: Request,
         name: str = Form(min_length=1, max_length=120),
         prompt: str = Form(default=""),
         files: list[UploadFile] = File(...),
@@ -153,26 +210,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if target.exists():
             raise HTTPException(status_code=400, detail=f"Folder already exists: footage/{slug}")
         target.mkdir(parents=True)
-        saved = 0
-        for upload in files:
-            suffix = Path(upload.filename or "clip.mp4").suffix.lower()
-            if suffix not in {".mp4", ".mov", ".m4v", ".jpg", ".jpeg", ".png", ".m4a", ".wav", ".mp3"}:
-                continue
-            safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", upload.filename or f"clip{saved}{suffix}")
-            destination = target / safe_name
-            with destination.open("wb") as handle:
-                while chunk := await upload.read(8 * 1024 * 1024):
-                    handle.write(chunk)
-            saved += 1
+        saved = await _save_uploads(request, files, target, f"nuevo vlog «{name}»")
         if not saved:
             target.rmdir()
             raise HTTPException(status_code=400, detail="No supported media files were uploaded")
-        return project_call(
-            lambda: projects.create_project(name, f"footage/{slug}", prompt)
-        )
+        try:
+            return project_call(
+                lambda: projects.create_project(name, f"footage/{slug}", prompt)
+            )
+        except HTTPException:
+            shutil.rmtree(target, ignore_errors=True)
+            raise
 
     @application.post("/api/projects/{project_id}/uploads", status_code=200)
     async def upload_to_project(
+        request: Request,
         project_id: str,
         files: list[UploadFile] = File(...),
     ):
@@ -180,20 +232,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         and reconcile the inventory."""
         project = project_call(lambda: projects.get_project(project_id))
         target = current_settings.root / project["source_directory"]
-        saved = 0
-        for upload in files:
-            suffix = Path(upload.filename or "clip.mp4").suffix.lower()
-            if suffix not in {".mp4", ".mov", ".m4v", ".jpg", ".jpeg", ".png", ".m4a", ".wav", ".mp3"}:
-                continue
-            safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", upload.filename or f"extra{saved}{suffix}")
-            destination = target / safe_name
-            if destination.exists():
-                stem, ext = destination.stem, destination.suffix
-                destination = target / f"{stem}-{uuid_hex(6)}{ext}"
-            with destination.open("wb") as handle:
-                while chunk := await upload.read(8 * 1024 * 1024):
-                    handle.write(chunk)
-            saved += 1
+        saved = await _save_uploads(request, files, target, f"clips para «{project['name']}»")
         if not saved:
             raise HTTPException(status_code=400, detail="No supported media files were uploaded")
         return project_call(lambda: projects.sync_media(project_id))
