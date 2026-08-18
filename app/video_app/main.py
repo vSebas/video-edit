@@ -192,6 +192,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             saved += 1
         return saved
 
+    @application.post("/api/uploads/item", status_code=200)
+    async def upload_item(
+        request: Request,
+        name: str = Form(min_length=1, max_length=120),
+        files: list[UploadFile] = File(...),
+    ):
+        """One-clip-per-request flow for iOS Shortcuts (whose requests time
+        out around a minute): the first item creates the project, subsequent
+        items append to it. Safe to loop over an entire day."""
+        slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:60] or "upload"
+        target = current_settings.root / "footage" / slug
+        target.mkdir(parents=True, exist_ok=True)
+        saved = await _save_uploads(request, files, target, f"clip para «{name}»")
+        if not saved:
+            raise HTTPException(status_code=400, detail="Unsupported file")
+        try:
+            projects.get_project(slug)
+            result = projects.sync_media(slug)
+            return {"project_id": slug, "clips": result["total"], "created": False}
+        except ProjectError:
+            project = project_call(
+                lambda: projects.create_project(name, f"footage/{slug}", "")
+            )
+            return {
+                "project_id": project["project_id"],
+                "clips": len(project["inventory"]["assets"]),
+                "created": True,
+            }
+
     @application.get("/api/uploads/active")
     def active_uploads():
         return {"uploads": list(ACTIVE_UPLOADS.values())}
