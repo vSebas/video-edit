@@ -489,11 +489,23 @@ function advancedSection(project) {
           </button>
         `).join('')}
       </div>
-      <div class="advanced-actions">
-        <button class="ghost" id="clone-project">Duplicar vlog (comparte análisis)</button>
-        <button class="ghost" id="reset-keep">Empezar de nuevo (mantener análisis)</button>
-        <button class="ghost" id="reset-full">Empezar de cero (re-analizar todo)</button>
-        <button class="ghost reject" id="delete-project">Delete this vlog (keeps your clips)</button>
+      <div class="pipeline-grid">
+        <button class="pipeline-step" id="clone-project">
+          <strong>Duplicate vlog</strong>
+          <span>Same clips, shared analysis, fresh story</span>
+        </button>
+        <button class="pipeline-step" id="reset-keep">
+          <strong>Start over</strong>
+          <span>Back to step 1, analysis kept (fast, free)</span>
+        </button>
+        <button class="pipeline-step" id="reset-full">
+          <strong>Start from zero</strong>
+          <span>Also re-analyzes footage (slow, costs a bit)</span>
+        </button>
+        <button class="pipeline-step danger" id="delete-project">
+          <strong>Delete vlog</strong>
+          <span>Removes this project; your clips stay</span>
+        </button>
       </div>
       <div class="media-grid">
         ${media.map((asset) => {

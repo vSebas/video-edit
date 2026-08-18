@@ -524,3 +524,7 @@ textarea { resize: vertical; }
 .verdict-descartable .score-badge { color: var(--danger); }
 
 .advanced-actions { display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0; }
+
+.pipeline-step.danger { border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); }
+.pipeline-step.danger strong { color: var(--danger); }
+.pipeline-step.danger:hover:not(:disabled) { border-color: var(--danger); }
