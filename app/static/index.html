@@ -6,7 +6,7 @@
     <meta name="color-scheme" content="dark" />
     <title>Video Editing Workbench</title>
     <meta http-equiv="Cache-Control" content="no-cache" />
-    <link rel="stylesheet" href="/styles.css?v=14" />
+    <link rel="stylesheet" href="/styles.css?v=15" />
   </head>
   <body>
     <div class="shell">
@@ -58,8 +58,13 @@
           <input name="name" required placeholder="Tuesday — lake trip" />
         </label>
         <label>
+          Upload clips from this device
+          <input type="file" name="files" id="upload-files" multiple accept="video/*,image/*,audio/*" />
+        </label>
+        <p class="form-note">…or pick a folder already on the computer:</p>
+        <label>
           Folder with your clips
-          <input name="source_directory" required placeholder="Pick below or type a path" />
+          <input name="source_directory" placeholder="Pick below or type a path" />
         </label>
         <div id="folder-browser" class="folder-browser" aria-label="Browse workspace folders"></div>
         <label>
@@ -76,6 +81,6 @@
       </form>
     </dialog>
 
-    <script type="module" src="/app.js?v=14"></script>
+    <script type="module" src="/app.js?v=15"></script>
   </body>
 </html>

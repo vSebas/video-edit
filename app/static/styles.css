@@ -528,3 +528,20 @@ textarea { resize: vertical; }
 .pipeline-step.danger { border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); }
 .pipeline-step.danger strong { color: var(--danger); }
 .pipeline-step.danger:hover:not(:disabled) { border-color: var(--danger); }
+
+/* Phone layout */
+@media (max-width: 760px) {
+  .shell { flex-direction: column; }
+  .sidebar { width: 100%; border-right: none; border-bottom: 1px solid var(--line); }
+  .capability-list, .status-heading { display: none; }
+  .result-hero { grid-template-columns: 1fr; }
+  .scene-strip, .clip-score-list { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+}
+input[type="file"] {
+  background: var(--panel-2);
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  width: 100%;
+  color: var(--muted);
+}

@@ -962,13 +962,35 @@ async function refreshProjects() {
 
 async function createProject(event) {
   event.preventDefault();
-  const form = new FormData(event.currentTarget);
-  const payload = Object.fromEntries(form.entries());
-  const submit = event.currentTarget.querySelector('[type="submit"]');
+  const formElement = event.currentTarget;
+  const form = new FormData(formElement);
+  const uploads = form.getAll('files').filter((file) => file && file.size > 0);
+  const submit = formElement.querySelector('[type="submit"]');
   submit.disabled = true;
-  submit.textContent = 'Indexing…';
   try {
-    const project = await api('/api/projects', { method: 'POST', body: JSON.stringify(payload) });
+    let project;
+    if (uploads.length) {
+      submit.textContent = `Uploading ${uploads.length} file${uploads.length === 1 ? '' : 's'}…`;
+      const body = new FormData();
+      body.append('name', form.get('name'));
+      body.append('prompt', form.get('prompt') || '');
+      uploads.forEach((file) => body.append('files', file));
+      const response = await fetch('/api/uploads', { method: 'POST', body });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.detail || `Upload failed (${response.status})`);
+      project = payload;
+    } else {
+      if (!form.get('source_directory')) throw new Error('Upload files or pick a folder.');
+      submit.textContent = 'Indexing…';
+      project = await api('/api/projects', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: form.get('name'),
+          source_directory: form.get('source_directory'),
+          prompt: form.get('prompt') || '',
+        }),
+      });
+    }
     $('#new-project-dialog').close();
     await refreshProjects();
     await loadProject(project.project_id);

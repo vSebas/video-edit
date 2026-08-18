@@ -25,7 +25,9 @@ services:
     volumes:
       - ./:${PWD}
     ports:
-      - "127.0.0.1:${VIDEO_EDITING_APP_PORT:-8787}:8787"
+      # Set VIDEO_EDITING_BIND=0.0.0.0 to reach the app from your phone on
+      # the same WiFi (http://<laptop-ip>:8787). Default is laptop-only.
+      - "${VIDEO_EDITING_BIND:-127.0.0.1}:${VIDEO_EDITING_APP_PORT:-8787}:8787"
     command: ["uvicorn", "video_app.main:app", "--host", "0.0.0.0", "--port", "8787"]
 
   poc:

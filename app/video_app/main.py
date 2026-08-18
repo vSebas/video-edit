@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -133,6 +134,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @application.get("/api/projects/{project_id}/clip-scores")
     def clip_scores(project_id: str):
         return {"clips": project_call(lambda: projects.clip_scores(project_id))}
+
+    @application.post("/api/uploads", status_code=201)
+    async def upload_project(
+        name: str = Form(min_length=1, max_length=120),
+        prompt: str = Form(default=""),
+        files: list[UploadFile] = File(...),
+    ):
+        """Create a project from files sent by a phone/browser: media lands
+        in footage/<slug>/ and the normal indexing flow takes over."""
+        slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:60] or "upload"
+        target = current_settings.root / "footage" / slug
+        if target.exists():
+            raise HTTPException(status_code=400, detail=f"Folder already exists: footage/{slug}")
+        target.mkdir(parents=True)
+        saved = 0
+        for upload in files:
+            suffix = Path(upload.filename or "clip.mp4").suffix.lower()
+            if suffix not in {".mp4", ".mov", ".m4v", ".jpg", ".jpeg", ".png", ".m4a", ".wav", ".mp3"}:
+                continue
+            safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", upload.filename or f"clip{saved}{suffix}")
+            destination = target / safe_name
+            with destination.open("wb") as handle:
+                while chunk := await upload.read(8 * 1024 * 1024):
+                    handle.write(chunk)
+            saved += 1
+        if not saved:
+            target.rmdir()
+            raise HTTPException(status_code=400, detail="No supported media files were uploaded")
+        return project_call(
+            lambda: projects.create_project(name, f"footage/{slug}", prompt)
+        )
 
     @application.get("/api/browse")
     def browse(path: str = ""):
