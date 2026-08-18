@@ -970,15 +970,33 @@ async function createProject(event) {
   try {
     let project;
     if (uploads.length) {
-      submit.textContent = `Uploading ${uploads.length} file${uploads.length === 1 ? '' : 's'}…`;
+      const totalMb = uploads.reduce((sum, file) => sum + file.size, 0) / 1e6;
       const body = new FormData();
       body.append('name', form.get('name'));
       body.append('prompt', form.get('prompt') || '');
       uploads.forEach((file) => body.append('files', file));
-      const response = await fetch('/api/uploads', { method: 'POST', body });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.detail || `Upload failed (${response.status})`);
-      project = payload;
+      project = await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', '/api/uploads');
+        xhr.upload.onprogress = (progress) => {
+          if (progress.lengthComputable) {
+            const pct = Math.round((progress.loaded / progress.total) * 100);
+            submit.textContent = `Subiendo ${uploads.length} clips… ${pct}% de ${totalMb.toFixed(0)} MB`;
+          }
+        };
+        xhr.onload = () => {
+          let payload = {};
+          try { payload = JSON.parse(xhr.responseText); } catch {}
+          if (xhr.status >= 200 && xhr.status < 300) {
+            submit.textContent = 'Indexando…';
+            resolve(payload);
+          } else {
+            reject(new Error(payload.detail || `Upload failed (${xhr.status})`));
+          }
+        };
+        xhr.onerror = () => reject(new Error('Upload failed — check the WiFi connection'));
+        xhr.send(body);
+      });
     } else {
       if (!form.get('source_directory')) throw new Error('Upload files or pick a folder.');
       submit.textContent = 'Indexing…';
