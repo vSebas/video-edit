@@ -457,6 +457,15 @@ These can be completed while Phase 2 begins:
 
 ## Immediate Next Actions
 
+0. User-requested growth features (2026-08-19):
+   - Trending-audio matching: recommend IG/TikTok trending sounds that fit a
+     cut (vibe/tempo from our evidence vs public trend lists) and beat-align
+     the cut to the chosen track; audio itself is added in-app at post time.
+   - Reference-vlog style learning: run our perception pipeline over
+     user-provided links to admired/trending vlogs and distill an editing
+     "style profile" (hook grammar, cut rhythm, overlay density, beats) that
+     the planner and compiler apply to the user's footage.
+
 1. DONE 2026-08-05 — DaVinci Resolve 21.0.3 installed; XMEML import verified
    frame-accurate (6/6 clips, 937/937 frames, 1080x1920@30). Exporter now
    emits DNxHR proxies + a proxy XMEML because the free Linux edition does
