@@ -489,7 +489,11 @@ function advancedSection(project) {
           </button>
         `).join('')}
       </div>
-      <button class="ghost reject" id="delete-project">Delete this vlog (keeps your clips)</button>
+      <div class="advanced-actions">
+        <button class="ghost" id="reset-keep">Empezar de nuevo (mantener análisis)</button>
+        <button class="ghost" id="reset-full">Empezar de cero (re-analizar todo)</button>
+        <button class="ghost reject" id="delete-project">Delete this vlog (keeps your clips)</button>
+      </div>
       <div class="media-grid">
         ${media.map((asset) => {
           const thumbnail = asset.thumbnail_url
@@ -569,6 +573,8 @@ function renderProject() {
     button.addEventListener('click', () => runAdvancedStep(button.dataset.pipeline, button));
   });
   $('#delete-project')?.addEventListener('click', deleteProject);
+  $('#reset-keep')?.addEventListener('click', () => resetProject(true));
+  $('#reset-full')?.addEventListener('click', () => resetProject(false));
   $('#see-new-ideas')?.addEventListener('click', () => {
     state.forcePick = true;
     renderProject();
@@ -581,6 +587,27 @@ function renderProject() {
     localStorage.setItem(`showClaims:${state.activeProjectId}`, '1');
     renderProject();
   });
+}
+
+async function resetProject(keepAnalysis) {
+  const confirmed = window.confirm(
+    keepAnalysis
+      ? 'Volver al paso 1 conservando el análisis (rápido y sin costo). Se borran ideas, corte y renders. ¿Continuar?'
+      : 'Volver al paso 1 borrando TODO, incluido el análisis (re-analizar cuesta tiempo y unos dólares). ¿Continuar?'
+  );
+  if (!confirmed) return;
+  try {
+    await api(`/api/projects/${state.activeProjectId}/reset`, {
+      method: 'POST',
+      body: JSON.stringify({ keep_analysis: keepAnalysis }),
+    });
+    state.forcePick = false;
+    localStorage.removeItem(`keptStories:${state.activeProjectId}`);
+    notice('Proyecto reiniciado — paso 1.');
+    await loadProject(state.activeProjectId);
+  } catch (error) {
+    notice(error.message, true);
+  }
 }
 
 async function deleteProject() {

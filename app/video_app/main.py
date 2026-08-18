@@ -108,6 +108,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def delete_project(project_id: str):
         return project_call(lambda: projects.delete_project(project_id))
 
+    class ResetProjectRequest(BaseModel):
+        keep_analysis: bool = True
+
+    @application.post("/api/projects/{project_id}/reset")
+    def reset_project(project_id: str, request: ResetProjectRequest | None = None):
+        options = request or ResetProjectRequest()
+        return project_call(
+            lambda: projects.reset_project(project_id, options.keep_analysis)
+        )
+
     @application.get("/api/projects/{project_id}/clip-scores")
     def clip_scores(project_id: str):
         return {"clips": project_call(lambda: projects.clip_scores(project_id))}

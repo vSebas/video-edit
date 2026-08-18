@@ -522,3 +522,5 @@ textarea { resize: vertical; }
 .verdict-reserva .verdict-label { color: var(--amber); }
 .verdict-descartable .verdict-label { color: var(--danger); }
 .verdict-descartable .score-badge { color: var(--danger); }
+
+.advanced-actions { display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0; }

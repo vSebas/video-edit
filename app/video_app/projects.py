@@ -759,6 +759,44 @@ class ProjectService:
             return None
         return max(weights, key=weights.get)
 
+    def reset_project(self, project_id: str, keep_analysis: bool = True) -> dict:
+        """Return the project to step 1. Derived creative state (concepts,
+        plan, outputs, selection) is always cleared; the analysis cache is
+        kept unless keep_analysis is False. Source media is never touched."""
+        self.get_project(project_id)
+        root = self.settings.runtime / project_id
+        for target in ("plan", "outputs"):
+            shutil.rmtree(root / target, ignore_errors=True)
+        (root / "analysis" / "concepts.json").unlink(missing_ok=True)
+        (root / "selection.json").unlink(missing_ok=True)
+        if not keep_analysis:
+            shutil.rmtree(root / "analysis", ignore_errors=True)
+
+        stored = load_json(root / "project.json")
+        has_runs = bool(self._semantic_run_manifests(project_id))
+        stored.update(
+            {
+                "updated_at": utc_now(),
+                "concepts": [],
+                "selected_concept_id": None,
+                "plan": None,
+                "status": "semantic_ready" if has_runs else "awaiting_semantic_analysis",
+                "footage_summary": (
+                    f"Indexed {len(stored.get('inventory', {}).get('assets', []))} "
+                    "media file(s). "
+                    + (
+                        "Analysis is cached and ready for story ideas."
+                        if has_runs
+                        else "Footage has not been analyzed yet."
+                    )
+                ),
+            }
+        )
+        stored["analysis"]["visual"] = "completed" if has_runs else "unavailable"
+        stored["analysis"]["speech"] = "completed" if has_runs else "unavailable"
+        write_json(root / "project.json", stored)
+        return self.get_project(project_id)
+
     def clip_scores(self, project_id: str) -> list[dict]:
         """Deterministic per-clip value for the intended vlog, computed from
         existing artifacts: seconds used in the cut, citations across story
