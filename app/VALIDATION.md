@@ -1,7 +1,12 @@
 # Application validation
 
-**Verified:** 2026-08-17
-**Image:** `video-editing-app:local` (faster-whisper + CUDA runtime libs)
+**Verified:** 2026-08-19
+**Image:** `video-editing-app:local` (faster-whisper + CUDA libs + rclone)
+
+Newest checks are at the bottom (Capture-loop checks, 2026-08-18/19).
+Older sections describe the system as it was on their dates; the
+morning-routine fixture and Phase 2A review machinery they reference were
+removed on 2026-08-18.
 
 ## Perception-stack checks (2026-08-16/17)
 
@@ -136,8 +141,8 @@ XMEML was imported and verified in the real application:
   OTIO/XMEML exports; use the export step after revising.
 - Revision duration targets are honored approximately (asked ~25 s, got
   31.2 s).
-- The legacy benchmark scorecard data remains readable through the API for
-  the archived morning-routine fixture but is no longer shown in the UI.
+- (resolved 2026-08-18: the archived fixture and scorecard were removed
+  entirely.)
 
 ## Capture-loop checks (2026-08-18/19)
 
