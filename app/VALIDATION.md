@@ -138,3 +138,18 @@ XMEML was imported and verified in the real application:
   31.2 s).
 - The legacy benchmark scorecard data remains readable through the API for
   the archived morning-routine fixture but is no longer shown in the UI.
+
+## Capture-loop checks (2026-08-18/19)
+
+- Browser upload endpoint: E2E verified (file → project created/indexed);
+  live receiver-side progress verified mid-flight with a rate-limited
+  transfer; failed creation cleans its folder.
+- Per-item Shortcut endpoint: simulated 3-request loop → create then
+  append (1→2→3 clips).
+- Drive VlogInbox: additive test folder uploaded, banner listed it, import
+  synced clips + nota-as-prompt and created the project; Drive contents
+  verified untouched afterwards (no delete code path exists).
+- Clone (0.15 s, analysis shared), both reset modes, delete, clip add and
+  remove-with-file-deletion, still-image frames: all verified live against
+  throwaway projects.
+- Fixture removal: 14 tests pass; workspace lists only real projects.

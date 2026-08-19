@@ -46,35 +46,41 @@ content-addressed revisions under its `versions/` directory.
 
 ## Walking-skeleton pipeline (daily vlogs)
 
-The owned live pipeline turns a media folder plus a prompt into a rendered
-proposal and editable exports without OpenStoryline:
+The owned pipeline turns phone footage plus an optional note into a rendered
+proposal and editable exports:
 
-1. `POST /api/projects` — index a folder (ffprobe facts, hashes, thumbnails).
-2. `POST /api/projects/{id}/analysis/visual` — deterministic ffmpeg shot
-   detection and keyframes, described by the configured hosted VLM
-   (`{"provider": "qwen"}` by default). Unflagged, confident captions are
-   auto-approved under the audited `auto-live-v1` policy; risky claims stay
-   pending without blocking planning.
-3. `POST /api/projects/{id}/analysis/speech` — local faster-whisper ASR with
-   word timings; audio never leaves the machine.
-4. `POST /api/projects/{id}/concepts` — grounded concepts with hooks, beats,
-   honest weaknesses, and concrete missing-shot advice.
-5. `POST /api/projects/{id}/selection` then `POST /api/projects/{id}/plan` —
-   deterministic compilation into a schema-validated `edit-plan.v1`.
-6. `POST /api/projects/{id}/render` and `POST /api/projects/{id}/exports` —
-   review MP4 plus OTIO and DaVinci-compatible XMEML from the same plan.
-7. `POST /api/projects/{id}/plan/revise` — natural-language revision
-   ("shorten the intro", "end on the scooter"); only the plan and render are
-   rebuilt, media analysis stays cached, and prior plan revisions are kept
-   under `plan/revisions/`.
+1. **Get footage in** (any of):
+   - Google Drive **VlogInbox** (preferred, async): upload from the Drive
+     app into `VlogInbox/<title>` with an optional `nota` text file as the
+     prompt; the UI banners waiting folders and one click imports.
+     Strictly read-only toward Drive.
+   - Browser upload (`POST /api/uploads`, phone or laptop) with live
+     progress on both ends; per-clip `POST /api/uploads/item` for iOS
+     Shortcuts; `POST /api/projects/{id}/uploads` adds clips/voiceovers to
+     an existing vlog. Reachable from anywhere via Tailscale.
+   - A folder already on disk (picker shows `footage/` only).
+2. `POST /analysis/visual` — audiovisual shot+moment evidence from
+   gemini-3.6-flash (bench winner; audio-carrying segments; 6 parallel
+   calls). `POST /analysis/speech` — faster-whisper large-v3 on CUDA,
+   Spanish/English word timings; transcript-corroborated speech claims
+   auto-approve.
+3. `POST /concepts` — grounded Spanish-first stories by deepseek-v4-pro
+   (blind video-screening verdict), intent-first, with missing-shot and
+   voiceover recommendations; capture time/GPS metadata informs chronology.
+4. `POST /selection` + `POST /plan` — deterministic frame-exact compilation
+   with word-snapped cut edges; unverified-only ranges are dropped.
+5. `POST /render` and `POST /exports {include_proxies:true}` — review MP4,
+   OTIO, DaVinci XMEML (+DNxHR-proxy variant, import verified in Resolve),
+   and timeline-aligned `captions.srt`.
+6. `POST /plan/revise` — natural-language re-cuts without re-analysis;
+   prior revisions kept.
 
-The browser workbench exposes every step: a pipeline action bar, a
-flagged-claims review panel (routine evidence is auto-approved), concept
-cards with missing-shot advice, and a "Revise this edit" box on compiled
-plans. The legacy Qwen/Gemini benchmark comparison and scorecard UI was
-removed with the daily-vlog pivot.
+Project management: clone with shared analysis, reset (keep or wipe
+analysis), delete; per-clip value scores (`GET /clip-scores`); clip removal
+deletes the file from the laptop folder (phone originals unaffected).
 
-Provider credentials come from the ignored root `.env`
-(`DASHSCOPE_API_KEY`, `GEMINI_API_KEY`); they are never written into
-artifacts. The legacy OpenStoryline import path remains only for the archived
-benchmark evidence.
+Providers live in the ignored root `.env` (`DASHSCOPE_API_KEY`,
+`GEMINI_API_KEY`, optional `OPENAI_API_KEY`/`ANTHROPIC_API_KEY`,
+`TWELVELABS_API_KEY`, `RUNPOD_API_KEY`); rclone's config is mounted from
+the host. Set `VIDEO_EDITING_BIND=0.0.0.0` to reach the app from other
+devices. Model choices are evidence-based: see `bench/RESULTS.md`.

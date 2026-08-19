@@ -1,18 +1,22 @@
 # AI-Assisted Video Editing — Status and Roadmap
 
-**Updated:** 2026-08-04
-**Current phase:** Daily-vlog walking skeleton complete. A new folder plus a
-prompt now produces live visual evidence, local ASR, grounded concepts with
-missing-shot advice, a validated edit plan, a review render, and OTIO/XMEML
-exports entirely through owned adapters — no OpenStoryline involvement.
-DaVinci import verification is pending a local Resolve installation.
+**Updated:** 2026-08-19
+**Current phase:** Full daily loop operational and phone-first. Footage
+reaches the tool from the iPhone (browser upload with live progress,
+Tailscale from anywhere, or a Google Drive VlogInbox that carries title and
+nota/prompt); analysis is audiovisual (gemini-3.6-flash) with GPU Spanish
+ASR; stories are written by deepseek-v4-pro (blind video-screening
+verdict); cuts are frame-exact with word-snapped edges, SRT captions, and
+verified DaVinci exports with DNxHR proxies. The morning-routine POC
+fixture and all Phase 2A archive machinery were removed at the user's
+request (2026-08-18) — the workspace holds only real vlogs.
 
 **Product target (2026-08-04):** daily personal vlogs, a few minutes each,
 from raw phone footage. Every edit must produce BOTH a rendered review video
-and an editable export for a conventional editor. The Phase 2A per-observation
-review machinery below is retained for the archived benchmark but is legacy
-for daily use; routine evidence is auto-approved under an audited policy and
-human review concentrates on risk-flagged claims and creative choices.
+and an editable export for a conventional editor. Routine evidence is
+auto-approved under audited policies; human review concentrates on
+risk-flagged claims and creative choices (Phase 2A's per-observation review
+machinery was fully removed 2026-08-18 along with the benchmark fixture).
 
 **Repository:** <https://github.com/vSebas/video-edit>
 
@@ -84,6 +88,34 @@ Every component connects through an adapter. This also keeps incompatible
 licenses and optional research models from becoming inseparable from the core.
 
 ## Standing Today
+
+### Phone-first capture and project management (2026-08-18/19)
+
+- **Uploads from the iPhone**: browser upload with live percent on the
+  sending device and a receiver-side banner in every open tab (ASGI-level
+  byte counting); a per-clip endpoint for iOS Shortcuts' ~60 s timeout;
+  Tailscale (tailnet `seblearns@`) makes the same UI reachable from
+  anywhere at `pacman.tailf9616b.ts.net:8787`.
+- **Google Drive VlogInbox** (the preferred async path): upload a day from
+  the Drive app into `VlogInbox/<title>` with an optional `nota` text as
+  the prompt; the UI banners waiting folders and one click imports —
+  strictly read-only toward Drive (no delete code path exists).
+- **Media management**: clips can be added later (uploads or folder sync)
+  and removed with the file deleted from the laptop folder; per-clip
+  value scores (0-100, esencial/en uso/reserva/descartable) computed
+  deterministically from cut usage, story citations, moments, and speech.
+- **Metadata-aware narrative**: capture time (local tz), GPS, and device
+  are probed into the inventory and presented to the writer as the real
+  chronology.
+- **Writer verdict (blind video screening)**: the user watched four
+  rendered cuts of identical evidence; deepseek-v4-pro and claude-fable-5
+  beat both Qwens; **deepseek-v4-pro is the default writer**
+  (gpt-5.6-sol awaits OpenAI credits for the sealed rematch).
+- **Output polish**: frame-exact plan quantization, timeline-aligned SRT
+  captions generated with every export, transcript-corroborated speech
+  claims skip review, project clone (shared analysis, 0.15 s) / reset /
+  start-from-zero controls.
+
 
 ### Evidence-driven model stack (2026-08-16/17)
 
@@ -457,7 +489,10 @@ These can be completed while Phase 2 begins:
 
 ## Immediate Next Actions
 
-0. User-requested growth features (2026-08-19):
+0. Live the loop: user uploads a real day via Drive VlogInbox, generates
+   the v2 comparison cut, records the recommended voiceovers, and does the
+   manual DaVinci pass; friction found becomes the next fix list.
+0b. User-requested growth features:
    - Trending-audio matching: recommend IG/TikTok trending sounds that fit a
      cut (vibe/tempo from our evidence vs public trend lists) and beat-align
      the cut to the chosen track; audio itself is added in-app at post time.
