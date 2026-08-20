@@ -1,64 +1,90 @@
 # AI-Assisted Video Editing Workspace
 
-This directory now separates code, third-party source, surviving experiment data, and generated outputs explicitly.
+An AI editing assistant for daily personal vlogs. Raw phone footage goes in;
+a grounded story proposal, a rendered cut, and a DaVinci-editable timeline
+come out. It is an orchestration layer over evidence — every cut traces to a
+timestamped observation — not a new timeline engine.
 
-## Current status
+**Repository:** <https://github.com/vSebas/video-edit> (private)
 
-See `STATUS_AND_ROADMAP.md` for the completed milestones, tool-test matrix,
-OpenStoryline configuration finding, model strategy, outstanding checks, and
-ordered implementation plan.
-
-## Code we own
-
-- `app/` — local project API and browser workflow for footage indexing, concept review, rendering, and editable exports
-- `app/pipeline/` — deterministic rendering, OTIO/XMEML export, and independent edit validation
-- `app/schemas/` — versioned media-analysis, concept, edit-plan, and validation schemas
-- `bench/` — model bake-offs and their recorded results
-- `compose.yaml` and `app/Dockerfile` — reproducible container execution
-
-## Third-party source
-
-All supplied/current candidate repositories are visible under `repos/`. Exact remotes and pinned commits are recorded in `repos/README.md`.
-
-The GitHub source snapshot intentionally includes only `repos/README.md`, not
-nested third-party working trees. Clone those upstream repositories from their
-recorded remotes/commits when needed.
-
-## Experiment data, not source repositories
-
-- `Crayotter/` — surviving Crayotter experiment data and raw media
-- `FireRed-OpenStoryline/` — surviving FireRed experiment artifacts
-
-Their fresh source checkouts are `repos/Crayotter/` and `repos/FireRed-OpenStoryline/`.
-
-## Main result
-
-The working system is `app/` — see `app/README.md` for the daily loop and
-`app/VALIDATION.md` for what has been verified live. The July morning-routine
-proof of concept that preceded it was removed on 2026-08-19; its results
-survive in git history and in `STATUS_AND_ROADMAP.md`.
-
-## Containers
-
-See `CONTAINERS.md`. The app runs in Docker. OpenStoryline has an optional Compose profile. OpenTake remains a native host build because its Tauri desktop/GPU path does not benefit from being hidden inside a container.
-
-## Local application
-
-Start the first product-facing vertical slice with:
+## Run it
 
 ```bash
 cd /home/saveas/Documents/video-editing
-docker compose up --build app
+docker compose up --build -d app
 ```
 
-Then open `http://127.0.0.1:8787`. The reviewed benchmark is available immediately. New folders can be indexed without fabricating semantics; live visual and speech adapters are the next integration gate.
+Open <http://127.0.0.1:8787>, or from any device on the tailnet at
+`http://pacman.tailf9616b.ts.net:8787`. The port is bound to localhost by
+default; `VIDEO_EDITING_BIND=0.0.0.0` opens it to the network and should be
+paired with `VIDEO_EDITING_TOKEN` (see `app/README.md`). Override the port
+with `VIDEO_EDITING_APP_PORT`.
 
-## Repository data policy
+The workspace is bind-mounted at its host path so generated files stay
+visible on the host and media paths resolve identically inside DaVinci
+Resolve. The container runs as UID/GID 1000; override `LOCAL_UID` and
+`LOCAL_GID` if needed.
 
-Raw personal recordings, extracted frames, rendered videos, model weights,
-papers, experiment caches, runtime projects, and nested third-party repositories
-are intentionally excluded from Git. The original workstation retains them.
-A clean clone contains the application, pipeline code, schemas, reports,
-semantic review data, and small canonical JSON examples; provide your own media
-folder to run a new ingest or restore the private benchmark media to reproduce
-its render.
+To validate a compiled plan and its render independently of the app:
+
+```bash
+docker compose run --rm app python pipeline/validate_edit.py \
+  --plan      ../runtime/projects/<id>/plan/edit-plan.json \
+  --inventory ../runtime/projects/<id>/plan/media-inventory.json \
+  --media-root .. \
+  --render    ../runtime/projects/<id>/outputs/review.mp4 \
+  --report    ../runtime/projects/<id>/outputs/validation-report.json
+```
+
+## What lives where
+
+| Path | Contents |
+|---|---|
+| `app/` | The application: FastAPI service, browser workbench, adapters |
+| `app/pipeline/` | Deterministic render, OTIO/XMEML export, independent edit validation |
+| `app/schemas/` | Versioned media, evidence, concept, edit-plan, and report schemas |
+| `bench/` | Model bake-offs and their recorded results |
+| `footage/` | Your source clips (never committed) |
+| `runtime/` | Per-project state, evidence, renders, exports (never committed) |
+| `repos/OpenTake` | Reference checkout, pinned at `acf07e5`; not modified by us |
+
+Documentation is deliberately four files: this one, `app/README.md` (the
+daily loop and its endpoints), `app/VALIDATION.md` (what has actually been
+verified, with dates), `bench/RESULTS.md` (the evidence behind every model
+choice), and `STATUS_AND_ROADMAP.md` (current state and what is next).
+
+## Principles
+
+These have held since the project charter and still decide arguments:
+
+- **Real footage first.** The system understands, organizes, and edits the
+  user's own media. Generation is optional and never the foundation.
+- **Grounded recommendations.** Every content claim, clip choice, and edit
+  decision traces to source media and timecodes. Deterministic gates enforce
+  this, because a prompt asking a model to stay grounded is not a guarantee.
+- **Plan before execution.** Creative planning stays separate from timeline
+  construction and rendering; `edit-plan.json` is the boundary between them.
+- **Human control.** The plan, the selected clips, and the intermediate
+  results are all visible and revisable.
+- **Non-destructive.** Source files are preserved; edits are reversible.
+- **Both outputs, always.** A rendered video to review *and* an editable
+  timeline linked to the original media — never only one.
+- **Practical quality checks.** Validate durations, geometry, frame
+  alignment, audio levels, and captions instead of trusting a plausible plan.
+- **Modular.** No single model, vendor, or editor is load-bearing; each sits
+  behind a replaceable adapter.
+
+## Third-party code
+
+`repos/OpenTake` is a shallow reference checkout (pinned commit above), kept
+visible and unmodified. It is a native Rust/Tauri desktop editor, so it is
+built on the host rather than in Docker: containerizing a GUI application
+adds display, audio, and GPU plumbing without improving isolation.
+
+Other candidates evaluated during the July 2026 survey — Crayotter,
+FireRed-OpenStoryline, MediaMolder, NarratoAI, Palmier Pro, Vidi, CutScript,
+OpenReels and others — were assessed and not adopted; their pinned commits
+and the comparison that retired them are in git history
+(`FEASIBILITY_AUDIT.md` and `repos/README.md`, removed 2026-08-20).
+`Crayotter/` and `FireRed-OpenStoryline/` remain locally as experiment data
+only, and are not part of the repository.
