@@ -98,6 +98,51 @@ core.
 
 ## Standing Today
 
+### External editors and a product-level review (2026-08-20)
+
+Two questions went to Codex (gpt-5.6-sol, max reasoning), separately from
+the implementation review that produced the 2026-08-19 hardening.
+
+**Palmier Pro and OpenTake — adopt neither.** Palmier Pro declares
+`platforms: [.macOS(.v26)]` and 322 of its 612 Swift files import Apple-only
+frameworks (SwiftUI, AppKit, AVFoundation, CoreImage, Metal shaders), so
+"porting it to Arch" means replacing the application shell, media engine and
+GPU layer — many person-months, and OpenTake already *is* that rewrite, done
+by someone else in Rust/Tauri/wgpu. OpenTake itself exports OTIO, XMEML,
+FCPXML and EDL but imports none of them, so it cannot consume what we
+produce; its Linux "support" is source-only (beta.5 ships macOS and Windows
+binaries; the linux-x86_64 CI job lints and tests but never builds the app,
+and the FFmpeg sidecar manifest has no Linux entry). Driving it through MCP
+is technically viable but trades one portable file for a stateful
+authenticated GUI dependency, media-ID mapping, retry logic, and a second
+acceptance test — to replace a Resolve path already verified at 937/937
+frames. Reconsider only if OpenTake ships a tested Linux package and either
+imports interchange or stabilises its automation API. Ideas worth borrowing
+regardless: atomic frame-based edit commands with read-back, and explicit
+command history.
+
+**Product review — recorded, not yet adopted.** Codex's judgement was that
+the objective is coherent and the weighting is wrong: this is "a strong
+auditable rough-cut system, but not yet the lowest-friction daily editing
+habit". Its findings worth acting on, pending the owner's decision, since
+several reverse features he asked for:
+
+- The creative sequence is backwards. The blind writer bench proved stories
+  can only be judged as rendered video, yet the UI asks for a choice between
+  story cards first, and spends proxy time before the first frame is seen.
+  Its highest-leverage change: default to ONE automatically rendered cut.
+- Evidence should be invisible infrastructure, not a workflow stage. The
+  neutral plan stays as the spine; the review machinery should not be the
+  product centre.
+- The real bottleneck is how much creative work is left for the DaVinci
+  pass, not the import itself. Eliminating Resolve is the wrong goal;
+  shrinking that pass to personal finishing choices is the right one.
+- New idea, ranked above reference-vlog learning: diff the owner's finished
+  Resolve timeline against the AI proposal and learn his own corrections.
+- Suggested deletions: clip-value scoring from the primary experience,
+  CapCut export, further generic bake-offs, the standalone dialogue
+  benchmark.
+
 ### Dual review and hardening (2026-08-19)
 
 An external full-project review (Codex, gpt-5.6-sol at max reasoning) and an
