@@ -203,14 +203,21 @@ are stashed):
   parameter, or cookie) for use with `VIDEO_EDITING_BIND=0.0.0.0`. Unset
   keeps today's open behavior for localhost use.
 
-37 tests pass.
+
+After Codex was shown the verification results it withdrew its
+documentation-contradiction claim (it had conflated the removed *fixture*
+with the retained generalized scripts) and refined its concept-grounding
+claim into a concrete rule, which is now implemented: `_sanitize_concepts`
+receives the evidence the planner was given — approved and pending alike,
+since citing a pending moment is legitimate — and drops any citation that
+overlaps no observation at all, letting the existing beat and concept
+minimums cascade. Its remaining objection stands: pipeline-critical render
+and export scripts still live under a directory named `poc-morning-routine`.
+
+40 tests pass.
 
 ### Known and deliberately not changed
 
-- Concept sanitization still checks citations against asset bounds only, not
-  against the evidence set. Compilation's gate is the real backstop; the
-  cost is that a fabricated citation can reach the concept UI labelled as
-  grounded.
 - Jobs remain in-memory: a restart loses job status. Durable jobs and
   content-addressed artifacts are the architectural fix both reviews
   recommended and are not attempted here.

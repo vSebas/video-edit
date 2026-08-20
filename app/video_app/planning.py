@@ -221,7 +221,7 @@ duration and at least {MIN_EVENT_SECONDS}s long."""
             "kept_concept_ids": [item["concept_id"] for item in keep_concepts or []],
         },
     }
-    _sanitize_concepts(document, project)
+    _sanitize_concepts(document, project, evidence)
     if len(document["concepts"]) < 2:
         raise PlanningError(
             "Fewer than two valid concepts survived grounding checks; "
@@ -230,13 +230,27 @@ duration and at least {MIN_EVENT_SECONDS}s long."""
     return document
 
 
-def _sanitize_concepts(document: dict, project: dict) -> None:
+def _sanitize_concepts(
+    document: dict, project: dict, evidence: list[dict] | None = None
+) -> None:
     """Deterministically enforce grounding: real assets, clamped ranges,
-    minimum beat coverage. Invalid evidence or beats are dropped."""
+    minimum beat coverage. Invalid evidence or beats are dropped.
+
+    A citation is checked against the observations the planner was given —
+    approved and pending alike, since citing a pending moment is allowed and
+    the user confirms it later. A citation overlapping no observation at all
+    is a fabrication and goes."""
     assets = {
         asset["asset_id"]: asset
         for asset in project.get("inventory", {}).get("assets", [])
     }
+    observed: dict[str, list[tuple[float, float]]] | None = None
+    if evidence is not None:
+        observed = {}
+        for item in evidence:
+            observed.setdefault(item["asset_id"], []).append(
+                (item["start_seconds"], item["end_seconds"])
+            )
     valid_concepts = []
     used_ids: set[str] = set()
     for concept in document["concepts"]:
@@ -278,6 +292,11 @@ def _sanitize_concepts(document: dict, project: dict) -> None:
                 except (KeyError, TypeError, ValueError):
                     continue
                 if end - start < MIN_EVENT_SECONDS:
+                    continue
+                if observed is not None and not any(
+                    observed_start < end and observed_end > start
+                    for observed_start, observed_end in observed.get(asset["asset_id"], [])
+                ):
                     continue
                 try:
                     confidence = min(max(float(item.get("confidence", 0.5)), 0.0), 1.0)

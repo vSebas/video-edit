@@ -409,3 +409,82 @@ class TestOptionalTokenGate:
             assert client.get(
                 "/api/projects", headers={"x-vlog-token": "guess"}
             ).status_code == 401
+
+
+class TestConceptCitationGrounding:
+    """A citation overlapping no observation at all is a fabrication."""
+
+    def _document(self, ranges: list[tuple[float, float]]) -> dict:
+        def beat(beat_id: str, start: float, end: float) -> dict:
+            return {
+                "beat_id": beat_id,
+                "purpose": "Beat",
+                "target_duration_seconds": end - start,
+                "evidence": [
+                    {
+                        "asset_id": "clip_a",
+                        "start_seconds": start,
+                        "end_seconds": end,
+                        "observed_content": "Test content.",
+                        "confidence": 0.9,
+                    }
+                ],
+            }
+
+        return {
+            "schema_version": "creative-concepts.v1",
+            "generated_at": "2026-08-19T00:00:00Z",
+            "benchmark_id": "unit-test",
+            "footage_summary": "One clip.",
+            "concepts": [
+                {
+                    "concept_id": f"concept_{index}",
+                    "title": f"Concept {index}",
+                    "topic": "t", "audience": "a",
+                    "platforms": ["instagram_reel"],
+                    "target_duration_seconds": 15,
+                    "hook": "h",
+                    "structure": [
+                        beat(f"b{position}", start, end)
+                        for position, (start, end) in enumerate(ranges)
+                    ],
+                    "strengths": ["s"], "weaknesses": ["w"], "missing_shots": [],
+                }
+                for index in ("one", "two")
+            ],
+        }
+
+    def test_citation_matching_no_observation_is_dropped(self) -> None:
+        from video_app.planning import _sanitize_concepts
+
+        project = project_with([video_asset()])
+        document = self._document([(1.0, 3.0), (5.0, 7.0), (9.0, 11.0), (15.0, 18.0)])
+        evidence = [
+            {"asset_id": "clip_a", "start_seconds": 0.5, "end_seconds": 3.5},
+            {"asset_id": "clip_a", "start_seconds": 4.5, "end_seconds": 7.5},
+            {"asset_id": "clip_a", "start_seconds": 8.5, "end_seconds": 11.5},
+        ]
+        _sanitize_concepts(document, project, evidence)
+        kept = [beat["beat_id"] for beat in document["concepts"][0]["structure"]]
+        # The 15-18s beat cites footage nothing observed.
+        assert kept == ["b0", "b1", "b2"]
+
+    def test_concept_falling_below_three_grounded_beats_is_dropped(self) -> None:
+        from video_app.planning import _sanitize_concepts
+
+        project = project_with([video_asset()])
+        document = self._document([(1.0, 3.0), (5.0, 7.0), (15.0, 18.0)])
+        evidence = [
+            {"asset_id": "clip_a", "start_seconds": 0.5, "end_seconds": 3.5},
+            {"asset_id": "clip_a", "start_seconds": 4.5, "end_seconds": 7.5},
+        ]
+        _sanitize_concepts(document, project, evidence)
+        assert document["concepts"] == []
+
+    def test_without_an_evidence_set_citations_are_left_alone(self) -> None:
+        from video_app.planning import _sanitize_concepts
+
+        project = project_with([video_asset()])
+        document = self._document([(1.0, 3.0), (5.0, 7.0), (15.0, 18.0)])
+        _sanitize_concepts(document, project)
+        assert len(document["concepts"][0]["structure"]) == 3
