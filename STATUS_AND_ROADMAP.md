@@ -98,50 +98,78 @@ core.
 
 ## Standing Today
 
-### External editors and a product-level review (2026-08-20)
+### External editors: capability audit (2026-08-20, supersedes the first pass)
 
-Two questions went to Codex (gpt-5.6-sol, max reasoning), separately from
-the implementation review that produced the 2026-08-19 hardening.
+A first pass concluded "adopt neither" on portability and interchange
+grounds. That was right about adoption and wrong about weighting: it barely
+examined what the two tools can actually *do*. A second, deliberately
+adversarial Codex audit ("do not defend the incumbent") re-derived the
+answer from both source trees.
 
-**Palmier Pro and OpenTake — adopt neither.** Palmier Pro declares
-`platforms: [.macOS(.v26)]` and 322 of its 612 Swift files import Apple-only
-frameworks (SwiftUI, AppKit, AVFoundation, CoreImage, Metal shaders), so
-"porting it to Arch" means replacing the application shell, media engine and
-GPU layer — many person-months, and OpenTake already *is* that rewrite, done
-by someone else in Rust/Tauri/wgpu. OpenTake itself exports OTIO, XMEML,
-FCPXML and EDL but imports none of them, so it cannot consume what we
-produce; its Linux "support" is source-only (beta.5 ships macOS and Windows
-binaries; the linux-x86_64 CI job lints and tests but never builds the app,
-and the FFmpeg sidecar manifest has no Linux entry). Driving it through MCP
-is technically viable but trades one portable file for a stateful
-authenticated GUI dependency, media-ID mapping, retry logic, and a second
-acceptance test — to replace a Resolve path already verified at 937/937
-frames. Reconsider only if OpenTake ships a tested Linux package and either
-imports interchange or stabilises its automation API. Ideas worth borrowing
-regardless: atomic frame-based edit commands with read-back, and explicit
-command history.
+**Verdict: better as editors, worse at the actual job.** OpenTake and
+Palmier Pro are materially better editing systems than ours — "not close".
+Our editor is a flat hard-cut compiler: one video track, one linked audio
+track, one title, fit/pad framing, global loudness normalisation. Neither,
+however, has any story layer or phone intake, and neither runs the daily
+job: Palmier is macOS-only, OpenTake has no shipped Linux build, a much
+smaller ASR (whisper.cpp `ggml-base`, ~142 MB, against our large-v3 on
+CUDA), and no grounded proposal artifact.
 
-**Product review — recorded, not yet adopted.** Codex's judgement was that
-the objective is coherent and the weighting is wrong: this is "a strong
-auditable rough-cut system, but not yet the lowest-friction daily editing
-habit". Its findings worth acting on, pending the owner's decision, since
-several reverse features he asked for:
+Corrections to claims made earlier in this project, from reading their
+source rather than their docs:
 
-- The creative sequence is backwards. The blind writer bench proved stories
-  can only be judged as rendered video, yet the UI asks for a choice between
-  story cards first, and spends proxy time before the first frame is seen.
-  Its highest-leverage change: default to ONE automatically rendered cut.
-- Evidence should be invisible infrastructure, not a workflow stage. The
-  neutral plan stays as the spine; the review machinery should not be the
-  product centre.
-- The real bottleneck is how much creative work is left for the DaVinci
-  pass, not the import itself. Eliminating Resolve is the wrong goal;
-  shrinking that pass to personal finishing choices is the right one.
-- New idea, ranked above reference-vlog learning: diff the owner's finished
-  Resolve timeline against the AI proposal and learn his own corrections.
-- Suggested deletions: clip-value scoring from the primary experience,
-  CapCut export, further generic bake-offs, the standalone dialogue
-  benchmark.
+- OpenTake advertises 60 agent tools; only 38 are unconditional, and
+  `smart_reframe` is explicitly gated off because its backend does not
+  exist.
+- Its SigLIP2 semantic search ships placeholder model URLs and hashes, so a
+  fresh install cannot enable visual search. Palmier's equivalent is real.
+- `auto_cut_to_beats` does not build a montage; it moves existing clips.
+- Palmier's tool list includes protocol tokens (`end_turn`, `tool_use`);
+  the real count is ~50.
+
+**The diagnosis worth keeping:** the flaw is not that we compile a plan. It
+is that the plan's *vocabulary* is impoverished — a plan that can only say
+"play these linked excerpts consecutively" necessarily compiles to a clip
+reel. The granular tool model should execute the planner, not replace it.
+
+Where we are genuinely behind, in the order it costs daily quality:
+
+1. **We do not edit speech.** Word snapping stops cuts landing mid-word; it
+   removes no filler, false start, repeated take, or dead air. For a spoken
+   Spanish vlog this is the largest single quality defect.
+2. **The flat timeline forces bad choices.** When the best line has weak
+   picture, we must show the weak shot or lose the line — no B-roll over
+   held audio, no J/L cuts.
+3. **Loudness normalisation is not audio production.** No denoise, no
+   per-clip levelling, no ducking, no voiceover placement.
+4. **Revision is replanning, not editing.** "Cut the second 'este'" can
+   regenerate the whole clip list; there is no localised, undoable command.
+5. **Captions are an export artifact,** not visible or editable in the cut.
+6. **Nothing learns from the Resolve finishing pass** — the same manual
+   corrections recur forever.
+7. **Rotation and framing are brittle** — sideways clips stay sideways,
+   framing is fit/pad rather than subject-aware.
+8. **Daily reliability is underbuilt** (in-memory jobs, no dedup).
+
+Explicitly *not* priorities despite being feature-count wins: avatars, voice
+cloning, generated video, multicam, motion graphics, object removal,
+advanced colour, and even full semantic search.
+
+Recorded as input, not adopted — the reordering below is the owner's call.
+Suggested order with solo-effort estimates: Spanish dialogue cleanup (2-3
+weeks) → atomic edit-command layer with undo and readback (4-6) →
+multi-track execution with B-roll, J/L cuts, VO and ducking (4-6) → dialogue
+audio treatment (2-3) → styled captions in the render (1-2) → learn from the
+finished Resolve timeline (2-4) → rotation and static framing (3-7 days) →
+beat detection (4-7 days). Roughly 12-18 weeks for the transformation; a
+useful first release is the dialogue cleanup alone.
+
+Integration was costed and rejected: driving OpenTake over MCP is ~7-13
+weeks to productionise plus permanent maintenance of two canonical
+timelines, and most of what makes it attractive does not survive OTIO/XMEML
+into Resolve anyway. Both projects are GPLv3 — reimplement behaviour, do not
+copy source. A bounded 3-5 day OpenTake smoke test on one real vlog is worth
+doing as a *quality target*, not an architectural commitment.
 
 ### Dual review and hardening (2026-08-19)
 
