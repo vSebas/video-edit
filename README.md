@@ -47,10 +47,12 @@ docker compose run --rm app python pipeline/validate_edit.py \
 | `footage/` | Your source clips (never committed) |
 | `runtime/` | Per-project state, evidence, renders, exports (never committed) |
 
-Documentation is deliberately five files: this one, `app/README.md` (the
+Documentation is deliberately six files: this one, `app/README.md` (the
 daily loop and its endpoints), `app/VALIDATION.md` (what has actually been
 verified, with dates), `bench/RESULTS.md` (the evidence behind every model
-choice), and `STATUS_AND_ROADMAP.md` (current state and what is next).
+choice), `STATUS_AND_ROADMAP.md` (current state and what is next), and
+`EXECUTION_LAYER_PLAN.md` (why we are not adopting an external editor, and
+the phased plan for building the execution layer ourselves).
 
 ## Principles
 

@@ -155,7 +155,11 @@ Explicitly *not* priorities despite being feature-count wins: avatars, voice
 cloning, generated video, multicam, motion graphics, object removal,
 advanced colour, and even full semantic search.
 
-Recorded as input, not adopted — the reordering below is the owner's call.
+Acted on: the owner asked whether OpenTake should become the base, hosting
+our planner and ported Palmier features. That proposal was drafted, reviewed
+adversarially, and rejected — see `EXECUTION_LAYER_PLAN.md` for the decision,
+the two factual errors the draft contained, and the six-phase plan for
+building the execution layer in our own compiler instead.
 Suggested order with solo-effort estimates: Spanish dialogue cleanup (2-3
 weeks) → atomic edit-command layer with undo and readback (4-6) →
 multi-track execution with B-roll, J/L cuts, VO and ducking (4-6) → dialogue
@@ -348,6 +352,7 @@ bridge, and the Crayotter comparison were all evaluated and retired (see
 - `app/README.md` — the daily loop and its endpoints
 - `app/VALIDATION.md` — what has actually been verified, with dates
 - `bench/RESULTS.md` — the evidence behind every model choice
+- `EXECUTION_LAYER_PLAN.md` — the editor decision and the phased build plan
 - This file — current state, what is deliberately incomplete, what is next
 
 Superseded material lives in git history rather than in the tree: the July
