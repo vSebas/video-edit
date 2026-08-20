@@ -547,9 +547,13 @@ These can be completed while Phase 2 begins:
    belongs to with ducking, without re-cutting the video.
 5. Add sideways-clip detection (no rotation metadata) so the compiler can set
    `rotation_degrees` instead of leaving manual review.
-6. Durability pass, if the daily loop starts losing work to it: persist jobs,
-   dedup paid work, and key artifacts by media hash (see "Deliberately
-   incomplete").
+6. **Open decision — durability redesign.** Both reviews independently
+   recommended persisting jobs and keying artifacts by media hash, with
+   `project.json` demoted to a UI projection. It is a redesign, not a patch,
+   and it competes directly with items 0b and 4 for the same time. Trigger to
+   revisit: the daily loop actually loses work to a restart, a double-submit
+   pays twice, or stale evidence survives a re-analysis. Until one of those
+   bites, features win — but this is a decision, not an oversight.
 7. Later: CapCut draft export via the OSS CapCutAPI ecosystem, Resolve
    scripting auto-import (mazsola2k pattern), dialogue-heavy footage benchmark.
 
