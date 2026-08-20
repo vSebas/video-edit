@@ -91,6 +91,27 @@ licenses and optional research models from becoming inseparable from the core.
 
 ## Standing Today
 
+### Dual review and hardening (2026-08-19)
+
+An external full-project review (Codex, gpt-5.6-sol at max reasoning) and an
+internal five-dimension review were cross-checked, then every claim was put to
+an adversarial verifier before any code changed. Twelve of fourteen confirmed;
+Codex withdrew one outright once shown the verification.
+
+Fixed: grounding accepted a cut whose midpoint merely grazed its evidence and
+revisions applied no grounding gate at all; word-snapped source starts were
+left off the frame grid so render and NLE could disagree by a frame; audio and
+image assets could compile into the video track; captions, word snapping, and
+language detection picked their ASR run by sorting random UUIDs, so
+re-analysis silently used stale transcripts about half the time;
+`project.json` read-modify-write was unserialized across threads; the
+auto-approve hedge filter was English-only on Spanish footage. Details and
+what was deliberately left alone are in `app/VALIDATION.md`.
+
+`poc-morning-routine/` was retired the same day: its render, export, and
+validation scripts moved to `app/pipeline/` and its schemas to `app/schemas/`,
+where the app actually uses them.
+
 ### Phone-first capture and project management (2026-08-18/19)
 
 - **Uploads from the iPhone**: browser upload with live percent on the
@@ -220,21 +241,32 @@ Verified end to end on the seven benchmark clips as a fresh project:
   and reports to GitHub. Private media, renders, models, papers, runtime data,
   and upstream working trees remain local.
 
-### Deliberately incomplete
+### Deliberately incomplete (reviewed 2026-08-19)
 
-- New arbitrary projects stop at `awaiting_semantic_analysis` unless a saved
-  OpenStoryline run is explicitly imported; imported projects move to
-  `semantic_review_required`.
-- The application does not invoke a hosted visual provider live yet.
-- The current Qwen/Gemini scorecard cannot select a winner because their agent
-  runs used different shot boundaries, and two approved captions still
-  conflict with independently verified footage.
-- Timestamped speech is not produced live yet.
-- Concepts, missing-shot advice, and edit plans are not automatically compiled
-  for new projects.
-- Generic projects cannot render until semantic planning is implemented.
-- Actual DaVinci Resolve import, prompt-driven revision, and a dialogue-heavy
-  benchmark remain open acceptance checks.
+The bullets that used to sit here — no live visual provider, no live speech,
+no automatic planning, no generic render, unverified Resolve import — were all
+closed between 2026-08-05 and 2026-08-19. What is genuinely still open:
+
+- **Durability.** Jobs live in memory, so a container restart loses their
+  status; there is no dedup, so a double-submitted analysis pays twice.
+- **Artifact identity.** State is a mutable `project.json` rather than
+  content-addressed artifacts keyed by media hash, adapter, and prompt
+  version. Both the Codex and internal reviews independently recommended that
+  redesign; it would make caching, invalidation, retries, and provenance fall
+  out naturally instead of being hand-maintained. Not attempted.
+- **Access control.** `VIDEO_EDITING_TOKEN` is opt-in and unset by default;
+  the workspace and the full-scope rclone Drive token are still mounted
+  read-write into the container.
+- **Concept-stage trust.** Citations are checked for overlap against observed
+  evidence, but a plausible-looking hallucination inside a real observation's
+  range still reaches the concept UI; only compilation applies the
+  approved-only coverage gate.
+- **Rotation.** Sideways clips without rotation metadata still render
+  unrotated; the compiler does not set `rotation_degrees` automatically.
+- **Voiceover placement.** Audio assets are barred from the video track, but
+  the planned feature — drop a recording in and have it placed at the beat it
+  belongs to, with ducking — is not built.
+- A dialogue-heavy comparison benchmark remains an open acceptance check.
 
 ## Original Plan Status
 
@@ -509,13 +541,16 @@ These can be completed while Phase 2 begins:
    not decode H.264.
 2. Run the walking skeleton on a fresh, real day of vlog footage and review
    output quality, latency, and provider cost.
-3. Add prompt-driven plan revision that rebuilds only concepts/plan/render
-   while media analysis stays cached.
-4. Add workbench UI controls for the new pipeline (analyze, concepts, select,
-   compile, render, export) on top of the existing API.
+3. DONE — prompt-driven revision rebuilds concepts/plan/render with media
+   analysis cached; guided three-phase UI controls ship in the workbench.
+4. Voiceover placement: drop a recording in and have it placed at the beat it
+   belongs to with ducking, without re-cutting the video.
 5. Add sideways-clip detection (no rotation metadata) so the compiler can set
    `rotation_degrees` instead of leaving manual review.
-6. Later: CapCut draft export via the OSS CapCutAPI ecosystem, Resolve
+6. Durability pass, if the daily loop starts losing work to it: persist jobs,
+   dedup paid work, and key artifacts by media hash (see "Deliberately
+   incomplete").
+7. Later: CapCut draft export via the OSS CapCutAPI ecosystem, Resolve
    scripting auto-import (mazsola2k pattern), dialogue-heavy footage benchmark.
 
 Deprioritized until a concrete need appears: Vidi retrieval spike,

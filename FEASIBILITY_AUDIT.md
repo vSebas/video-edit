@@ -31,7 +31,7 @@ This is a preliminary shortlist, not a final architecture decision.
 
 The morning-routine proof of concept now includes a native OpenTake project and a bounded hands-on round trip at commit `acf07e55082112c0361b961d058b81059d832c87`. OpenTake's project and editing crates compiled successfully; 395 targeted upstream tests passed; the 930-frame project opened, accepted a command-layer edit, saved, reopened without duration/track drift, and exported independently parseable OTIO, XMEML, FCPXML, and EDL.
 
-The verdict is **partial**, not because the native project path failed, but because current OpenTake exports OTIO/XMEML and does not import either format. Its XMEML also omits text clips, while modern FCPXML preserves them. See `poc-morning-routine/OPENTAKE_SPIKE.md` for the exact comparison and raw evidence.
+The verdict is **partial**, not because the native project path failed, but because current OpenTake exports OTIO/XMEML and does not import either format. Its XMEML also omits text clips, while modern FCPXML preserves them. The exact comparison and raw evidence were in `poc-morning-routine/OPENTAKE_SPIKE.md`, removed with that directory on 2026-08-19; it survives in git history.
 
 ### Hands-on update: CutScript inspected
 
