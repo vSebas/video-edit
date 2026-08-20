@@ -1,9 +1,9 @@
 # Application validation
 
-**Verified:** 2026-08-19
+**Verified:** 2026-08-20
 **Image:** `video-editing-app:local` (faster-whisper + CUDA libs + rclone)
 
-Newest checks are at the bottom (Capture-loop checks, 2026-08-18/19).
+Newest checks are at the bottom.
 Older sections describe the system as it was on their dates; the
 morning-routine fixture and Phase 2A review machinery they reference were
 removed on 2026-08-18, and the POC directory itself on 2026-08-19.
@@ -250,3 +250,21 @@ the recompiled plan is frame-aligned at all 178 numeric values, and the
 independent validator reports **VALID** on all ten checks — including
 `frame_alignment`, which failed on the plan compiled before the quantization
 fix and passes on the one compiled after it.
+
+## Benchmark media relocation (2026-08-20)
+
+The grounding benchmark's seven ground-truth clips were moved from
+`Crayotter/crayotter-data/user_temp/` to `bench/media/`, and `Crayotter/`
+was deleted. Verified by running `grounding_bench.clip_bytes` — the real
+ffmpeg transcode path, not a path existence check — against every entry in
+`bench/ground-truth.json` from the new location: 7 clips, 12 moments, all
+resolved. sha256 of each copied clip matched the original before deletion.
+
+The `--help` invocation documented in `bench/RESULTS.md` was run to confirm
+the reproduction command resolves inside the container.
+
+Also corrected: the capability endpoint advertised `"OTIO, DaVinci XMEML,
+OpenTake"`, but the OpenTake exporter was removed with `poc-morning-routine`
+on 2026-08-19. It now reports what it actually produces.
+
+40 tests pass.

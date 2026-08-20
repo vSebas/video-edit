@@ -48,7 +48,7 @@ docker compose run --rm app python pipeline/validate_edit.py \
 | `runtime/` | Per-project state, evidence, renders, exports (never committed) |
 | `repos/OpenTake` | Reference checkout, pinned at `acf07e5`; not modified by us |
 
-Documentation is deliberately four files: this one, `app/README.md` (the
+Documentation is deliberately five files: this one, `app/README.md` (the
 daily loop and its endpoints), `app/VALIDATION.md` (what has actually been
 verified, with dates), `bench/RESULTS.md` (the evidence behind every model
 choice), and `STATUS_AND_ROADMAP.md` (current state and what is next).

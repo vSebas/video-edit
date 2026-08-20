@@ -1,9 +1,20 @@
 # Temporal-grounding model bake-off — 2026-08-16
 
-12 independently verified moments from the morning-routine benchmark
-(`bench/ground-truth.json`); each model receives the full downscaled clip and
-the event description, and must return the time range. Raw predictions per
-model are in `bench/results/`.
+12 independently verified moments across 7 clips (`bench/ground-truth.json`,
+media in `bench/media/`, kept local); each model receives the full downscaled
+clip and the event description, and must return the time range. Raw
+predictions per model are in `bench/results/`.
+
+Reproduce with:
+
+```bash
+docker compose run --rm --no-deps app \
+  python ../bench/grounding_bench.py --providers <name> [<name> ...] \
+  --media-root .. --output ../bench/results
+```
+
+`BENCH_KEEP_AUDIO=1` sends audio-carrying segments instead of silent video —
+the difference the audio audit below turned on.
 
 Metrics: **mean IoU** (standard academic grounding score), **mean recall**
 (fraction of the true moment covered — the editing-aligned metric, since
