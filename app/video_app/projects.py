@@ -12,6 +12,7 @@ import sys
 import tempfile
 import threading
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -49,9 +50,15 @@ def load_json(path: Path) -> Any:
 
 def write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
-    os.replace(temporary, path)
+    # Unique temp name: two threads writing the same file would otherwise
+    # share one .tmp path and publish each other's half-written bytes.
+    temporary = path.with_suffix(f"{path.suffix}.{uuid.uuid4().hex[:8]}.tmp")
+    try:
+        temporary.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+        os.replace(temporary, path)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
 
 
 def slugify(value: str) -> str:
@@ -68,6 +75,21 @@ class ProjectService:
         self.settings = settings
         self.settings.runtime.mkdir(parents=True, exist_ok=True)
         self._semantic_review_lock = threading.Lock()
+        self._project_locks: dict[str, threading.Lock] = {}
+        self._project_locks_guard = threading.Lock()
+
+    @contextmanager
+    def _project_write(self, project_id: str):
+        """Serialize read-modify-write of one project's project.json.
+
+        Background jobs and request handlers run as threads in one process,
+        so an unguarded load -> mutate -> write pair silently drops whatever
+        the other thread wrote in between.
+        """
+        with self._project_locks_guard:
+            lock = self._project_locks.setdefault(project_id, threading.Lock())
+        with lock:
+            yield
 
     def capabilities(self) -> dict:
         faster_whisper = importlib.util.find_spec("faster_whisper") is not None
@@ -408,8 +430,6 @@ class ProjectService:
         speech when the ASR transcript independently confirms speech in the
         same range. Two agreeing senses need no human referee; the decision
         is recorded in the audit trail like any other."""
-        from .visual import AUTO_APPROVE_MIN_CONFIDENCE
-
         words = self._speech_words(project_id)
         if not words:
             return 0
@@ -417,81 +437,124 @@ class ProjectService:
         for manifest in self._current_run_manifests(project_id):
             if manifest["provider"]["adapter"] != "owned-live-visual":
                 continue
-            run_dir = (
-                self.settings.runtime / project_id / "analysis" / "runs"
-                / manifest["run_key"]
-            )
-            normalized = load_json(run_dir / "normalized.json")
-            reviews_path = run_dir / "reviews.json"
-            reviews = (
-                load_json(reviews_path)
-                if reviews_path.is_file()
-                else {
-                    "schema_version": "semantic-reviews.v1",
-                    "project_id": project_id,
-                    "run_key": manifest["run_key"],
-                    "updated_at": utc_now(),
-                    "decisions": {},
-                    "events": [],
-                }
-            )
-            changed = False
-            for observation in normalized["observations"]:
-                if observation["normalization_status"] != "accepted":
-                    continue
-                if observation["evidence_id"] in reviews["decisions"]:
-                    continue
-                if observation["risk_flags"] != ["unverified_speech_claim"]:
-                    continue
-                confidence = observation.get("model_confidence") or 0.0
-                if confidence < AUTO_APPROVE_MIN_CONFIDENCE:
-                    continue
-                asset_words = words.get(observation["asset_id"]) or []
-                if not any(
-                    word["start_seconds"] < observation["end_seconds"]
-                    and word["end_seconds"] > observation["start_seconds"]
-                    for word in asset_words
-                ):
-                    continue
-                event = {
-                    "event_id": uuid.uuid4().hex[:12],
-                    "evidence_id": observation["evidence_id"],
-                    "action": "approve",
-                    "caption": observation["caption"],
-                    "note": (
-                        "auto-approved (policy corroborate-v1): the speech "
-                        "mention is confirmed by the transcript in this range"
-                    ),
-                    "reviewed_at": utc_now(),
-                }
-                reviews["decisions"][observation["evidence_id"]] = event
-                reviews["events"].append(event)
-                changed = True
-                corroborated += 1
-            if changed:
-                reviews["updated_at"] = utc_now()
-                write_json(reviews_path, reviews)
+            # The same lock human reviews take: this read-modify-write of
+            # reviews.json runs from a background job thread.
+            with self._semantic_review_lock:
+                corroborated += self._corroborate_run(project_id, manifest, words)
+        return corroborated
+
+    def _corroborate_run(
+        self, project_id: str, manifest: dict, words: dict[str, list[dict]]
+    ) -> int:
+        """One visual run's corroboration pass, under _semantic_review_lock."""
+        from .visual import AUTO_APPROVE_MIN_CONFIDENCE
+
+        corroborated = 0
+        run_dir = (
+            self.settings.runtime / project_id / "analysis" / "runs"
+            / manifest["run_key"]
+        )
+        normalized = load_json(run_dir / "normalized.json")
+        reviews_path = run_dir / "reviews.json"
+        reviews = (
+            load_json(reviews_path)
+            if reviews_path.is_file()
+            else {
+                "schema_version": "semantic-reviews.v1",
+                "project_id": project_id,
+                "run_key": manifest["run_key"],
+                "updated_at": utc_now(),
+                "decisions": {},
+                "events": [],
+            }
+        )
+        changed = False
+        for observation in normalized["observations"]:
+            if observation["normalization_status"] != "accepted":
+                continue
+            if observation["evidence_id"] in reviews["decisions"]:
+                continue
+            if observation["risk_flags"] != ["unverified_speech_claim"]:
+                continue
+            confidence = observation.get("model_confidence") or 0.0
+            if confidence < AUTO_APPROVE_MIN_CONFIDENCE:
+                continue
+            asset_words = words.get(observation["asset_id"]) or []
+            if not any(
+                word["start_seconds"] < observation["end_seconds"]
+                and word["end_seconds"] > observation["start_seconds"]
+                for word in asset_words
+            ):
+                continue
+            event = {
+                "event_id": uuid.uuid4().hex[:12],
+                "evidence_id": observation["evidence_id"],
+                "action": "approve",
+                "caption": observation["caption"],
+                "note": (
+                    "auto-approved (policy corroborate-v1): the speech "
+                    "mention is confirmed by the transcript in this range"
+                ),
+                "reviewed_at": utc_now(),
+            }
+            reviews["decisions"][observation["evidence_id"]] = event
+            reviews["events"].append(event)
+            changed = True
+            corroborated += 1
+        if changed:
+            reviews["updated_at"] = utc_now()
+            write_json(reviews_path, reviews)
         return corroborated
 
     def _mark_semantic_progress(self, project_id: str, kind: str) -> None:
         path = self.settings.runtime / project_id / "project.json"
-        stored = load_json(path)
-        stored["updated_at"] = utc_now()
-        stored["analysis"][kind] = "completed"
         pending_risky = 0
         for manifest in self._semantic_run_manifests(project_id):
             run = self.semantic_run(project_id, manifest["run_key"])
             pending_risky += run["summary"].get("pending_review_count", 0)
-        stored["status"] = (
-            "semantic_ready" if pending_risky == 0 else "semantic_review_recommended"
-        )
-        stored["analysis"]["warning"] = (
-            "Routine evidence was auto-approved by policy; "
-            f"{pending_risky} risk-flagged claim(s) await optional review."
-            if pending_risky
-            else "Evidence is ready for concept generation."
-        )
-        write_json(path, stored)
+        # Visual and speech analysis complete on different job threads and
+        # both flip a flag in this file.
+        with self._project_write(project_id):
+            stored = load_json(path)
+            stored["updated_at"] = utc_now()
+            stored["analysis"][kind] = "completed"
+            stored["status"] = (
+                "semantic_ready" if pending_risky == 0 else "semantic_review_recommended"
+            )
+            stored["analysis"]["warning"] = (
+                "Routine evidence was auto-approved by policy; "
+                f"{pending_risky} risk-flagged claim(s) await optional review."
+                if pending_risky
+                else "Evidence is ready for concept generation."
+            )
+            write_json(path, stored)
+
+    def _approved_ranges(self, project_id: str) -> dict[str, list[tuple[float, float]]]:
+        """Confirmed observation ranges per asset — the grounding gate that
+        compilation and revision both apply to proposed cuts."""
+        ranges: dict[str, list[tuple[float, float]]] = {}
+        for item in self.approved_evidence(project_id):
+            ranges.setdefault(item["asset_id"], []).append(
+                (item["start_seconds"], item["end_seconds"])
+            )
+        return ranges
+
+    def _latest_asr_transcripts(self, project_id: str) -> dict | None:
+        """Transcripts of the newest ASR run by import time. Run directories
+        carry random ids, so recency comes from the manifest, never the name."""
+        runs_dir = self.settings.runtime / project_id / "analysis" / "runs"
+        newest: tuple[str, Path] | None = None
+        for manifest in self._semantic_run_manifests(project_id):
+            run_key = manifest.get("run_key", "")
+            if not run_key.startswith("asr-live-"):
+                continue
+            transcripts = runs_dir / run_key / "raw" / "transcripts.json"
+            if not transcripts.is_file():
+                continue
+            imported_at = manifest.get("imported_at", "")
+            if newest is None or imported_at > newest[0]:
+                newest = (imported_at, transcripts)
+        return load_json(newest[1]) if newest else None
 
     def _current_run_manifests(self, project_id: str) -> list[dict]:
         """Newest run per provider adapter — re-analysis supersedes older
@@ -603,12 +666,13 @@ class ProjectService:
             self.settings.runtime / project_id / "analysis" / "concepts.json", document
         )
         path = self.settings.runtime / project_id / "project.json"
-        stored = load_json(path)
-        stored["updated_at"] = utc_now()
-        stored["footage_summary"] = document["footage_summary"]
-        stored["concepts"] = document["concepts"]
-        stored["status"] = "concepts_ready"
-        write_json(path, stored)
+        with self._project_write(project_id):
+            stored = load_json(path)
+            stored["updated_at"] = utc_now()
+            stored["footage_summary"] = document["footage_summary"]
+            stored["concepts"] = document["concepts"]
+            stored["status"] = "concepts_ready"
+            write_json(path, stored)
         return document
 
     def compile_plan(
@@ -630,11 +694,7 @@ class ProjectService:
         selected = concept_id or (selection or {}).get("concept_id")
         if not selected:
             raise ProjectError("Select a concept before compiling the edit plan")
-        approved_ranges: dict[str, list[tuple[float, float]]] = {}
-        for item in self.approved_evidence(project_id):
-            approved_ranges.setdefault(item["asset_id"], []).append(
-                (item["start_seconds"], item["end_seconds"])
-            )
+        approved_ranges = self._approved_ranges(project_id)
         try:
             plan = compile_edit_plan(
                 project,
@@ -661,12 +721,13 @@ class ProjectService:
             {"assets": project["inventory"]["assets"]},
         )
         path = self.settings.runtime / project_id / "project.json"
-        stored = load_json(path)
-        stored["updated_at"] = utc_now()
-        stored["plan"] = plan
-        stored["selected_concept_id"] = selected
-        stored["status"] = "plan_ready"
-        write_json(path, stored)
+        with self._project_write(project_id):
+            stored = load_json(path)
+            stored["updated_at"] = utc_now()
+            stored["plan"] = plan
+            stored["selected_concept_id"] = selected
+            stored["status"] = "plan_ready"
+            write_json(path, stored)
         write_json(
             self.settings.runtime / project_id / "selection.json",
             {
@@ -706,6 +767,7 @@ class ProjectService:
                 instruction,
                 speech_words=self._speech_words(project_id),
                 footage_language=self._footage_language(project_id),
+                approved_ranges=self._approved_ranges(project_id),
             )
             validate_edit_plan(
                 new_plan,
@@ -735,22 +797,22 @@ class ProjectService:
         write_json(log_path, log)
 
         path = self.settings.runtime / project_id / "project.json"
-        stored = load_json(path)
-        stored["updated_at"] = utc_now()
-        stored["plan"] = new_plan
-        stored["status"] = "plan_ready"
-        write_json(path, stored)
+        with self._project_write(project_id):
+            stored = load_json(path)
+            stored["updated_at"] = utc_now()
+            stored["plan"] = new_plan
+            stored["status"] = "plan_ready"
+            write_json(path, stored)
         return {"plan": new_plan, "revision_note": note}
 
     def _footage_language(self, project_id: str) -> str | None:
         """Dominant detected speech language from the most recent ASR run,
         weighted by transcribed duration."""
-        runs_dir = self.settings.runtime / project_id / "analysis" / "runs"
-        candidates = sorted(runs_dir.glob("asr-live-*/raw/transcripts.json"))
-        if not candidates:
+        latest = self._latest_asr_transcripts(project_id)
+        if latest is None:
             return None
         weights: dict[str, float] = {}
-        for record in load_json(candidates[-1]).get("transcripts", []):
+        for record in latest.get("transcripts", []):
             language = (record.get("detection") or {}).get("language")
             if not language:
                 continue
@@ -767,44 +829,75 @@ class ProjectService:
         """Reconcile the inventory with the source folder: newly added files
         are probed and thumbnailed in; vanished files drop out. Existing
         asset ids and their analysis stay stable."""
-        stored = load_json(self.settings.runtime / project_id / "project.json")
-        source_dir = (self.settings.root / stored["source_directory"]).resolve()
-        on_disk = {
-            path.name: path
-            for path in sorted(source_dir.rglob("*"))
-            if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS
-        }
-        assets = stored["inventory"]["assets"]
-        kept = [asset for asset in assets if asset["filename"] in on_disk]
-        removed = [a["filename"] for a in assets if a["filename"] not in on_disk]
-        known = {asset["filename"] for asset in kept}
-        used_ids = {asset["asset_id"] for asset in kept}
-        thumbnails = self.settings.runtime / project_id / "thumbnails"
-        thumbnails.mkdir(parents=True, exist_ok=True)
-        added = []
-        for filename, path in on_disk.items():
-            if filename in known:
-                continue
-            asset_id = slugify(path.stem).replace("-", "_")
-            base_id, suffix = asset_id, 2
-            while asset_id in used_ids:
-                asset_id = f"{base_id}_{suffix}"
-                suffix += 1
-            used_ids.add(asset_id)
-            asset = self._probe_asset(asset_id, path)
-            if self._make_thumbnail(path, asset, thumbnails / f"{asset_id}.jpg"):
-                asset["thumbnail_available"] = True
-            kept.append(asset)
-            added.append(filename)
-        stored["inventory"]["assets"] = kept
-        stored["updated_at"] = utc_now()
-        if added:
-            stored["footage_summary"] = (
-                f"{len(kept)} media file(s); {len(added)} new since the last "
-                "analysis — re-analyze to include them in stories."
-            )
-        write_json(self.settings.runtime / project_id / "project.json", stored)
-        return {"added": added, "removed": removed, "total": len(kept)}
+        # Held across probing: a job finishing mid-sync would
+        # otherwise write a stale inventory back over the new one.
+        with self._project_write(project_id):
+            stored = load_json(self.settings.runtime / project_id / "project.json")
+            source_dir = (self.settings.root / stored["source_directory"]).resolve()
+            on_disk = {
+                path.name: path
+                for path in sorted(source_dir.rglob("*"))
+                if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS
+            }
+            assets = stored["inventory"]["assets"]
+            kept = [asset for asset in assets if asset["filename"] in on_disk]
+            removed = [a["filename"] for a in assets if a["filename"] not in on_disk]
+            known = {asset["filename"] for asset in kept}
+            # A filename is not an identity: a clip re-recorded or trimmed under
+            # the same name would keep the old evidence attached to new bytes.
+            # Size is the cheap tell; re-probing re-hashes and re-reads duration.
+            thumbs = self.settings.runtime / project_id / "thumbnails"
+            replaced = []
+            for index, asset in enumerate(kept):
+                path = on_disk[asset["filename"]]
+                if path.stat().st_size == asset.get("size_bytes"):
+                    continue
+                refreshed = self._probe_asset(asset["asset_id"], path)
+                thumbs.mkdir(parents=True, exist_ok=True)
+                if self._make_thumbnail(path, refreshed, thumbs / f"{asset['asset_id']}.jpg"):
+                    refreshed["thumbnail_available"] = True
+                refreshed["analysis_status"] = "technical_only"
+                kept[index] = refreshed
+                replaced.append(asset["filename"])
+            used_ids = {asset["asset_id"] for asset in kept}
+            thumbnails = self.settings.runtime / project_id / "thumbnails"
+            thumbnails.mkdir(parents=True, exist_ok=True)
+            added = []
+            for filename, path in on_disk.items():
+                if filename in known:
+                    continue
+                asset_id = slugify(path.stem).replace("-", "_")
+                base_id, suffix = asset_id, 2
+                while asset_id in used_ids:
+                    asset_id = f"{base_id}_{suffix}"
+                    suffix += 1
+                used_ids.add(asset_id)
+                asset = self._probe_asset(asset_id, path)
+                if self._make_thumbnail(path, asset, thumbnails / f"{asset_id}.jpg"):
+                    asset["thumbnail_available"] = True
+                kept.append(asset)
+                added.append(filename)
+            stored["inventory"]["assets"] = kept
+            stored["updated_at"] = utc_now()
+            if added or replaced:
+                changed = len(added) + len(replaced)
+                stored["footage_summary"] = (
+                    f"{len(kept)} media file(s); {changed} new or changed since the "
+                    "last analysis — re-analyze to include them in stories."
+                )
+            if replaced:
+                stored["analysis"]["warning"] = (
+                    f"{len(replaced)} clip(s) changed on disk after they were "
+                    "analyzed; their evidence describes the old footage. "
+                    "Re-analyze before compiling a cut."
+                )
+            write_json(self.settings.runtime / project_id / "project.json", stored)
+            return {
+                "added": added,
+                "removed": removed,
+                "replaced": replaced,
+                "total": len(kept),
+            }
 
     def remove_asset(
         self, project_id: str, asset_id: str, delete_file: bool = False
@@ -813,16 +906,17 @@ class ProjectService:
         kept on disk unless delete_file is explicitly requested. Evidence
         citing the clip becomes inert (grounding checks drop it)."""
         path = self.settings.runtime / project_id / "project.json"
-        stored = load_json(path)
-        assets = stored["inventory"]["assets"]
-        asset = next((a for a in assets if a["asset_id"] == asset_id), None)
-        if asset is None:
-            raise ProjectError(f"Unknown asset: {asset_id}")
-        stored["inventory"]["assets"] = [
-            a for a in assets if a["asset_id"] != asset_id
-        ]
-        stored["updated_at"] = utc_now()
-        write_json(path, stored)
+        with self._project_write(project_id):
+            stored = load_json(path)
+            assets = stored["inventory"]["assets"]
+            asset = next((a for a in assets if a["asset_id"] == asset_id), None)
+            if asset is None:
+                raise ProjectError(f"Unknown asset: {asset_id}")
+            stored["inventory"]["assets"] = [
+                a for a in assets if a["asset_id"] != asset_id
+            ]
+            stored["updated_at"] = utc_now()
+            write_json(path, stored)
         (self.settings.runtime / project_id / "thumbnails" / f"{asset_id}.jpg").unlink(
             missing_ok=True
         )
@@ -1073,12 +1167,11 @@ class ProjectService:
         position in the final video, verbatim in its original language."""
         plan_path, _, _ = self._plan_sources(project_id)
         plan = load_json(plan_path)
-        runs_dir = self.settings.runtime / project_id / "analysis" / "runs"
-        candidates = sorted(runs_dir.glob("asr-live-*/raw/transcripts.json"))
-        if not candidates:
+        latest = self._latest_asr_transcripts(project_id)
+        if latest is None:
             raise ProjectError("Run speech analysis before exporting captions")
         segments_by_asset: dict[str, list[dict]] = {}
-        for record in load_json(candidates[-1]).get("transcripts", []):
+        for record in latest.get("transcripts", []):
             segments_by_asset[record["asset_id"]] = record.get("segments", [])
 
         entries: list[tuple[float, float, str]] = []
@@ -1109,12 +1202,11 @@ class ProjectService:
     def _speech_words(self, project_id: str) -> dict[str, list[dict]]:
         """Word timings from the most recent ASR run, keyed by asset, for
         snapping cut boundaries to speech."""
-        runs_dir = self.settings.runtime / project_id / "analysis" / "runs"
-        candidates = sorted(runs_dir.glob("asr-live-*/raw/transcripts.json"))
-        if not candidates:
+        latest = self._latest_asr_transcripts(project_id)
+        if latest is None:
             return {}
         words: dict[str, list[dict]] = {}
-        for record in load_json(candidates[-1]).get("transcripts", []):
+        for record in latest.get("transcripts", []):
             asset_words = words.setdefault(record["asset_id"], [])
             for segment in record.get("segments", []):
                 for word in segment.get("words", []):

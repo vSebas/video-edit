@@ -14,26 +14,44 @@ class SemanticEvidenceError(RuntimeError):
     pass
 
 
+# Captions describe Spanish-language footage and the model may write either
+# language, so each hedge family lists its Spanish forms alongside the English.
 RISK_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "brand_or_product_claim",
-        re.compile(r"\b(chobani|new balance|nike|adidas|brand(?:ed)?)\b", re.I),
+        re.compile(
+            r"\b(chobani|new balance|nike|adidas|brand(?:ed)?|marca|logotipo|"
+            r"logo)\b",
+            re.I,
+        ),
     ),
     (
         "intent_or_emotion_inference",
         re.compile(
             r"\b(searching|curious|peaceful|confused|startled|calm|relaxed|"
-            r"appears? to|seem(?:s|ingly)?|likely|intended)\b",
+            r"appears? to|seem(?:s|ingly)?|likely|intended|"
+            r"parece(?:n|ría)?|aparenta|probablemente|quiz[áa]s?|tal vez|"
+            r"emocionad[oa]s?|content[oa]s?|nervios[oa]s?|tranquil[oa]s?|"
+            r"confundid[oa]s?|curios[oa]s?|feliz|felices|triste)\b",
             re.I,
         ),
     ),
     (
         "unverified_speech_claim",
-        re.compile(r"\b(speaks?|speaking|talks?|talking|says?|dialogue)\b", re.I),
+        re.compile(
+            r"\b(speaks?|speaking|talks?|talking|says?|dialogue|"
+            r"habla(?:n|ndo)?|dice(?:n)?|diciendo|conversa(?:n|ndo)?|"
+            r"comenta(?:n|ndo)?|di[áa]logo|narra(?:n|ndo)?)\b",
+            re.I,
+        ),
     ),
     (
         "identity_or_continuity_inference",
-        re.compile(r"\b(same person|same day|recording session|continuous action)\b", re.I),
+        re.compile(
+            r"\b(same person|same day|recording session|continuous action|"
+            r"la misma persona|el mismo d[íi]a|misma sesi[óo]n)\b",
+            re.I,
+        ),
     ),
 )
 

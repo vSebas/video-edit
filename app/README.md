@@ -59,5 +59,24 @@ deletes the file from the laptop folder (phone originals unaffected).
 Providers live in the ignored root `.env` (`DASHSCOPE_API_KEY`,
 `GEMINI_API_KEY`, optional `OPENAI_API_KEY`/`ANTHROPIC_API_KEY`,
 `TWELVELABS_API_KEY`, `RUNPOD_API_KEY`); rclone's config is mounted from
-the host. Set `VIDEO_EDITING_BIND=0.0.0.0` to reach the app from other
-devices. Model choices are evidence-based: see `bench/RESULTS.md`.
+the host. Model choices are evidence-based: see `bench/RESULTS.md`.
+
+## Reaching it from other devices
+
+`VIDEO_EDITING_BIND=0.0.0.0` opens the port beyond the laptop. Pair it with
+`VIDEO_EDITING_TOKEN=<secret>`: unset, the API has no authentication at all,
+and anyone who can route to the port can download footage, delete clips, and
+spend API credit. With it set, open `http://<host>:8787/?token=<secret>` once
+on the phone — the token is stored in a cookie afterwards — and send
+`X-Vlog-Token: <secret>` from iOS Shortcuts. `/api/health` stays open for
+container checks.
+
+## Grounding guarantees
+
+A cut compiles only when confirmed observations cover at least 60% of it
+(`MIN_SUPPORTED_FRACTION`, with half a second of edge slack for word
+snapping), and revisions pass the same gate rather than only checking the
+asset's bounds. Cut ranges land on the frame grid at both edges so the
+render and the NLE timeline cannot disagree by a frame. Only `media_type`
+video enters the video track — a cited voiceover or photo is dropped rather
+than compiled into it.

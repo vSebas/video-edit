@@ -158,3 +158,61 @@ XMEML was imported and verified in the real application:
   remove-with-file-deletion, still-image frames: all verified live against
   throwaway projects.
 - Fixture removal: 14 tests pass; workspace lists only real projects.
+
+## Dual-review hardening (2026-08-19)
+
+An external full-project review (Codex, gpt-5.6-sol at max reasoning) and an
+internal five-dimension review were cross-checked, then every claim was put
+to an adversarial verifier that tried to refute it against the code. Twelve
+were confirmed, two came back partial. Fixes landed with regression tests
+that fail against the pre-fix code (13 of 19 new tests fail when the fixes
+are stashed):
+
+- **Grounding gate.** `span_supported` tested only a cut's midpoint, so a
+  span could run arbitrarily far past its evidence; it now requires approved
+  ranges to cover ≥60% of the cut (0.5 s edge slack for word snapping).
+  `revise_plan` never applied the gate at all — a revision could introduce
+  wholly unobserved footage; it now takes `approved_ranges` like compilation.
+- **Frame alignment.** Only event duration was quantized; the word-snapped
+  source start stayed a float, so ffmpeg (raw seek) and the exporters
+  (round-to-frame) could disagree by one frame. Both edges are on the grid.
+- **Media type.** Nothing stopped a cited voiceover or photo from compiling
+  into the video track. Cut spans are now video-only.
+- **ASR run recency.** Captions, word snapping, and language detection each
+  picked their run with `sorted(glob("asr-live-*"))[-1]` — a lexicographic
+  sort of random UUIDs, so after re-analysis they used a stale run about half
+  the time. One helper now selects by manifest `imported_at`.
+- **Concurrency.** `project.json` read-modify-write pairs were unserialized
+  across job threads and request handlers (lost analysis flags), `write_json`
+  shared one predictable `.tmp` path per target (torn writes), and
+  `_corroborate_speech_claims` wrote `reviews.json` without the lock human
+  reviews take. All three are fixed; a widened-window threading test covers
+  the first.
+- **Media identity.** `sync_media` matched assets by filename and never
+  re-probed, so replacing a clip's bytes under the same name kept the old
+  evidence attached to new footage. Size changes now trigger a re-probe,
+  re-hash, and a stale-analysis warning.
+- **Spanish risk patterns.** The auto-approve blacklist was English-only on
+  Spanish-first footage: "parece emocionada", "habla con", "la misma persona"
+  and "marca" all sailed through the hedge filter. Each family now lists its
+  Spanish forms.
+- **UI.** `deleteProject` called `visibleProjects()`, removed during the
+  fixture cleanup — deleting a vlog threw every time after the server-side
+  delete had already succeeded.
+- **Access.** Optional `VIDEO_EDITING_TOKEN` gate (header, one-time query
+  parameter, or cookie) for use with `VIDEO_EDITING_BIND=0.0.0.0`. Unset
+  keeps today's open behavior for localhost use.
+
+37 tests pass.
+
+### Known and deliberately not changed
+
+- Concept sanitization still checks citations against asset bounds only, not
+  against the evidence set. Compilation's gate is the real backstop; the
+  cost is that a fabricated citation can reach the concept UI labelled as
+  grounded.
+- Jobs remain in-memory: a restart loses job status. Durable jobs and
+  content-addressed artifacts are the architectural fix both reviews
+  recommended and are not attempted here.
+- The workspace and the full-scope rclone Drive token are still mounted
+  read-write into the container.

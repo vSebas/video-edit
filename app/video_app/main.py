@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import re
+import secrets
 import shutil
 import uuid
 from pathlib import Path
@@ -91,6 +93,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     projects = ProjectService(current_settings)
     jobs = JobManager()
     application = FastAPI(title="Local Video Editing Workbench", version="0.1.0")
+
+    access_token = os.environ.get("VIDEO_EDITING_TOKEN", "").strip()
+
+    @application.middleware("http")
+    async def require_token(request: Request, call_next):
+        """Opt-in shared-secret gate for non-local access.
+
+        Unset (the default) leaves the app open, which is fine bound to
+        localhost. Set it before binding to 0.0.0.0: everything here —
+        footage, deletion, paid model calls — is otherwise reachable by
+        anyone who can route to the port.
+        """
+        if not access_token or request.url.path == "/api/health":
+            return await call_next(request)
+        supplied = (
+            request.headers.get("x-vlog-token")
+            or request.query_params.get("token")
+            or request.cookies.get("vlog_token")
+            or ""
+        )
+        if not secrets.compare_digest(supplied, access_token):
+            return Response(status_code=401, content="Unauthorized")
+        response = await call_next(request)
+        if request.query_params.get("token"):
+            # Let a phone open one bookmarked ?token=… URL and keep browsing.
+            response.set_cookie(
+                "vlog_token", access_token, httponly=True, samesite="lax", max_age=31536000
+            )
+        return response
 
     @application.middleware("http")
     async def track_upload_progress(request: Request, call_next):

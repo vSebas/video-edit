@@ -701,7 +701,7 @@ async function deleteProject() {
     await api(`/api/projects/${project.project_id}`, { method: 'DELETE' });
     notice('Vlog deleted. Your clips are untouched.');
     await refreshProjects();
-    const next = visibleProjects()[0] || state.projects[0];
+    const next = state.projects[0];
     if (next) await loadProject(next.project_id);
     else $('#project-view').innerHTML = '<div class="empty-state">No vlogs yet — add your clips.</div>';
   } catch (error) {

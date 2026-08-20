@@ -23,6 +23,9 @@ services:
       DASHSCOPE_API_KEY: "${DASHSCOPE_API_KEY:-}"
       DASHSCOPE_BASE_URL: "${DASHSCOPE_BASE_URL:-}"
       GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+      # Set this before exposing the port beyond localhost: without it the
+      # API is open to anyone who can reach it (footage, deletion, paid calls).
+      VIDEO_EDITING_TOKEN: "${VIDEO_EDITING_TOKEN:-}"
     volumes:
       - ./:${PWD}
       # Read-write so rclone can refresh its OAuth token.
@@ -30,6 +33,7 @@ services:
     ports:
       # Set VIDEO_EDITING_BIND=0.0.0.0 to reach the app from your phone on
       # the same WiFi (http://<laptop-ip>:8787). Default is laptop-only.
+      # Pair that with VIDEO_EDITING_TOKEN — campus WiFi is not private.
       - "${VIDEO_EDITING_BIND:-127.0.0.1}:${VIDEO_EDITING_APP_PORT:-8787}:8787"
     command: ["uvicorn", "video_app.main:app", "--host", "0.0.0.0", "--port", "8787"]
 

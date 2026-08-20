@@ -11,6 +11,10 @@ from .semantic import utc_now
 
 PROMPT_VERSION = "planning-v1"
 MIN_EVENT_SECONDS = 0.4
+# Grounding gate: share of a cut that approved evidence must cover, and the
+# slack allowed at each edge for word snapping and moment padding.
+MIN_SUPPORTED_FRACTION = 0.6
+SUPPORT_EDGE_TOLERANCE = 0.5
 DEFAULT_WIDTH = 1080
 DEFAULT_HEIGHT = 1920
 DEFAULT_FPS = 30
@@ -265,6 +269,8 @@ def _sanitize_concepts(document: dict, project: dict) -> None:
                 asset = assets.get(item.get("asset_id")) if isinstance(item, dict) else None
                 if asset is None:
                     continue
+                if asset.get("media_type") != "video":
+                    continue
                 duration = float(asset.get("duration_seconds") or 0.0)
                 try:
                     start = max(0.0, float(item["start_seconds"]))
@@ -321,6 +327,10 @@ def sanitize_spans(project: dict, items: list) -> list[dict]:
     for item in items:
         asset = assets.get(item.get("asset_id")) if isinstance(item, dict) else None
         if asset is None:
+            continue
+        # Only footage belongs on the video track. A cited voiceover or photo
+        # would compile into it and break the render or the timeline export.
+        if asset.get("media_type") != "video":
             continue
         duration = float(asset.get("duration_seconds") or 0.0)
         try:
@@ -434,14 +444,18 @@ def build_plan(
     for span in spans:
         # Quantize to the frame grid so per-event frame rounding cannot
         # accumulate drift between the plan, render, and OTIO/XMEML exports.
-        raw_duration = span["source_end_seconds"] - span["source_start_seconds"]
+        # The source start lands on the grid too: exporters round it to a
+        # frame while ffmpeg seeks to the raw float, so an unquantized start
+        # makes the render and the NLE timeline disagree by one frame.
+        source_start = round(max(0, round(span["source_start_seconds"] * fps)) / fps, 6)
+        raw_duration = span["source_end_seconds"] - source_start
         duration = max(1, round(raw_duration * fps)) / fps
         duration = round(duration, 6)
         index = len(video_events) + 1
         base = {
             "asset_id": span["asset_id"],
-            "source_start_seconds": span["source_start_seconds"],
-            "source_end_seconds": round(span["source_start_seconds"] + duration, 6),
+            "source_start_seconds": source_start,
+            "source_end_seconds": round(source_start + duration, 6),
             "timeline_start_seconds": round(timeline, 6),
             "duration_seconds": duration,
             "playback_rate": 1.0,
@@ -514,11 +528,29 @@ def build_plan(
 
 
 def span_supported(span: dict, approved_ranges: dict[str, list[tuple[float, float]]]) -> bool:
-    midpoint = (span["source_start_seconds"] + span["source_end_seconds"]) / 2
-    return any(
-        start <= midpoint <= end
-        for start, end in approved_ranges.get(span["asset_id"], [])
-    )
+    """A cut is grounded when most of what it shows was actually observed.
+
+    Testing the midpoint alone let a span run arbitrarily far past its
+    evidence on both sides; requiring strict containment would reject cuts
+    whose edges word snapping legitimately nudged outside the observation,
+    so the test is how much of the span approved ranges cover.
+    """
+    start = span["source_start_seconds"]
+    end = span["source_end_seconds"]
+    length = end - start
+    if length <= 0:
+        return False
+    covered = 0.0
+    cursor = start
+    for range_start, range_end in sorted(approved_ranges.get(span["asset_id"], [])):
+        low = max(cursor, range_start - SUPPORT_EDGE_TOLERANCE)
+        high = min(end, range_end + SUPPORT_EDGE_TOLERANCE)
+        if high > low:
+            covered += high - low
+            cursor = high
+        if cursor >= end:
+            break
+    return covered / length >= MIN_SUPPORTED_FRACTION
 
 
 def compile_edit_plan(
@@ -601,6 +633,7 @@ def revise_plan(
     instruction: str,
     speech_words: dict[str, list[dict]] | None = None,
     footage_language: str | None = None,
+    approved_ranges: dict[str, list[tuple[float, float]]] | None = None,
 ) -> tuple[dict, str]:
     """Revise the current plan per a natural-language instruction, keeping
     media analysis untouched. Returns (new plan, revision note)."""
@@ -669,6 +702,16 @@ events. Every range must stay at least {MIN_EVENT_SECONDS}s long."""
         raise PlanningError(
             "The revision produced no valid cuts; the plan was left unchanged"
         )
+    if approved_ranges is not None:
+        # The same grounding gate compilation applies: a revision may not
+        # introduce footage the evidence never covered.
+        supported = [span for span in spans if span_supported(span, approved_ranges)]
+        if not supported:
+            raise PlanningError(
+                "The revision moved every cut outside the confirmed evidence; "
+                "the plan was left unchanged"
+            )
+        spans = supported
     new_plan = build_plan(
         project,
         spans,

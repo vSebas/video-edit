@@ -1,0 +1,411 @@
+"""Regressions for the grounding gate, media identity, and ASR run recency.
+
+Each test here pins a defect found in the 2026-08-19 dual review (Codex
+full-project pass + the five-dimension internal pass).
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from video_app.planning import build_plan, sanitize_spans, span_supported
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def project_with(assets: list[dict]) -> dict:
+    return {"project_id": "unit-test", "inventory": {"assets": assets}}
+
+
+def video_asset(asset_id: str = "clip_a", duration: float = 20.0) -> dict:
+    return {
+        "asset_id": asset_id,
+        "filename": f"{asset_id}.mp4",
+        "media_type": "video",
+        "duration_seconds": duration,
+        "video": {"width": 1080, "height": 1920},
+        "audio": {"sample_rate": 48000, "channels": 2},
+    }
+
+
+def span(asset_id: str, start: float, end: float) -> dict:
+    return {
+        "label": "beat",
+        "asset_id": asset_id,
+        "source_start_seconds": start,
+        "source_end_seconds": end,
+        "intent": "x",
+        "observed_content": "y",
+        "confidence": 0.9,
+    }
+
+
+class TestSpanSupport:
+    """span_supported used to pass any cut whose midpoint grazed evidence."""
+
+    def test_cut_covered_by_evidence_is_supported(self) -> None:
+        assert span_supported(span("clip_a", 4.0, 8.0), {"clip_a": [(3.5, 9.0)]})
+
+    def test_cut_running_far_past_its_evidence_is_rejected(self) -> None:
+        # One second of approved observation, a ten-second cut around it.
+        assert not span_supported(span("clip_a", 0.0, 10.0), {"clip_a": [(4.5, 5.5)]})
+
+    def test_word_snapped_edges_just_outside_evidence_still_pass(self) -> None:
+        # Snapping legitimately nudges a boundary past the observation.
+        assert span_supported(span("clip_a", 3.88, 8.12), {"clip_a": [(4.0, 8.0)]})
+
+    def test_evidence_on_another_asset_does_not_support(self) -> None:
+        assert not span_supported(span("clip_b", 4.0, 8.0), {"clip_a": [(0.0, 20.0)]})
+
+    def test_adjacent_ranges_combine_without_double_counting(self) -> None:
+        assert span_supported(span("clip_a", 0.0, 8.0), {"clip_a": [(0.0, 4.0), (4.0, 8.0)]})
+
+
+class TestSanitizeSpans:
+    """Only footage belongs on the video track."""
+
+    def test_audio_only_asset_never_reaches_the_video_track(self) -> None:
+        project = project_with(
+            [
+                video_asset(),
+                {
+                    "asset_id": "voice_over",
+                    "filename": "voice_over.m4a",
+                    "media_type": "audio",
+                    "duration_seconds": 30.0,
+                    "video": None,
+                    "audio": {"sample_rate": 48000, "channels": 1},
+                },
+            ]
+        )
+        spans = sanitize_spans(
+            project,
+            [
+                {
+                    "asset_id": "voice_over",
+                    "source_start_seconds": 0.0,
+                    "source_end_seconds": 5.0,
+                },
+                {
+                    "asset_id": "clip_a",
+                    "source_start_seconds": 1.0,
+                    "source_end_seconds": 4.0,
+                },
+            ],
+        )
+        assert [item["asset_id"] for item in spans] == ["clip_a"]
+
+    def test_still_image_is_dropped_rather_than_compiled_with_no_duration(self) -> None:
+        project = project_with(
+            [
+                {
+                    "asset_id": "photo",
+                    "filename": "photo.jpg",
+                    "media_type": "image",
+                    "duration_seconds": 0.0,
+                    "video": {"width": 4032, "height": 3024},
+                    "audio": None,
+                }
+            ]
+        )
+        spans = sanitize_spans(
+            project,
+            [{"asset_id": "photo", "source_start_seconds": 0.0, "source_end_seconds": 3.0}],
+        )
+        assert spans == []
+
+
+class TestFrameAlignment:
+    """Render seeks to the float; exporters round to a frame. Both must agree."""
+
+    def test_source_start_lands_on_the_frame_grid(self) -> None:
+        project = project_with([video_asset()])
+        plan = build_plan(
+            project,
+            [span("clip_a", 3.44, 6.97)],
+            concept_id="c1",
+            benchmark_id="unit-test",
+            hook_text="Title",
+            fps=30,
+        )
+        event = plan["tracks"][0]["events"][0]
+        for key in ("source_start_seconds", "source_end_seconds", "duration_seconds"):
+            frames = event[key] * 30
+            assert frames == pytest.approx(round(frames), abs=1e-4), key
+
+    def test_linked_audio_shares_the_quantized_range(self) -> None:
+        project = project_with([video_asset()])
+        plan = build_plan(
+            project,
+            [span("clip_a", 3.44, 6.97)],
+            concept_id="c1",
+            benchmark_id="unit-test",
+            hook_text="Title",
+            fps=30,
+        )
+        video = plan["tracks"][0]["events"][0]
+        audio = plan["tracks"][1]["events"][0]
+        assert video["source_start_seconds"] == audio["source_start_seconds"]
+        assert video["source_end_seconds"] == audio["source_end_seconds"]
+
+
+class TestLatestAsrRun:
+    """Run ids are random hex; recency comes from the manifest, not the name."""
+
+    def _service(self, tmp_path: Path):
+        from video_app.config import Settings
+        from video_app.projects import ProjectService
+
+        return ProjectService(
+            Settings(root=PROJECT_ROOT, runtime=tmp_path / "runtime",
+                     poc_root=PROJECT_ROOT / "poc-morning-routine")
+        )
+
+    def _write_run(self, runtime: Path, project_id: str, run_key: str,
+                   imported_at: str, marker: str) -> None:
+        run_dir = runtime / project_id / "analysis" / "runs" / run_key
+        (run_dir / "raw").mkdir(parents=True, exist_ok=True)
+        (run_dir / "raw" / "transcripts.json").write_text(
+            json.dumps({"transcripts": [{"asset_id": marker, "segments": []}]}),
+            encoding="utf-8",
+        )
+        (run_dir / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "run_key": run_key,
+                    "imported_at": imported_at,
+                    "provider": {"adapter": "faster-whisper"},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def test_newest_run_wins_even_when_its_id_sorts_first(self, tmp_path: Path) -> None:
+        service = self._service(tmp_path)
+        runtime = tmp_path / "runtime"
+        # "f3a9" sorts after "1b2c", but the 1b2c run was imported later.
+        self._write_run(runtime, "p", "asr-live-f3a9ff", "2026-08-01T10:00:00Z", "old")
+        self._write_run(runtime, "p", "asr-live-1b2c00", "2026-08-19T10:00:00Z", "new")
+        latest = service._latest_asr_transcripts("p")
+        assert latest is not None
+        assert latest["transcripts"][0]["asset_id"] == "new"
+
+    def test_no_runs_returns_none(self, tmp_path: Path) -> None:
+        service = self._service(tmp_path)
+        (tmp_path / "runtime" / "p" / "analysis" / "runs").mkdir(parents=True)
+        assert service._latest_asr_transcripts("p") is None
+
+
+class TestSyncMediaIdentity:
+    """A filename is not an identity: changed bytes must invalidate evidence."""
+
+    def test_replaced_clip_is_reprobed_and_flagged(self, tmp_path: Path) -> None:
+        import subprocess as sp
+
+        from video_app.config import Settings
+        from video_app.projects import ProjectService
+
+        source = PROJECT_ROOT / "runtime" / "test-fixtures" / f"sync-{tmp_path.name}"
+        source.mkdir(parents=True, exist_ok=True)
+        clip = source / "clip.mp4"
+
+        def encode(seconds: int) -> None:
+            sp.run(
+                ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                 "-f", "lavfi", "-i", f"color=c=0x223344:s=320x240:d={seconds}:r=30",
+                 "-c:v", "libx264", str(clip)],
+                check=True,
+            )
+
+        try:
+            encode(1)
+            settings = Settings(root=PROJECT_ROOT, runtime=tmp_path / "runtime",
+                                poc_root=PROJECT_ROOT / "poc-morning-routine")
+            service = ProjectService(settings)
+            project = service.create_project(
+                "Sync me", str(source.relative_to(PROJECT_ROOT)), ""
+            )
+            project_id = project["project_id"]
+            before = project["inventory"]["assets"][0]
+
+            encode(4)  # same filename, different bytes and duration
+            result = service.sync_media(project_id)
+
+            assert result["replaced"] == ["clip.mp4"]
+            after = service.get_project(project_id)["inventory"]["assets"][0]
+            assert after["asset_id"] == before["asset_id"]
+            assert after["sha256"] != before["sha256"]
+            assert after["duration_seconds"] > before["duration_seconds"]
+            warning = service.get_project(project_id)["analysis"]["warning"]
+            assert "changed on disk" in warning
+        finally:
+            if clip.exists():
+                clip.unlink()
+            if source.exists():
+                source.rmdir()
+
+    def test_untouched_clip_is_not_reprobed(self, tmp_path: Path) -> None:
+        import subprocess as sp
+
+        from video_app.config import Settings
+        from video_app.projects import ProjectService
+
+        source = PROJECT_ROOT / "runtime" / "test-fixtures" / f"stable-{tmp_path.name}"
+        source.mkdir(parents=True, exist_ok=True)
+        clip = source / "clip.mp4"
+        try:
+            sp.run(
+                ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                 "-f", "lavfi", "-i", "color=c=0x112233:s=320x240:d=1:r=30",
+                 "-c:v", "libx264", str(clip)],
+                check=True,
+            )
+            service = ProjectService(
+                Settings(root=PROJECT_ROOT, runtime=tmp_path / "runtime",
+                         poc_root=PROJECT_ROOT / "poc-morning-routine")
+            )
+            project = service.create_project(
+                "Stable", str(source.relative_to(PROJECT_ROOT)), ""
+            )
+            result = service.sync_media(project["project_id"])
+            assert result == {"added": [], "removed": [], "replaced": [], "total": 1}
+        finally:
+            if clip.exists():
+                clip.unlink()
+            if source.exists():
+                source.rmdir()
+
+
+class TestSpanishRiskPatterns:
+    """Captions describe Spanish footage; hedges must flag in both languages."""
+
+    @pytest.mark.parametrize(
+        "caption,expected",
+        [
+            ("La persona parece emocionada", "intent_or_emotion_inference"),
+            ("El sujeto habla con un amigo", "unverified_speech_claim"),
+            ("Se ve la marca en la botella", "brand_or_product_claim"),
+            ("Es la misma persona del clip anterior", "identity_or_continuity_inference"),
+        ],
+    )
+    def test_spanish_hedges_are_flagged(self, caption: str, expected: str) -> None:
+        from video_app.visual import risk_flags_for
+
+        assert expected in risk_flags_for(caption)
+
+    def test_plain_spanish_description_stays_clean(self) -> None:
+        from video_app.visual import risk_flags_for
+
+        assert risk_flags_for("Una persona camina por el pasillo con una mochila") == []
+
+
+class TestProjectWriteSerialization:
+    """Job threads and request handlers mutate one project.json."""
+
+    def test_concurrent_progress_marks_do_not_lose_each_other(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import threading
+        import time
+
+        from video_app import projects as projects_module
+        from video_app.config import Settings
+        from video_app.projects import ProjectService, write_json
+
+        runtime = tmp_path / "runtime"
+        (runtime / "p").mkdir(parents=True)
+        (runtime / "p" / "project.json").write_text(
+            json.dumps(
+                {
+                    "project_id": "p",
+                    "analysis": {"visual": "unavailable", "speech": "unavailable"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        service = ProjectService(
+            Settings(root=PROJECT_ROOT, runtime=runtime,
+                     poc_root=PROJECT_ROOT / "poc-morning-routine")
+        )
+        monkeypatch.setattr(service, "_semantic_run_manifests", lambda _id: [])
+
+        # Widen the read-modify-write window so an unserialized pair would
+        # reliably clobber; the per-project lock must hold the second thread.
+        def slow_write(path, value):
+            time.sleep(0.05)
+            write_json(path, value)
+
+        monkeypatch.setattr(projects_module, "write_json", slow_write)
+
+        threads = [
+            threading.Thread(target=service._mark_semantic_progress, args=("p", kind))
+            for kind in ("visual", "speech")
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        analysis = json.loads(
+            (runtime / "p" / "project.json").read_text(encoding="utf-8")
+        )["analysis"]
+        assert analysis["visual"] == "completed"
+        assert analysis["speech"] == "completed"
+
+
+class TestOptionalTokenGate:
+    """VIDEO_EDITING_TOKEN guards the API when it is bound beyond localhost."""
+
+    def _client(self, tmp_path: Path):
+        from fastapi.testclient import TestClient
+        from video_app.config import Settings
+        from video_app.main import create_app
+
+        return TestClient(
+            create_app(
+                Settings(root=PROJECT_ROOT, runtime=tmp_path / "runtime",
+                         poc_root=PROJECT_ROOT / "poc-morning-routine")
+            )
+        )
+
+    def test_unset_token_leaves_the_app_open(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("VIDEO_EDITING_TOKEN", raising=False)
+        with self._client(tmp_path) as client:
+            assert client.get("/api/projects").status_code == 200
+
+    def test_set_token_rejects_unauthenticated_calls(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("VIDEO_EDITING_TOKEN", "s3cret")
+        with self._client(tmp_path) as client:
+            assert client.get("/api/projects").status_code == 401
+            assert client.delete("/api/projects/anything").status_code == 401
+            # Health stays open so container checks keep working.
+            assert client.get("/api/health").status_code == 200
+
+    def test_correct_token_passes_by_header_or_query(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("VIDEO_EDITING_TOKEN", "s3cret")
+        with self._client(tmp_path) as client:
+            assert client.get(
+                "/api/projects", headers={"x-vlog-token": "s3cret"}
+            ).status_code == 200
+            seeded = client.get("/api/projects", params={"token": "s3cret"})
+            assert seeded.status_code == 200
+            # The seeded cookie carries the session afterwards.
+            assert client.get("/api/projects").status_code == 200
+
+    def test_wrong_token_is_rejected(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("VIDEO_EDITING_TOKEN", "s3cret")
+        with self._client(tmp_path) as client:
+            assert client.get(
+                "/api/projects", headers={"x-vlog-token": "guess"}
+            ).status_code == 401
