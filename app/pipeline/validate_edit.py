@@ -13,9 +13,8 @@ from pathlib import Path
 import jsonschema
 
 
-POC_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_PLAN = POC_ROOT / "artifacts/edit-plan.json"
-DEFAULT_REPORT = POC_ROOT / "artifacts/reference-edit/validation-report.json"
+SCHEMA_DIR = Path(__file__).resolve().parent.parent / "schemas"
+FRAME_TOLERANCE = 0.01  # fraction of a frame
 
 
 def load_json(path: Path):
@@ -56,16 +55,22 @@ def probe(path: Path):
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--plan", type=Path, default=DEFAULT_PLAN)
+    parser.add_argument("--plan", type=Path, required=True)
+    parser.add_argument("--inventory", type=Path, required=True)
+    parser.add_argument(
+        "--media-root", type=Path, required=True,
+        help="Directory that asset source_path values are relative to.",
+    )
     parser.add_argument("--render", type=Path)
-    parser.add_argument("--report", type=Path, default=DEFAULT_REPORT)
+    parser.add_argument("--report", type=Path, required=True)
     args = parser.parse_args()
 
     plan_path = args.plan.resolve()
     plan = load_json(plan_path)
-    schema = load_json(POC_ROOT / "schemas/edit-plan.schema.json")
-    report_schema = load_json(POC_ROOT / "schemas/validation-report.schema.json")
-    inventory = load_json(POC_ROOT / "artifacts/media-inventory.json")
+    schema = load_json(SCHEMA_DIR / "edit-plan.schema.json")
+    report_schema = load_json(SCHEMA_DIR / "validation-report.schema.json")
+    inventory = load_json(args.inventory.resolve())
+    media_root = args.media_root.resolve()
     assets = {asset["asset_id"]: asset for asset in inventory["assets"]}
     errors = []
     warnings = []
@@ -106,7 +111,7 @@ def main() -> None:
             finding(errors, "UNKNOWN_ASSET", "Asset is absent from inventory", event["event_id"])
             range_error_count += 1
             continue
-        source_path = (POC_ROOT / asset["source_path"]).resolve()
+        source_path = (media_root / asset["source_path"]).resolve()
         start = event["source_start_seconds"]
         end = event["source_end_seconds"]
         if not source_path.exists() or not 0 <= start < end <= asset["duration_seconds"] + 1e-6:
@@ -119,22 +124,34 @@ def main() -> None:
         ranges[event["asset_id"]].append((start, end))
         selected_seconds += end - start
         for value in (start, end, event["timeline_start_seconds"], event["duration_seconds"]):
-            if abs(value * fps - round(value * fps)) > 1e-6:
+            # Plans store seconds rounded to six decimals, so an exactly
+            # quantized 1/30 s reads as 0.033333 and lands 1e-5 off an
+            # integer frame. Anything under a hundredth of a frame is that
+            # rounding, not misalignment.
+            if abs(value * fps - round(value * fps)) > FRAME_TOLERANCE:
                 finding(errors, "FRAME_ALIGNMENT", f"{value}s is not aligned to {fps} fps", event["event_id"])
                 frame_error_count += 1
                 break
-        rotation = int(round((event.get("reframe") or {}).get("rotation_degrees", 0))) % 180
-        width = asset["video"]["width"]
-        height = asset["video"]["height"]
-        if rotation == 90:
-            width, height = height, width
-        if (width, height) != (plan["project"]["width"], plan["project"]["height"]):
-            finding(errors, "GEOMETRY", "Reframed source does not resolve to project dimensions", event["event_id"])
-            output_geometry_error_count += 1
+        reframe = event.get("reframe") or {}
+        # "fit" scales any source into the project frame, so only modes that
+        # pass the source through unscaled require matching dimensions.
+        if reframe.get("mode") not in {"fit", "fill", "crop"}:
+            rotation = int(round(reframe.get("rotation_degrees", 0))) % 180
+            width = asset["video"]["width"]
+            height = asset["video"]["height"]
+            if rotation == 90:
+                width, height = height, width
+            if (width, height) != (plan["project"]["width"], plan["project"]["height"]):
+                finding(errors, "GEOMETRY", "Reframed source does not resolve to project dimensions", event["event_id"])
+                output_geometry_error_count += 1
 
     check("source_ranges", "pass" if not range_error_count else "fail", f"Checked {len(video_events)} source trims against the inventory")
     check("frame_alignment", "pass" if not frame_error_count else "fail", f"All trims and edit points are aligned to {fps} fps" if not frame_error_count else f"Found {frame_error_count} non-frame-aligned event(s)")
-    check("vertical_geometry", "pass" if not output_geometry_error_count else "fail", "All video events resolve to 1080x1920 after planned rotation")
+    check(
+        "output_geometry",
+        "pass" if not output_geometry_error_count else "fail",
+        f"All video events resolve to {plan['project']['width']}x{plan['project']['height']}",
+    )
 
     timeline_error_count = 0
     cursor = 0.0
@@ -161,23 +178,29 @@ def main() -> None:
         finding(errors, "AV_SYNC", "Video and audio event counts differ")
     check("linked_audio", "pass" if not av_error_count else "fail", "Audio trims are linked one-to-one with video trims")
 
-    title_cursor = 0.0
+    # Titles are an editorial choice — a single hook or a full band are both
+    # valid. Only their placement is an invariant.
     title_error_count = 0
     for event in title_events:
-        if abs(event["timeline_start_seconds"] - title_cursor) > 1e-6 or not event.get("text"):
+        if not event.get("text"):
             title_error_count += 1
-            finding(errors, "TITLE_COVERAGE", "Title beats must be contiguous and non-empty", event["event_id"])
-        title_cursor = event["timeline_start_seconds"] + event["duration_seconds"]
-    if abs(title_cursor - duration) > 1e-6:
-        title_error_count += 1
-        finding(errors, "TITLE_COVERAGE", "Title track does not cover the project duration")
-    check("title_structure", "pass" if not title_error_count else "fail", "Six title beats cover the complete story arc")
+            finding(errors, "TITLE_TEXT", "Title beat has no text", event["event_id"])
+        start = event["timeline_start_seconds"]
+        if start < -1e-6 or start + event["duration_seconds"] > duration + 1e-6:
+            title_error_count += 1
+            finding(errors, "TITLE_BOUNDS", "Title beat falls outside the timeline", event["event_id"])
+    check(
+        "title_structure",
+        "pass" if not title_error_count else "fail",
+        f"{len(title_events)} title beat(s) carry text and sit inside the timeline",
+    )
 
     unique_seconds = sum(merged_duration(asset_ranges) for asset_ranges in ranges.values())
     repeated_seconds = max(0.0, selected_seconds - unique_seconds)
     if repeated_seconds > 1e-6:
-        finding(errors, "SOURCE_REPETITION", f"{repeated_seconds:.3f}s of source imagery is reused")
-        check("source_repetition", "fail", "Source ranges overlap")
+        # Reusing a moment is a valid cut, so this is reported, not failed.
+        finding(warnings, "SOURCE_REPETITION", f"{repeated_seconds:.3f}s of source imagery is reused")
+        check("source_repetition", "pass", f"{repeated_seconds:.3f}s of source imagery is reused")
     else:
         check("source_repetition", "pass", "No source frames are reused")
 

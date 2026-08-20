@@ -12,14 +12,12 @@ from video_app.main import create_app
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-POC_ROOT = PROJECT_ROOT / "poc-morning-routine"
 
 
 def client(tmp_path: Path) -> TestClient:
     settings = Settings(
         root=PROJECT_ROOT,
         runtime=tmp_path / "runtime",
-        poc_root=POC_ROOT,
     )
     return TestClient(create_app(settings))
 

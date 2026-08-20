@@ -19,32 +19,28 @@ Build once:
 
 ```bash
 cd /home/saveas/Documents/video-editing
-docker compose build poc
+docker compose build app
 ```
 
-Run validations:
+Validate a compiled plan and its render independently of the app:
 
 ```bash
-docker compose run --rm poc scripts/validate_artifacts.py
-docker compose run --rm poc scripts/validate_edit.py \
-  --render artifacts/reference-edit/morning-routine-review.mp4
+docker compose run --rm app python pipeline/validate_edit.py \
+  --plan   ../runtime/projects/<id>/plan/edit-plan.json \
+  --inventory ../runtime/projects/<id>/plan/media-inventory.json \
+  --media-root .. \
+  --render ../runtime/projects/<id>/outputs/review.mp4 \
+  --report ../runtime/projects/<id>/outputs/validation-report.json
 ```
 
-Rebuild the render and editable timelines:
+The app itself invokes `pipeline/render_edit.py` and
+`pipeline/export_timelines.py` as subprocesses; both take explicit
+`--plan`, `--inventory`, and `--media-root` arguments.
 
-```bash
-docker compose run --rm poc scripts/render_reference_edit.py
-docker compose run --rm poc scripts/export_timelines.py
-docker compose run --rm poc scripts/export_opentake_project.py
-```
-
-Verified on 2026-07-17: the image built successfully, a fresh
-`morning-routine-review-docker.mp4` rendered inside the container, all artifact
-and technical render checks passed, and OTIO/XMEML round trips passed. The
-container check also exposed and fixed Debian font-path and FFmpeg 5 audio-layout
-portability differences.
-
-The whole `/home/saveas/Documents/video-editing` directory is bind-mounted at `/workspace/video-editing`, so generated files remain visible on the host and source media paths resolve consistently. The container runs as UID/GID 1000 by default; override `LOCAL_UID` and `LOCAL_GID` if needed.
+The whole `/home/saveas/Documents/video-editing` directory is bind-mounted at its
+host path, so generated files remain visible on the host and source media paths
+resolve consistently for DaVinci Resolve. The container runs as UID/GID 1000 by
+default; override `LOCAL_UID` and `LOCAL_GID` if needed.
 
 ## FireRed-OpenStoryline
 

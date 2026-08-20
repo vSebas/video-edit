@@ -17,7 +17,6 @@ services:
       PYTHONUNBUFFERED: "1"
       VIDEO_EDITING_ROOT: ${PWD}
       VIDEO_EDITING_RUNTIME: ${PWD}/runtime/projects
-      VIDEO_EDITING_POC_ROOT: ${PWD}/poc-morning-routine
       HF_HOME: ${PWD}/runtime/model-cache
       RCLONE_CONFIG: /rclone/rclone.conf
       DASHSCOPE_API_KEY: "${DASHSCOPE_API_KEY:-}"
@@ -36,19 +35,4 @@ services:
       # Pair that with VIDEO_EDITING_TOKEN — campus WiFi is not private.
       - "${VIDEO_EDITING_BIND:-127.0.0.1}:${VIDEO_EDITING_APP_PORT:-8787}:8787"
     command: ["uvicorn", "video_app.main:app", "--host", "0.0.0.0", "--port", "8787"]
-
-  poc:
-    image: video-editing-poc:local
-    build:
-      context: ./poc-morning-routine
-      dockerfile: Dockerfile
-    init: true
-    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
-    working_dir: /workspace/video-editing/poc-morning-routine
-    environment:
-      HOME: /tmp
-      PYTHONUNBUFFERED: "1"
-    volumes:
-      - ./:/workspace/video-editing
-    command: ["scripts/validate_artifacts.py"]
 

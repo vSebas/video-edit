@@ -11,10 +11,10 @@ ordered implementation plan.
 ## Code we own
 
 - `app/` — local project API and browser workflow for footage indexing, concept review, rendering, and editable exports
-- `poc-morning-routine/scripts/` — indexing, validation, deterministic rendering, OTIO/XMEML export, and native OpenTake-project generation
-- `poc-morning-routine/schemas/` — versioned media-analysis, concept, edit-plan, and validation schemas
-- `poc-morning-routine/semantic/` — reviewed semantic observations
-- `compose.yaml` and `poc-morning-routine/Dockerfile` — reproducible container execution
+- `app/pipeline/` — deterministic rendering, OTIO/XMEML export, and independent edit validation
+- `app/schemas/` — versioned media-analysis, concept, edit-plan, and validation schemas
+- `bench/` — model bake-offs and their recorded results
+- `compose.yaml` and `app/Dockerfile` — reproducible container execution
 
 ## Third-party source
 
@@ -33,14 +33,14 @@ Their fresh source checkouts are `repos/Crayotter/` and `repos/FireRed-OpenStory
 
 ## Main result
 
-Start with `poc-morning-routine/IMPLEMENTATION_RESULTS.md`. The original review
-video is `poc-morning-routine/artifacts/reference-edit/morning-routine-review.mp4`;
-the independently container-rendered copy is
-`poc-morning-routine/artifacts/reference-edit/morning-routine-review-docker.mp4`.
+The working system is `app/` — see `app/README.md` for the daily loop and
+`app/VALIDATION.md` for what has been verified live. The July morning-routine
+proof of concept that preceded it was removed on 2026-08-19; its results
+survive in git history and in `STATUS_AND_ROADMAP.md`.
 
 ## Containers
 
-See `CONTAINERS.md`. The deterministic POC runs in Docker. OpenStoryline has an optional Compose profile. OpenTake remains a native host build because its Tauri desktop/GPU path does not benefit from being hidden inside a container.
+See `CONTAINERS.md`. The app runs in Docker. OpenStoryline has an optional Compose profile. OpenTake remains a native host build because its Tauri desktop/GPU path does not benefit from being hidden inside a container.
 
 ## Local application
 

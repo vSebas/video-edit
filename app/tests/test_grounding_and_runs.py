@@ -160,8 +160,7 @@ class TestLatestAsrRun:
         from video_app.projects import ProjectService
 
         return ProjectService(
-            Settings(root=PROJECT_ROOT, runtime=tmp_path / "runtime",
-                     poc_root=PROJECT_ROOT / "poc-morning-routine")
+            Settings(root=PROJECT_ROOT, runtime=tmp_path / "runtime")
         )
 
     def _write_run(self, runtime: Path, project_id: str, run_key: str,
@@ -222,8 +221,7 @@ class TestSyncMediaIdentity:
 
         try:
             encode(1)
-            settings = Settings(root=PROJECT_ROOT, runtime=tmp_path / "runtime",
-                                poc_root=PROJECT_ROOT / "poc-morning-routine")
+            settings = Settings(root=PROJECT_ROOT, runtime=tmp_path / "runtime")
             service = ProjectService(settings)
             project = service.create_project(
                 "Sync me", str(source.relative_to(PROJECT_ROOT)), ""
@@ -264,8 +262,7 @@ class TestSyncMediaIdentity:
                 check=True,
             )
             service = ProjectService(
-                Settings(root=PROJECT_ROOT, runtime=tmp_path / "runtime",
-                         poc_root=PROJECT_ROOT / "poc-morning-routine")
+                Settings(root=PROJECT_ROOT, runtime=tmp_path / "runtime")
             )
             project = service.create_project(
                 "Stable", str(source.relative_to(PROJECT_ROOT)), ""
@@ -327,8 +324,7 @@ class TestProjectWriteSerialization:
             encoding="utf-8",
         )
         service = ProjectService(
-            Settings(root=PROJECT_ROOT, runtime=runtime,
-                     poc_root=PROJECT_ROOT / "poc-morning-routine")
+            Settings(root=PROJECT_ROOT, runtime=runtime)
         )
         monkeypatch.setattr(service, "_semantic_run_manifests", lambda _id: [])
 
@@ -366,8 +362,7 @@ class TestOptionalTokenGate:
 
         return TestClient(
             create_app(
-                Settings(root=PROJECT_ROOT, runtime=tmp_path / "runtime",
-                         poc_root=PROJECT_ROOT / "poc-morning-routine")
+                Settings(root=PROJECT_ROOT, runtime=tmp_path / "runtime")
             )
         )
 

@@ -10,19 +10,16 @@ from pathlib import Path
 import opentimelineio as otio
 
 
-POC_ROOT = Path(__file__).resolve().parent.parent
-
-# Defaults preserve the original benchmark behavior; main() overrides them
-# from command-line arguments for arbitrary projects.
-PLAN_PATH = POC_ROOT / "artifacts/edit-plan.json"
-INVENTORY_PATH = POC_ROOT / "artifacts/media-inventory.json"
-MEDIA_ROOT = POC_ROOT
-OUTPUT_DIR = POC_ROOT / "artifacts/timelines"
-SEQUENCE_NAME = "Morning Routine — 31 Second Vertical Short"
-SEQUENCE_ID = "morning-routine-sequence"
-OTIO_PATH = OUTPUT_DIR / "morning-routine.otio"
-XMEML_PATH = OUTPUT_DIR / "morning-routine-davinci.xml"
-REPORT_PATH = OUTPUT_DIR / "timeline-validation.json"
+# Set from command-line arguments in main(); every path is per-project.
+PLAN_PATH: Path
+INVENTORY_PATH: Path
+MEDIA_ROOT: Path
+OUTPUT_DIR: Path
+SEQUENCE_NAME = "Timeline"
+SEQUENCE_ID = "timeline-sequence"
+OTIO_PATH: Path
+XMEML_PATH: Path
+REPORT_PATH: Path
 
 
 def load_json(path: Path):
@@ -420,12 +417,12 @@ def main():
     global SEQUENCE_NAME, SEQUENCE_ID, OTIO_PATH, XMEML_PATH, REPORT_PATH
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--plan", type=Path, default=PLAN_PATH)
-    parser.add_argument("--inventory", type=Path, default=INVENTORY_PATH)
-    parser.add_argument("--media-root", type=Path, default=MEDIA_ROOT)
-    parser.add_argument("--output-dir", type=Path, default=OUTPUT_DIR)
+    parser.add_argument("--plan", type=Path, required=True)
+    parser.add_argument("--inventory", type=Path, required=True)
+    parser.add_argument("--media-root", type=Path, required=True)
+    parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--name", default=None)
-    parser.add_argument("--basename", default=None)
+    parser.add_argument("--basename", default="timeline")
     args = parser.parse_args()
 
     PLAN_PATH = args.plan.resolve()

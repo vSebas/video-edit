@@ -6,7 +6,7 @@
 Newest checks are at the bottom (Capture-loop checks, 2026-08-18/19).
 Older sections describe the system as it was on their dates; the
 morning-routine fixture and Phase 2A review machinery they reference were
-removed on 2026-08-18.
+removed on 2026-08-18, and the POC directory itself on 2026-08-19.
 
 ## Perception-stack checks (2026-08-16/17)
 
@@ -213,6 +213,8 @@ since citing a pending moment is legitimate — and drops any citation that
 overlaps no observation at all, letting the existing beat and concept
 minimums cascade. Its remaining objection stands: pipeline-critical render
 and export scripts still live under a directory named `poc-morning-routine`.
+(Resolved 2026-08-19: they moved to `app/pipeline/` and `app/schemas/`, and
+the POC directory was deleted.)
 
 40 tests pass.
 
@@ -223,3 +225,28 @@ and export scripts still live under a directory named `poc-morning-routine`.
   recommended and are not attempted here.
 - The workspace and the full-scope rclone Drive token are still mounted
   read-write into the container.
+
+## POC retirement and independent validation (2026-08-19)
+
+`poc-morning-routine/` is gone. The code the app actually used moved to
+`app/pipeline/` (`render_edit.py`, `export_timelines.py`, `validate_edit.py`)
+and `app/schemas/`; `poc_root`, `VIDEO_EDITING_POC_ROOT`, and the `poc`
+Compose service were removed with it. Every script now takes explicit
+`--plan`, `--inventory`, and `--media-root` arguments instead of defaulting to
+benchmark fixtures.
+
+`validate_edit.py` had been calibrated to the July benchmark rather than to
+the format, and the app never invoked it. Three checks encoded POC editorial
+policy rather than invariants and were generalized: frame alignment compared
+against a 1e-6 tolerance that plans storing six-decimal seconds can never
+meet (1/30 s reads as 0.033333); title structure demanded the six-beat band
+cover the whole timeline; source reuse was an error rather than a legitimate
+cut. Geometry now accounts for reframe mode — "fit" scales any source into
+the project frame, so a landscape clip is not a defect.
+
+Verified live against `last-spring-quarter-class` (22 cuts, 78.2 s) after the
+move: render and export jobs both completed through the relocated scripts,
+the recompiled plan is frame-aligned at all 178 numeric values, and the
+independent validator reports **VALID** on all ten checks — including
+`frame_alignment`, which failed on the plan compiled before the quantization
+fix and passes on the one compiled after it.

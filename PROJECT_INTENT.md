@@ -86,5 +86,6 @@ These ideas are useful foundations, but the project should remain open to other 
 
 The next phase should compare the available tools and local experiment results, identify reusable components, and design a small proof of concept around real footage. A useful first milestone would analyze a folder of clips, propose a grounded short-form story with missing-shot advice, generate a reviewable timeline, render it, and export an editable project for at least one conventional editor.
 
-That milestone was completed by the morning-routine proof of concept. See
-`poc-morning-routine/IMPLEMENTATION_RESULTS.md` and `STATUS_AND_ROADMAP.md`.
+That milestone was completed by the morning-routine proof of concept, which
+was retired on 2026-08-19 once the daily-vlog application superseded it. See
+`STATUS_AND_ROADMAP.md`, `app/VALIDATION.md`, and git history.

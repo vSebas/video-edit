@@ -9,7 +9,6 @@ from pathlib import Path
 class Settings:
     root: Path
     runtime: Path
-    poc_root: Path
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -19,7 +18,4 @@ class Settings:
         runtime = Path(
             os.environ.get("VIDEO_EDITING_RUNTIME", str(root / "runtime" / "projects"))
         ).resolve()
-        poc_root = Path(
-            os.environ.get("VIDEO_EDITING_POC_ROOT", str(root / "poc-morning-routine"))
-        ).resolve()
-        return cls(root=root, runtime=runtime, poc_root=poc_root)
+        return cls(root=root, runtime=runtime)

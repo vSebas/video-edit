@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render the machine-readable edit plan into a review MP4 with burned-in titles."""
+"""Render a machine-readable edit plan into a review MP4 with burned-in titles."""
 
 import argparse
 import json
@@ -8,9 +8,6 @@ import subprocess
 from pathlib import Path
 
 
-POC_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_PLAN = POC_ROOT / "artifacts/edit-plan.json"
-DEFAULT_OUTPUT = POC_ROOT / "artifacts/reference-edit/morning-routine-review.mp4"
 FONT_CANDIDATES = (
     Path("/usr/share/fonts/liberation/LiberationSans-Bold.ttf"),
     Path("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"),
@@ -51,12 +48,10 @@ def rotation_filter(degrees: float) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--plan", type=Path, default=DEFAULT_PLAN)
-    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
-    parser.add_argument(
-        "--inventory", type=Path, default=POC_ROOT / "artifacts/media-inventory.json"
-    )
-    parser.add_argument("--media-root", type=Path, default=POC_ROOT)
+    parser.add_argument("--plan", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--inventory", type=Path, required=True)
+    parser.add_argument("--media-root", type=Path, required=True)
     args = parser.parse_args()
 
     plan_path = args.plan.resolve()

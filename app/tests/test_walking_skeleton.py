@@ -16,8 +16,7 @@ from video_app.providers import parse_json_content
 from video_app.visual import auto_review_decisions, detect_shots, frame_timestamps
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-POC_ROOT = PROJECT_ROOT / "poc-morning-routine"
-EDIT_PLAN_SCHEMA = POC_ROOT / "schemas" / "edit-plan.schema.json"
+EDIT_PLAN_SCHEMA = PROJECT_ROOT / "app" / "schemas" / "edit-plan.schema.json"
 
 
 def sample_project() -> dict:
@@ -227,7 +226,7 @@ def test_browse_lists_workspace_directories(tmp_path: Path) -> None:
     from video_app.main import create_app
 
     settings = Settings(
-        root=PROJECT_ROOT, runtime=tmp_path / "runtime", poc_root=POC_ROOT
+        root=PROJECT_ROOT, runtime=tmp_path / "runtime"
     )
     with TestClient(create_app(settings)) as current:
         listing = current.get("/api/browse").json()
@@ -258,7 +257,7 @@ def test_delete_project_removes_runtime_state_only(tmp_path: Path) -> None:
         check=True,
     )
     settings = Settings(
-        root=PROJECT_ROOT, runtime=tmp_path / "runtime", poc_root=POC_ROOT
+        root=PROJECT_ROOT, runtime=tmp_path / "runtime"
     )
     try:
         with TestClient(create_app(settings)) as current:

@@ -9,7 +9,9 @@ ASR; stories are written by deepseek-v4-pro (blind video-screening
 verdict); cuts are frame-exact with word-snapped edges, SRT captions, and
 verified DaVinci exports with DNxHR proxies. The morning-routine POC
 fixture and all Phase 2A archive machinery were removed at the user's
-request (2026-08-18) — the workspace holds only real vlogs.
+request (2026-08-18), and the POC directory itself on 2026-08-19 — its
+render, export, and validation scripts now live in `app/pipeline/` and its
+schemas in `app/schemas/`, where the app actually uses them.
 
 **Product target (2026-08-04):** daily personal vlogs, a few minutes each,
 from raw phone footage. Every edit must produce BOTH a rendered review video
@@ -523,12 +525,12 @@ MediaMolder-to-Vidi bridge, Crayotter comparison, OpenTake GUI/MCP tests.
 
 - `PROJECT_INTENT.md` — enduring product charter
 - `FEASIBILITY_AUDIT.md` — Phase 1 research and candidate audit
-- `poc-morning-routine/IMPLEMENTATION_RESULTS.md` — completed benchmark result
-- `poc-morning-routine/SEMANTIC_BACKEND_COMPARISON.md` — semantic evidence
-- `poc-morning-routine/OPENTAKE_SPIKE.md` — OpenTake verdict
-- `poc-morning-routine/CUTSCRIPT_EVALUATION.md` — CutScript verdict
-- `poc-morning-routine/MEDIAMOLDER_EVALUATION.md` — MediaMolder/Vidi-adapter verdict
 - `app/VALIDATION.md` — application verification
+- `bench/RESULTS.md` — model bake-off leaderboards and conclusions
+- The July proof-of-concept write-ups (benchmark result, semantic-backend
+  comparison, OpenTake/CutScript/MediaMolder verdicts) lived under
+  `poc-morning-routine/` and were removed with it on 2026-08-19; they remain
+  in git history at commit `a9374cc^`.
 - `repos/README.md` — pinned upstream source inventory
 
 Large generated evidence and private source media are retained locally but are

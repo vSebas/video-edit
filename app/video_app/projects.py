@@ -29,6 +29,11 @@ from .semantic import SemanticEvidenceError, validate_semantic_evidence
 from .visual import VisualAnalysisError, analyze_assets, auto_review_decisions
 
 
+# Schemas and the deterministic render/export scripts ship with the app.
+APP_DIR = Path(__file__).resolve().parent.parent
+SCHEMA_DIR = APP_DIR / "schemas"
+PIPELINE_DIR = APP_DIR / "pipeline"
+
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 AUDIO_EXTENSIONS = {".wav", ".mp3", ".m4a", ".flac", ".aac", ".ogg"}
@@ -235,7 +240,6 @@ class ProjectService:
     BROWSE_SKIP = {
         ".git", "node_modules", "__pycache__", ".venv", "repos",
         "runtime", ".tmp", ".claude", "app", "bench", "Crayotter",
-        "poc-morning-routine",
     }
 
     def browse_directories(self, relative: str = "") -> dict:
@@ -322,7 +326,7 @@ class ProjectService:
             )
             validate_semantic_evidence(
                 normalized,
-                self.settings.poc_root / "schemas" / "semantic-evidence.schema.json",
+                SCHEMA_DIR / "semantic-evidence.schema.json",
             )
         except (ProviderError, VisualAnalysisError, SemanticEvidenceError) as exc:
             raise ProjectError(f"Live visual analysis failed: {exc}") from exc
@@ -386,7 +390,7 @@ class ProjectService:
             )
             validate_semantic_evidence(
                 normalized,
-                self.settings.poc_root / "schemas" / "semantic-evidence.schema.json",
+                SCHEMA_DIR / "semantic-evidence.schema.json",
             )
         except (SpeechAnalysisError, SemanticEvidenceError) as exc:
             raise ProjectError(f"Speech analysis failed: {exc}") from exc
@@ -656,7 +660,7 @@ class ProjectService:
             )
             self._validate_schema(
                 document,
-                self.settings.poc_root / "schemas" / "creative-concepts.schema.json",
+                SCHEMA_DIR / "creative-concepts.schema.json",
                 "Creative concepts",
             )
         except (ProviderError, PlanningError) as exc:
@@ -708,7 +712,7 @@ class ProjectService:
             )
             validate_edit_plan(
                 plan,
-                self.settings.poc_root / "schemas" / "edit-plan.schema.json",
+                SCHEMA_DIR / "edit-plan.schema.json",
                 project,
             )
         except PlanningError as exc:
@@ -771,7 +775,7 @@ class ProjectService:
             )
             validate_edit_plan(
                 new_plan,
-                self.settings.poc_root / "schemas" / "edit-plan.schema.json",
+                SCHEMA_DIR / "edit-plan.schema.json",
                 project,
             )
         except (ProviderError, PlanningError) as exc:
@@ -1353,7 +1357,7 @@ class ProjectService:
         output_dir = self.settings.runtime / project_id / "outputs"
         output_dir.mkdir(parents=True, exist_ok=True)
         output = output_dir / "review.mp4"
-        script = self.settings.poc_root / "scripts/render_reference_edit.py"
+        script = PIPELINE_DIR / "render_edit.py"
         plan_path, inventory_path, media_root = self._plan_sources(project_id)
         command = [
             sys.executable,
@@ -1380,7 +1384,7 @@ class ProjectService:
         project = self.get_project(project_id)
         if not project.get("plan"):
             raise ProjectError("This project does not have a compiled editable timeline")
-        script = self.settings.poc_root / "scripts/export_timelines.py"
+        script = PIPELINE_DIR / "export_timelines.py"
         output_dir = self.settings.runtime / project_id / "outputs"
         output_dir.mkdir(parents=True, exist_ok=True)
         plan_path, inventory_path, media_root = self._plan_sources(project_id)

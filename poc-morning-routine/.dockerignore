@@ -1,7 +1,0 @@
-.venv/
-artifacts/
-__pycache__/
-*.pyc
-*.mp4
-*.jpg
-*.log
