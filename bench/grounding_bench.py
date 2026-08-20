@@ -23,7 +23,7 @@ from pathlib import Path
 import httpx
 
 BENCH_ROOT = Path(__file__).resolve().parent
-MEDIA_DIR = "Crayotter/crayotter-data/user_temp"
+MEDIA_DIR = "bench/media"
 PROMPT = (
     "Watch this video clip carefully. Question: when does the following "
     "happen: \"{query}\"?\n"

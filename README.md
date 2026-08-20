@@ -86,5 +86,7 @@ FireRed-OpenStoryline, MediaMolder, NarratoAI, Palmier Pro, Vidi, CutScript,
 OpenReels and others — were assessed and not adopted; their pinned commits
 and the comparison that retired them are in git history
 (`FEASIBILITY_AUDIT.md` and `repos/README.md`, removed 2026-08-20).
-`Crayotter/` and `FireRed-OpenStoryline/` remain locally as experiment data
-only, and are not part of the repository.
+Their local experiment folders were deleted once nothing depended on them:
+`FireRed-OpenStoryline/` on 2026-08-18 and `Crayotter/` on 2026-08-20. The
+only thing the latter still held was the benchmark footage, which now lives
+at `bench/media/` where its purpose is visible.

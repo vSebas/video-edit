@@ -286,6 +286,7 @@ described a system that no longer existed). The charter's enduring parts —
 the goal and the principles — moved into `README.md`.
 
 Generated evidence and personal source media stay local and out of the
-repository by policy: `footage/`, `runtime/`, `Crayotter/`, and
-`bench/planner/` are all gitignored, the last because its concepts and plans
-quote transcribed speech.
+repository by policy: `footage/`, `runtime/`, `bench/media/`, and
+`bench/planner/` are all gitignored — the last because its concepts and plans
+quote transcribed speech, and `bench/media/` because it is the real footage
+the grounding leaderboard was measured on.

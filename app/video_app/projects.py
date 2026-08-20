@@ -133,8 +133,8 @@ class ProjectService:
                 "ready": shutil.which("ffmpeg") is not None,
             },
             "editable_exports": {
-                "id": "otio-xmeml-opentake",
-                "label": "OTIO, DaVinci XMEML, OpenTake",
+                "id": "otio-xmeml",
+                "label": "OTIO, DaVinci XMEML",
                 "ready": True,
             },
         }
@@ -239,7 +239,7 @@ class ProjectService:
 
     BROWSE_SKIP = {
         ".git", "node_modules", "__pycache__", ".venv", "repos",
-        "runtime", ".tmp", ".claude", "app", "bench", "Crayotter",
+        "runtime", ".tmp", ".claude", "app", "bench",
     }
 
     def browse_directories(self, relative: str = "") -> dict:
