@@ -45,3 +45,15 @@
 .env
 .env.*
 !.env.example
+
+# Case variants (gitignore is case-sensitive; phone files are uppercase)
+*.MOV
+*.MP4
+*.M4A
+*.MKV
+*.JPG
+*.JPEG
+*.PNG
+*.WAV
+*.MP3
+/footage/
