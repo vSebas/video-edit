@@ -46,7 +46,6 @@ docker compose run --rm app python pipeline/validate_edit.py \
 | `bench/` | Model bake-offs and their recorded results |
 | `footage/` | Your source clips (never committed) |
 | `runtime/` | Per-project state, evidence, renders, exports (never committed) |
-| `repos/OpenTake` | Reference checkout, pinned at `acf07e5`; not modified by us |
 
 Documentation is deliberately five files: this one, `app/README.md` (the
 daily loop and its endpoints), `app/VALIDATION.md` (what has actually been
@@ -76,10 +75,9 @@ These have held since the project charter and still decide arguments:
 
 ## Third-party code
 
-`repos/OpenTake` is a shallow reference checkout (pinned commit above), kept
-visible and unmodified. It is a native Rust/Tauri desktop editor, so it is
-built on the host rather than in Docker: containerizing a GUI application
-adds display, audio, and GPU plumbing without improving isolation.
+No third-party source is vendored here any more. OpenTake's reference
+checkout was removed on 2026-08-20: it exports OTIO/XMEML/FCPXML/EDL but
+still cannot import any of them, so it cannot consume what we produce.
 
 Other candidates evaluated during the July 2026 survey — Crayotter,
 FireRed-OpenStoryline, MediaMolder, NarratoAI, Palmier Pro, Vidi, CutScript,
