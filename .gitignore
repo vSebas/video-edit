@@ -57,3 +57,7 @@
 *.WAV
 *.MP3
 /footage/
+
+# Bench run artifacts describe real footage: concepts, plans, and render
+# commands carry transcribed speech. Conclusions live in bench/RESULTS.md.
+/bench/planner/

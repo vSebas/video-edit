@@ -65,6 +65,27 @@ padding is trimmable but missed action is unrecoverable), **midpoint-hit**
   under the 0.75 auto-approve threshold. The gate, not the model, was
   discarding true speech; the threshold is now per-evidence-type.
 
+## Planner track — blind video screening (2026-08-17)
+
+The writer question cannot be scored by a metric, so it was settled by
+screening. Four candidates each wrote a concept from the *same* evidence pack
+over a real day of footage; each concept was compiled and rendered to an MP4;
+the user watched the four cuts with model identities withheld and ranked
+them. Anonymised labels A–D were held in a key file the user could not see
+until after ranking.
+
+**Verdict: deepseek-v4-pro.** Its cut and fable's were preferred over both
+Qwen tiers; deepseek is the default because it is reachable on the existing
+DashScope workspace key. The preferences the screening surfaced are encoded
+in the planner prompt: intent-first concepts over theme-first ones, duration
+earned by content rather than padded to a round number, and blooper/outtake
+framing treated as material rather than waste.
+
+The run artifacts (concepts, compiled plans, render commands) contained the
+user's transcribed speech and are deliberately **not** in this repository —
+they live in `runtime/` alongside the projects they describe. What is
+reproducible from here is the method above, not the personal evidence.
+
 Bench cost: ~$2 RunPod (pod terminated) + a few cents of API calls + free
-TwelveLabs tier. Not yet run: the planner track (story quality,
-blind-judged); optional external accounts (OpenAI, Anthropic, Reka).
+TwelveLabs tier. Optional external accounts (OpenAI, Anthropic, Reka) remain
+unrun.
