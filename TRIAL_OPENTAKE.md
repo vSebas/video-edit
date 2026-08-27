@@ -47,9 +47,22 @@ than ours.
 - Never modified: `ChatTurnGate` — it is the safety layer that stops an edit
   admitted against one project publishing into another.
 
+## Findings log
+
+- **2026-08-20 — first Linux build blocker, patched.** `whisper-rs-sys`
+  regenerates its C bindings at build time, and current bindgen miscompiles
+  them against Arch's new libclang (layout asserts fail; `_IO_FILE`
+  collapses to 1 byte). Every whisper-rs version fails identically, so no
+  version bump helps. Fix: fork commit `0675152` makes the whisper backend
+  optional with a same-named stub — justified because this trial's
+  transcripts come from our ASR anyway. 52 lines changed; re-enable with
+  `--features whisper` when upstream builds again. This is also the first
+  data point for the "Linux is source-only" risk: real, but so far cheap.
+
 ## Trial steps and gate
 
-1. [ ] App builds from source and launches on Wayland/NVIDIA. *(in progress)*
+1. [ ] App builds from source and launches on Wayland/NVIDIA. *(in progress:
+       frontend and opentake-media build clean; full app compiling)*
 2. [ ] Pair our service as an external MCP client; list tools.
 3. [ ] Import one real day's clips; adapter reproduces an existing
        `edit-plan.json` in its timeline; read back and verify every clip
