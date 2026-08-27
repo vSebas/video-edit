@@ -1,5 +1,15 @@
 # Execution-layer plan — decision record
 
+> **Decision update (2026-08-20, later the same day).** After reading this
+> document, the owner chose to trial the OpenTake path anyway: our pipeline
+> stays the brain, OpenTake is driven as the execution layer over its
+> external MCP surface, and Palmier Pro behaviours are implemented in our
+> brain rather than ported (we compute cut ranges from our own transcript
+> and have OpenTake apply them via `ripple_delete_ranges`). The analysis
+> below stands as written — its risks were accepted knowingly, not
+> overlooked — and the owned-compiler plan in it remains the fallback if
+> the trial gate fails. Trial record: `TRIAL_OPENTAKE.md`.
+
 **Decided:** 2026-08-20
 **Question:** should OpenTake become the base, hosting our planner and ported
 Palmier Pro features, replacing DaVinci Resolve as the finishing tool?

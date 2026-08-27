@@ -157,9 +157,14 @@ advanced colour, and even full semantic search.
 
 Acted on: the owner asked whether OpenTake should become the base, hosting
 our planner and ported Palmier features. That proposal was drafted, reviewed
-adversarially, and rejected — see `EXECUTION_LAYER_PLAN.md` for the decision,
-the two factual errors the draft contained, and the six-phase plan for
-building the execution layer in our own compiler instead.
+adversarially, and recommended against — see `EXECUTION_LAYER_PLAN.md` for
+the analysis, the two factual errors the draft contained, and the six-phase
+owned-compiler plan. The owner then chose, risks in view, to trial the
+OpenTake path first: fork created (vSebas/OpenTake), pinned to
+v1.0.0-beta.5, source build on Arch under way, Palmier behaviours to be
+implemented in our brain and executed via OpenTake's external MCP. The trial
+and its pass/fail gate are in `TRIAL_OPENTAKE.md`; the owned plan is the
+fallback.
 Suggested order with solo-effort estimates: Spanish dialogue cleanup (2-3
 weeks) → atomic edit-command layer with undo and readback (4-6) →
 multi-track execution with B-roll, J/L cuts, VO and ducking (4-6) → dialogue
@@ -352,7 +357,8 @@ bridge, and the Crayotter comparison were all evaluated and retired (see
 - `app/README.md` — the daily loop and its endpoints
 - `app/VALIDATION.md` — what has actually been verified, with dates
 - `bench/RESULTS.md` — the evidence behind every model choice
-- `EXECUTION_LAYER_PLAN.md` — the editor decision and the phased build plan
+- `EXECUTION_LAYER_PLAN.md` — the execution-layer analysis and owned build plan
+- `TRIAL_OPENTAKE.md` — the OpenTake trial: setup, steps, and its gate
 - This file — current state, what is deliberately incomplete, what is next
 
 Superseded material lives in git history rather than in the tree: the July
