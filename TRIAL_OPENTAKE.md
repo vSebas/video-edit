@@ -59,6 +59,28 @@ than ours.
   `--features whisper` when upstream builds again. This is also the first
   data point for the "Linux is source-only" risk: real, but so far cheap.
 
+- **2026-08-20 — the GUI "event bug" diagnosed: one root cause, four
+  symptoms.** `export_video` is a synchronous Tauri command; on Linux those
+  run on the GTK main thread, and it runs the entire export before
+  returning. For the whole export the thread that delivers UI events and
+  receives clicks is busy compositing: progress stays at 0%, cancel clicks
+  never reach Rust, the export button gives no feedback, and (separately
+  observed while idle) the native menu missed its language rebuild.
+  Confirmed live: during an export the main thread (tid==pid) was the
+  process's top CPU consumer, sleeping inside the frame loop. Upstream
+  plausibly never sees this because its packaged platforms thread IPC
+  differently. Fix in progress on the fork (move blocking commands off the
+  main thread); prime upstream-PR candidate. Meanwhile the engine itself is
+  sound on Linux: decode, HLG→BT.709 tonemapping of iPhone footage, 4K
+  GPU compositing, and encode all verified working.
+- **2026-08-20 — release builds fail closed on ffmpeg.** By design, release
+  builds only accept ffmpeg/ffprobe sitting beside the binary (no PATH
+  lookup). Our from-source build had none → every spawn failed ("No such
+  file or directory"). Fixed by symlinking the system binaries beside the
+  executable — the one-line step our future Linux packaging must do.
+- **2026-08-20 — window close leaves the process running** (reproduced
+  twice); harmless but goes on the upstream list.
+
 ## Trial steps and gate
 
 1. [ ] App builds from source and launches on Wayland/NVIDIA. *(in progress:
