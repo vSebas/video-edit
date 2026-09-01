@@ -113,5 +113,22 @@ comedic timing ("I would have to juggle with them manually to make them
 sound funnier") — comedic rhythm remains beyond both models and is a
 finishing-pass task today.
 
+## Source-context sidecar A/B (2026-09-01)
+
+The experimental `source-context.v1` pass sent each of 39 video assets to
+Gemini with audio and derived 110 source-level events plus 50 relationships;
+109 events overlap and reference existing fine evidence. The live manifest
+records 39 calls, one retry, 1,778.666 unique source seconds, 171,824 prompt
+tokens, 14,781 completion tokens, and 888.348 aggregate call-seconds.
+
+The owner preferred concepts generated from the baseline evidence pack over
+the same writer with the sidecar enabled. **Decision: dormant by default;
+retain the opt-in and rerun on more, relationship-annotated footage.** This is
+only directional evidence (n=1). The retained A/B files are not a sealed blind
+packet: `source_context` appears in provenance, the named baseline/sidecar
+files are colocated, and `.blind-key.json` sits beside A/B. A valid rerun must
+export only sanitized randomly assigned sets to the judge and keep the key,
+named originals, timestamps, and telemetry elsewhere.
+
 Bench cost: ~$2 RunPod (pod terminated) + a few cents of API calls + free
 TwelveLabs tier. Reka remains unrun.
