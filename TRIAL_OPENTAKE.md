@@ -91,10 +91,15 @@ than ours.
        The ChatTurnGate correctly refused calls until a saved project was
        open. Note: the listener stays "paused" until the first client pairs
        — the UI's "temporarily unavailable" is that resting state.
-3. [x] PASSED (2026-09-01): deterministic adapter
-       (`app/scripts/opentake_adapter.py`) placed the full 22-cut
-       spring-quarter plan over MCP — 22/22 clips, 2346/2346 frames,
-       22 auto-linked audio partners, every clip frame-exact on readback.
+3. [x] PASSED (2026-09-01, verification hardened after cross-review):
+       deterministic adapter (`app/scripts/opentake_adapter.py`) placed the
+       full 22-cut spring-quarter plan over MCP. The first verdict checked
+       only geometry; the Codex cross-review caught that source trims and
+       A/V pairing were unverified (and that get_timeline reports trims,
+       omitted when zero). Re-verified against the live timeline with the
+       full check: 22/22 clips, 2346/2346 frames, 21/22 nonzero source
+       trims exactly as planned, every audio partner matching on all
+       fields; raw readback persisted to the project dir for audit.
        Findings: media must enter via the GUI picker once
        (MCP_PATH_AUTHORITY_REQUIRED — agent paths refused by design; folder
        import works, and the picker's type filter hides uppercase .MOV, so
