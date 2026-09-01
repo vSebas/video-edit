@@ -218,51 +218,6 @@ the POC directory was deleted.)
 
 40 tests pass.
 
-## Source context and VLM telemetry (2026-09-01)
-
-- `source-context.v1` is schema-validated and stored as a derived, non-citable
-  run. Regression tests cover whole-source versus windowed encoding, timestamp
-  offsets and overlap de-duplication, event-to-evidence anchoring, the 2,500
-  character planner cap, telemetry aggregation, and exclusion from both
-  approved and pending evidence.
-- The first live run analyzed 39/39 video assets in 39 Gemini calls: 110
-  events, 50 relationships, and 109 anchored events. Its manifest records one
-  retry, 106,523,293 uploaded request bytes, 171,824 prompt tokens, 14,781
-  completion tokens, 888.348 aggregate call-seconds, and 1,778.666 unique
-  source seconds.
-- The owner preferred baseline concepts in the first A/B, so
-  `use_source_context` remains false by default. Audit caveat: the retained
-  A/B JSON includes the `source_context` treatment flag and stores its key
-  beside the sets. The result is directional n=1 evidence, not a sealed blind
-  verdict; the next judge packet must strip provenance and separate the key.
-- VLM telemetry is persisted in visual/context run manifests and exposed by
-  `GET /api/projects/{id}/analysis/telemetry`.
-
-## OpenTake hybrid trial (2026-09-01)
-
-- `opentake_adapter.py` placed the 22-cut video track over external MCP. Its
-  hardened live readback verified 22/22 video clips, 2346/2346 frames, all 21
-  nonzero source trims, selected media references, and one matching linked
-  audio partner per video on the fields the adapter emits. The raw timeline
-  response is persisted beside the project. The title track is deliberately
-  outside this trial adapter.
-- `opentake_cleanup.py` derived candidates from the newest local large-v3 word
-  run and applied the reviewed batch through one `ripple_delete_ranges` call.
-  The persisted readback is 2314 frames with 23 video and 23 audio pieces, 23
-  unique non-null link groups, and identical video/audio link-group sets.
-- Kill/restart recovery, export, and visual comparison closed the trial with
-  the owner-ratified hybrid: OpenTake edits, the owned renderer produces final
-  pixels, and Resolve remains the escape hatch. `TRIAL_OPENTAKE.md` contains
-  the gate evidence.
-- Both OpenTake scripts remain trial tooling: no automated tests exercise their
-  MCP transport, and they have no retry/reconciliation, revision binding, or
-  rollback across destructive operations. Productionization is a roadmap
-  item, not a completed validation claim.
-
-Current automated result in `video-editing-app:local`: **48 passed**. The only
-warning is Starlette's deprecation notice for its current `httpx` TestClient
-integration.
-
 ### Known and deliberately not changed
 
 - Jobs remain in-memory: a restart loses job status. Durable jobs and
@@ -313,3 +268,48 @@ OpenTake"`, but the OpenTake exporter was removed with `poc-morning-routine`
 on 2026-08-19. It now reports what it actually produces.
 
 40 tests pass.
+
+## Source context and VLM telemetry (2026-09-01)
+
+- `source-context.v1` is schema-validated and stored as a derived, non-citable
+  run. Regression tests cover whole-source versus windowed encoding, timestamp
+  offsets and overlap de-duplication, event-to-evidence anchoring, the 2,500
+  character planner cap, telemetry aggregation, and exclusion from both
+  approved and pending evidence.
+- The first live run analyzed 39/39 video assets in 39 Gemini calls: 110
+  events, 50 relationships, and 109 anchored events. Its manifest records one
+  retry, 106,523,293 uploaded request bytes, 171,824 prompt tokens, 14,781
+  completion tokens, 888.348 aggregate call-seconds, and 1,778.666 unique
+  source seconds.
+- The owner preferred baseline concepts in the first A/B, so
+  `use_source_context` remains false by default. Audit caveat: the retained
+  A/B JSON includes the `source_context` treatment flag and stores its key
+  beside the sets. The result is directional n=1 evidence, not a sealed blind
+  verdict; the next judge packet must strip provenance and separate the key.
+- VLM telemetry is persisted in visual/context run manifests and exposed by
+  `GET /api/projects/{id}/analysis/telemetry`.
+
+## OpenTake hybrid trial (2026-09-01)
+
+- `opentake_adapter.py` placed the 22-cut video track over external MCP. Its
+  hardened live readback verified 22/22 video clips, 2346/2346 frames, all 21
+  nonzero source trims, selected media references, and one matching linked
+  audio partner per video on the fields the adapter emits. The raw timeline
+  response is persisted beside the project. The title track is deliberately
+  outside this trial adapter.
+- `opentake_cleanup.py` derived candidates from the newest local large-v3 word
+  run and applied the reviewed batch through one `ripple_delete_ranges` call.
+  The persisted readback is 2314 frames with 23 video and 23 audio pieces, 23
+  unique non-null link groups, and identical video/audio link-group sets.
+- Kill/restart recovery, export, and visual comparison closed the trial with
+  the owner-ratified hybrid: OpenTake edits, the owned renderer produces final
+  pixels, and Resolve remains the escape hatch. `TRIAL_OPENTAKE.md` contains
+  the gate evidence.
+- Both OpenTake scripts remain trial tooling: no automated tests exercise their
+  MCP transport, and they have no retry/reconciliation, revision binding, or
+  rollback across destructive operations. Productionization is a roadmap
+  item, not a completed validation claim.
+
+Current automated result in `video-editing-app:local`: **48 passed**. The only
+warning is Starlette's deprecation notice for its current `httpx` TestClient
+integration.

@@ -198,8 +198,8 @@ Where we are genuinely behind, in the order it costs daily quality:
 4. **Revision is replanning, not editing.** "Cut the second 'este'" can
    regenerate the whole clip list; there is no localised, undoable command.
 5. **Captions are an export artifact,** not visible or editable in the cut.
-6. **Nothing learns from the Resolve finishing pass** — the same manual
-   corrections recur forever.
+6. **Nothing learns from the finishing pass** in OpenTake or Resolve — the
+   same manual corrections recur forever.
 7. **Rotation and framing are brittle** — sideways clips stay sideways,
    framing is fit/pad rather than subject-aware.
 8. **Daily reliability is underbuilt** (in-memory jobs, no dedup).
