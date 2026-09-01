@@ -91,9 +91,16 @@ than ours.
        The ChatTurnGate correctly refused calls until a saved project was
        open. Note: the listener stays "paused" until the first client pairs
        — the UI's "temporarily unavailable" is that resting state.
-3. [ ] Import one real day's clips; adapter reproduces an existing
-       `edit-plan.json` in its timeline; read back and verify every clip
-       (same discipline as the 937/937 Resolve check).
+3. [x] PASSED (2026-09-01): deterministic adapter
+       (`app/scripts/opentake_adapter.py`) placed the full 22-cut
+       spring-quarter plan over MCP — 22/22 clips, 2346/2346 frames,
+       22 auto-linked audio partners, every clip frame-exact on readback.
+       Findings: media must enter via the GUI picker once
+       (MCP_PATH_AUTHORITY_REQUIRED — agent paths refused by design; folder
+       import works, and the picker's type filter hides uppercase .MOV, so
+       use All-files or folder import); omit trackIndex so tracks
+       auto-create; some tool successes return plain text, errors are
+       redacted JSON with an errorId.
 4. [ ] Dialogue cleanup driven by our transcript: Spanish filler lexicon
        (eh, este, o sea, como que), silences, false starts → reviewed ranges
        → `ripple_delete_ranges`.
