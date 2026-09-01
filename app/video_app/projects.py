@@ -1816,6 +1816,24 @@ class ProjectService:
         output_dir = self.settings.runtime / project_id / "outputs"
         output_dir.mkdir(parents=True, exist_ok=True)
         output = output_dir / "review.mp4"
+        # Artifact cache: an identical plan (and captions choice) with an
+        # existing file is a no-op — repeat renders of an unchanged cut are
+        # the most common wasted minutes in a session.
+        render_key = {
+            "plan_sha": hashlib.sha256(
+                json.dumps(plan, sort_keys=True).encode()
+            ).hexdigest()[:16],
+            "burn_captions": burn_captions,
+        }
+        state_path = output_dir / "review.render-state.json"
+        if output.is_file() and state_path.is_file():
+            prior = load_json(state_path)
+            if {k: prior.get(k) for k in render_key} == render_key:
+                return {
+                    "output": f"/api/projects/{project_id}/outputs/render",
+                    "path": str(output),
+                    "cached": True,
+                }
         script = PIPELINE_DIR / "render_edit.py"
         plan_path, inventory_path, media_root = self._plan_sources(project_id)
         command = [
@@ -1836,6 +1854,7 @@ class ProjectService:
         if result.returncode:
             detail = (result.stderr or result.stdout).strip()
             raise ProjectError(f"Render failed: {detail[-1000:]}")
+        write_json(state_path, {**render_key, "rendered_at": utc_now()})
         return {
             "output": f"/api/projects/{project_id}/outputs/render",
             "path": str(output),

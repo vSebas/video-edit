@@ -61,12 +61,19 @@ proposal and editable exports:
    and timeline-aligned `captions.srt`.
 6. `POST /plan/revise` — natural-language re-cuts without re-analysis;
    prior revisions kept.
-7. `POST /opentake/cleanup` + `/opentake/cleanup/apply` — Spanish dialogue
+7. `POST /plan/command` + `/plan/command/apply` — atomic natural-language
+   edits: one instruction → one operation from a closed set (delete, trim,
+   volume, J/L cut, title), computed and bounds-checked deterministically;
+   the LLM only picks the op. Revision-guarded propose/apply.
+8. `POST /render?burn_captions=true` — review render with timeline-aligned
+   Spanish captions burned in. Renders are cached per plan content: an
+   unchanged plan returns the existing file instantly.
+9. `POST /opentake/cleanup` + `/opentake/cleanup/apply` — Spanish dialogue
    cleanup: conservative filler/dead-air candidates from the local word
    transcript, reviewed as a checklist in the workbench, applied as ONE
    atomic ripple in OpenTake (fingerprint-bound so a changed timeline
    rejects the apply); then pulled into the plan via sync.
-8. `POST /opentake/sync` + `/opentake/sync/apply` — pull the OpenTake
+10. `POST /opentake/sync` + `/opentake/sync/apply` — pull the OpenTake
    timeline back into the plan: preview returns the diff (splits, trims,
    moves, deletions, all fail-closed within originally grounded material);
    apply installs it as a new revision through the same archive/log path as

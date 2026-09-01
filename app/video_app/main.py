@@ -112,7 +112,7 @@ class ReviewSemanticEvidenceRequest(BaseModel):
 def create_app(settings: Settings | None = None) -> FastAPI:
     current_settings = settings or Settings.from_environment()
     projects = ProjectService(current_settings)
-    jobs = JobManager()
+    jobs = JobManager(store=current_settings.runtime / "jobs.json")
     application = FastAPI(title="Local Video Editing Workbench", version="0.1.0")
 
     access_token = os.environ.get("VIDEO_EDITING_TOKEN", "").strip()
