@@ -514,3 +514,26 @@ class TestConceptTrust:
         assert "needs_review" not in beats[0]["evidence"][0]
         assert beats[1]["evidence"][0].get("needs_review") is True
         assert "needs_review" not in beats[2]["evidence"][0]
+
+
+    def test_flagged_spans_stay_schema_valid(self) -> None:
+        """The live P7 harness caught sanitizer output the concepts schema
+        rejected (needs_review); pin the two in agreement."""
+        import json
+        from pathlib import Path
+
+        from jsonschema import Draft202012Validator
+
+        schema = json.loads(
+            (Path(__file__).resolve().parents[1] / "schemas"
+             / "creative-concepts.schema.json").read_text()
+        )
+        span = {
+            "asset_id": "a", "start_seconds": 0.0, "end_seconds": 2.0,
+            "observed_content": "x", "confidence": 0.5,
+            "needs_review": True,
+        }
+        validator = Draft202012Validator(
+            {"$ref": "#/$defs/evidence", "$defs": schema["$defs"]}
+        )
+        assert not list(validator.iter_errors(span))

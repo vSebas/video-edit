@@ -366,6 +366,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             lambda: projects.render(project_id, burn_captions=burn_captions),
         )
 
+    @application.get("/api/projects/{project_id}/plan/revisions")
+    def plan_revisions(project_id: str):
+        project_call(lambda: projects.get_project(project_id))
+        log_path = (
+            current_settings.runtime / project_id / "plan" / "revisions"
+            / "revision-log.json"
+        )
+        if not log_path.is_file():
+            return {"entries": []}
+        try:
+            import json as json_module
+
+            return json_module.loads(log_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {"entries": []}
+
     @application.post("/api/projects/{project_id}/plan/command")
     def plan_command_propose(project_id: str, request: PlanCommandRequest):
         return project_call(

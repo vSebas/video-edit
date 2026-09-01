@@ -521,6 +521,13 @@ function advancedSection(project) {
       </div>
       <div id="plan-command-result"></div>
       <div class="pipeline-grid">
+        <button class="pipeline-step" id="plan-history">
+          <strong>Historial de revisiones</strong>
+          <span>Qué cambió en cada versión del corte y quién lo pidió</span>
+        </button>
+      </div>
+      <div id="plan-history-list"></div>
+      <div class="pipeline-grid">
         <button class="pipeline-step" id="clone-project">
           <strong>Duplicate vlog</strong>
           <span>Same clips, shared analysis, fresh story</span>
@@ -626,6 +633,7 @@ function renderProject() {
   $('#opentake-sync')?.addEventListener('click', openTakeSyncPreview);
   $('#opentake-cleanup')?.addEventListener('click', openTakeCleanup);
   $('#plan-command-send')?.addEventListener('click', planCommandPropose);
+  $('#plan-history')?.addEventListener('click', showPlanHistory);
   $('#delete-project')?.addEventListener('click', deleteProject);
   $('#clone-project')?.addEventListener('click', cloneProject);
   $('#add-clips-input')?.addEventListener('change', addClipsToProject);
@@ -1095,6 +1103,25 @@ async function planCommandPropose() {
   } catch (error) {
     box.innerHTML = `<p class="notice">${escapeHtml(error.message)}</p>`;
   }
+}
+
+async function showPlanHistory() {
+  const project = state.activeProject;
+  if (!project) return;
+  const box = $('#plan-history-list');
+  try {
+    const log = await api(`/api/projects/${project.project_id}/plan/revisions`);
+    if (!log.entries?.length) {
+      box.innerHTML = '<p class="notice">Sin revisiones todavía — el corte sigue en su versión original.</p>';
+      return;
+    }
+    box.innerHTML = `
+      <div class="sync-diff">
+        ${[...log.entries].reverse().map((entry) => `
+          <p><strong>rev ${entry.revision}</strong> · ${escapeHtml(entry.provider || '')}
+          — ${escapeHtml(entry.note || entry.instruction || '')}</p>`).join('')}
+      </div>`;
+  } catch (error) { notice(error.message, true); }
 }
 
 async function runAdvancedStep(stepId, button) {

@@ -66,6 +66,9 @@
           "type": "number",
           "minimum": 0,
           "maximum": 1
+        },
+        "needs_review": {
+          "type": "boolean"
         }
       }
     },
