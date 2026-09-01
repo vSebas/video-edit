@@ -382,12 +382,14 @@ UI) all shipped 2026-09-01 — see the P0-P6 log above.
 2. **Act on the P1-P6 Codex cross-review** (auto-fires 16:54 2026-09-01).
 3. **Rotation detection** — the highest-value small item left: probe/visual
    evidence → `rotation_degrees` set automatically; execution already works.
-4. **Fork/upstream queue**, in hybrid-value order: project lifecycle tools on
-   external MCP (unlocks unattended editing; upstream PR preferred), GTK
-   main-thread fix PR (already proven in the fork), progress-event staleness,
-   and window-close lingering process. Wide-source aspect and tonemap tuning
-   are deferred until OpenTake-as-renderer is reconsidered; thumbnail cache
-   loss after crash is cosmetic.
+4. **Fork-only patch policy (owner decision 2026-09-01): no PRs or issues
+   to the upstream OpenTake repo.** All fixes live in the vSebas/OpenTake
+   fork; `UPSTREAM_ISSUES.md` stays as internal documentation of the bugs.
+   Consequence: rebasing onto future upstream releases is our own cost —
+   the fork pins v1.0.0-beta.5 until an upstream release offers something
+   worth the rebase. Remaining fork-queue items in value order: project
+   lifecycle tools on external MCP (unlocks unattended editing),
+   progress-event staleness, window-close lingering process.
 5. Standing items, unchanged: voiceover placement with ducking;
    trending-audio matching; reference-vlog style learning; sideways-clip
    rotation; durability redesign behind its trigger; writer seat stays
