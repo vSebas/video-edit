@@ -33,7 +33,7 @@ JUDGE_KEYS_CONCEPT = {
     "concept_id", "title", "topic", "hook", "target_duration_seconds",
     "structure", "missing_shots",
 }
-JUDGE_KEYS_BEAT = {"purpose", "narrative", "evidence", "duration_seconds"}
+JUDGE_KEYS_BEAT = {"purpose", "narrative", "evidence", "cutaways", "duration_seconds"}
 
 
 def sanitize_for_judge(document: dict) -> dict:
