@@ -77,6 +77,21 @@ These have held since the project charter and still decide arguments:
 - **Modular.** No single model, vendor, or editor is load-bearing; each sits
   behind a replaceable adapter.
 
+## To further evaluate (owner's note, 2026-09-01)
+
+Two questions are deliberately still open, not settled:
+
+- **Sidecar impact.** The source-context sidecar lost its first blind A/B
+  (n=1, one footage day) and sleeps behind `use_source_context`. I still
+  want to test it on more days of footage — especially rougher,
+  longer-dialogue ones — before calling it. Rerun with
+  `bench/context_ab.py <project>` after analyzing a new day.
+- **Best model per stage.** Current seats (gemini-3.6-flash perception,
+  large-v3 ASR, deepseek-v4-pro writer) were each won on evidence, but the
+  field moves: rematch new candidates per stage periodically — same blind,
+  rendered-output protocols in `bench/` — rather than assuming the
+  leaderboard is permanent.
+
 ## Third-party code
 
 No third-party source is vendored here any more. OpenTake's reference
