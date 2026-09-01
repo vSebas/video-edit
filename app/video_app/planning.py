@@ -18,6 +18,7 @@ SUPPORT_EDGE_TOLERANCE = 0.5
 DEFAULT_WIDTH = 1080
 DEFAULT_HEIGHT = 1920
 DEFAULT_FPS = 30
+SOURCE_CONTEXT_MAX_CHARS = 2500
 
 CONCEPT_SYSTEM_PROMPT = (
     "You are the creative director of a grounded video editing assistant. You "
@@ -34,13 +35,56 @@ class PlanningError(RuntimeError):
     pass
 
 
-def evidence_pack(project: dict, evidence: list[dict]) -> str:
+def source_context_section(
+    source_context: dict, max_chars: int = SOURCE_CONTEXT_MAX_CHARS
+) -> str:
+    lines = [
+        "## Source context (derived, non-citable)",
+        "Use this only for narrative order and relationships. Every concept "
+        "citation must still come from the Evidence section below.",
+    ]
+    for asset in source_context.get("assets") or []:
+        asset_id = str(asset.get("asset_id", "unknown"))
+        summary = str(asset.get("summary", "")).strip()
+        lines.append(f"### {asset_id}: {summary}")
+        for event in asset.get("events") or []:
+            anchors = ",".join(event.get("evidence_ids") or []) or "none"
+            lines.append(
+                f"- {event.get('event_id')} "
+                f"[{float(event.get('start_seconds', 0)):.2f}-"
+                f"{float(event.get('end_seconds', 0)):.2f}] "
+                f"{event.get('label')}: {event.get('description')} "
+                f"(evidence_ids: {anchors})"
+            )
+        for relationship in asset.get("relationships") or []:
+            lines.append(
+                f"- relation {relationship.get('kind')}: "
+                f"{relationship.get('from_event')} -> "
+                f"{relationship.get('to_event')}: "
+                f"{relationship.get('description')}"
+            )
+    text = "\n".join(lines)
+    if len(text) <= max_chars:
+        return text
+    marker = "\n- … source context truncated"
+    prefix = text[: max(max_chars - len(marker), 0)]
+    if "\n" in prefix:
+        prefix = prefix.rsplit("\n", 1)[0]
+    return (prefix + marker)[:max_chars]
+
+
+def evidence_pack(
+    project: dict, evidence: list[dict], source_context: dict | None = None
+) -> str:
     """Compact text pack of technical facts and approved evidence, ordered by
     asset and source time, for planning prompts."""
-    lines = [
+    lines = []
+    if source_context:
+        lines.extend([source_context_section(source_context), ""])
+    lines.extend([
         "## Assets (recorded timestamps are the REAL chronology — use them "
         "for ordering, time-of-day mood, and location continuity)"
-    ]
+    ])
     for asset in project.get("inventory", {}).get("assets", []):
         video = asset.get("video") or {}
         extras = []
@@ -97,6 +141,7 @@ def generate_concepts(
     guidance: str | None = None,
     keep_concepts: list[dict] | None = None,
     footage_language: str | None = None,
+    source_context: dict | None = None,
 ) -> dict:
     if not evidence:
         raise PlanningError("No approved semantic evidence is available for planning")
@@ -117,7 +162,7 @@ def generate_concepts(
             "\nThe user already KEPT these concepts — do not repeat their angle, "
             f"propose genuinely different ones:\n{kept_lines}\n"
         )
-    pack = evidence_pack(project, evidence)
+    pack = evidence_pack(project, evidence, source_context)
     instruction = f"""User request: {prompt}
 {guidance_block}{kept_block}{language_instruction(footage_language)}
 {pack}
@@ -219,6 +264,7 @@ duration and at least {MIN_EVENT_SECONDS}s long."""
             "evidence_count": len(evidence),
             "guidance": (guidance or "").strip() or None,
             "kept_concept_ids": [item["concept_id"] for item in keep_concepts or []],
+            "source_context": bool(source_context),
         },
     }
     _sanitize_concepts(document, project, evidence)

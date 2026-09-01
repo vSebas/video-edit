@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.video-editing/schemas/source-context.v1.json",
+  "title": "Derived Source Context v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "generated_at", "project_id", "run_id", "provider",
+    "safe_for_edit_plan", "summary", "warnings", "assets"
+  ],
+  "properties": {
+    "schema_version": {"const": "source-context.v1"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "project_id": {"type": "string", "minLength": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["adapter", "id", "model"],
+      "properties": {
+        "adapter": {"const": "owned-source-context"},
+        "id": {"const": "gemini"},
+        "model": {"type": "string", "minLength": 1}
+      }
+    },
+    "safe_for_edit_plan": {"const": false},
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "video_asset_count", "analyzed_asset_count", "event_count",
+        "relationship_count", "anchored_event_count"
+      ],
+      "properties": {
+        "video_asset_count": {"type": "integer", "minimum": 0},
+        "analyzed_asset_count": {"type": "integer", "minimum": 0},
+        "event_count": {"type": "integer", "minimum": 0},
+        "relationship_count": {"type": "integer", "minimum": 0},
+        "anchored_event_count": {"type": "integer", "minimum": 0}
+      }
+    },
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "asset_id", "filename", "duration_seconds", "summary", "language",
+          "events", "relationships", "people", "topics"
+        ],
+        "properties": {
+          "asset_id": {"type": "string", "minLength": 1},
+          "filename": {"type": "string", "minLength": 1},
+          "duration_seconds": {"type": "number", "minimum": 0},
+          "summary": {"type": "string"},
+          "language": {"type": "string", "minLength": 1},
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "event_id", "start_seconds", "end_seconds", "label",
+                "description", "evidence_ids"
+              ],
+              "properties": {
+                "event_id": {"type": "string", "minLength": 1},
+                "start_seconds": {"type": "number", "minimum": 0},
+                "end_seconds": {"type": "number", "minimum": 0},
+                "label": {"type": "string", "minLength": 1},
+                "description": {"type": "string", "minLength": 1},
+                "evidence_ids": {
+                  "type": "array", "items": {"type": "string", "minLength": 1},
+                  "uniqueItems": true
+                }
+              }
+            }
+          },
+          "relationships": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "from_event", "to_event", "description"],
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "setup_payoff", "question_answer", "action_reaction",
+                    "reference", "before_after", "speech_visual"
+                  ]
+                },
+                "from_event": {"type": "string", "minLength": 1},
+                "to_event": {"type": "string", "minLength": 1},
+                "description": {"type": "string", "minLength": 1}
+              }
+            }
+          },
+          "people": {"type": "array", "items": {"type": "string"}},
+          "topics": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    }
+  }
+}

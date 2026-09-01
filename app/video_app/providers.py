@@ -12,7 +12,9 @@ import httpx
 
 
 class ProviderError(RuntimeError):
-    pass
+    def __init__(self, message: str, telemetry: dict | None = None) -> None:
+        super().__init__(message)
+        self.telemetry = telemetry
 
 
 PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
@@ -170,10 +172,16 @@ class GeminiClient:
                 role = "model" if message["role"] == "assistant" else "user"
                 payload["contents"].append({"role": role, "parts": parts})
 
+        request_size = len(
+            json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode()
+        )
+        started = time.perf_counter()
+        attempts_made = 0
         url = f"{self.config.base_url}/models/{self.config.model}:generateContent"
         headers = {"x-goog-api-key": self.config.api_key}
         last_error = "unknown provider error"
         for attempt in range(1, self._max_attempts + 1):
+            attempts_made = attempt
             try:
                 response = httpx.post(
                     url, json=payload, headers=headers, timeout=self._timeout
@@ -182,14 +190,36 @@ class GeminiClient:
                 last_error = f"transport error: {type(exc).__name__}"
             else:
                 if response.status_code == 200:
-                    body = response.json()
+                    try:
+                        body = response.json()
+                    except ValueError as exc:
+                        raise ProviderError(
+                            "Gemini returned an invalid JSON response",
+                            telemetry={
+                                "request_bytes": request_size * attempts_made,
+                                "wall_seconds": round(
+                                    time.perf_counter() - started, 3
+                                ),
+                                "retries": attempts_made - 1,
+                                "prompt_tokens": 0,
+                                "completion_tokens": 0,
+                            },
+                        ) from exc
+                    usage = body.get("usageMetadata") or {}
+                    telemetry = {
+                        "request_bytes": request_size * attempts_made,
+                        "wall_seconds": round(time.perf_counter() - started, 3),
+                        "retries": attempts_made - 1,
+                        "prompt_tokens": usage.get("promptTokenCount"),
+                        "completion_tokens": usage.get("candidatesTokenCount"),
+                    }
                     try:
                         text = body["candidates"][0]["content"]["parts"][0]["text"]
                     except (KeyError, IndexError, TypeError) as exc:
                         raise ProviderError(
-                            f"Unexpected gemini response shape: {str(body)[:200]}"
+                            f"Unexpected gemini response shape: {str(body)[:200]}",
+                            telemetry=telemetry,
                         ) from exc
-                    usage = body.get("usageMetadata") or {}
                     return {
                         "content": text,
                         "model": self.config.model,
@@ -198,6 +228,7 @@ class GeminiClient:
                             "prompt_tokens": usage.get("promptTokenCount"),
                             "completion_tokens": usage.get("candidatesTokenCount"),
                         },
+                        "telemetry": telemetry,
                     }
                 last_error = f"HTTP {response.status_code}: {response.text[:300]}"
                 if response.status_code not in RETRYABLE_STATUS:
@@ -205,7 +236,14 @@ class GeminiClient:
             if attempt < self._max_attempts:
                 time.sleep(2**attempt)
         raise ProviderError(
-            f"{self.config.provider}/{self.config.model} request failed: {last_error}"
+            f"{self.config.provider}/{self.config.model} request failed: {last_error}",
+            telemetry={
+                "request_bytes": request_size * attempts_made,
+                "wall_seconds": round(time.perf_counter() - started, 3),
+                "retries": max(attempts_made - 1, 0),
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+            },
         )
 
 
@@ -332,10 +370,16 @@ class ChatClient:
         if json_object:
             payload["response_format"] = {"type": "json_object"}
 
+        request_size = len(
+            json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode()
+        )
+        started = time.perf_counter()
+        attempts_made = 0
         url = f"{self.config.base_url}/chat/completions"
         headers = {"Authorization": f"Bearer {self.config.api_key}"}
         last_error = "unknown provider error"
         for attempt in range(1, self._max_attempts + 1):
+            attempts_made = attempt
             try:
                 response = httpx.post(
                     url, json=payload, headers=headers, timeout=self._timeout
@@ -344,7 +388,32 @@ class ChatClient:
                 last_error = f"transport error: {type(exc).__name__}"
             else:
                 if response.status_code == 200:
-                    return self._extract(response.json())
+                    try:
+                        body = response.json()
+                        result = self._extract(body)
+                    except (ProviderError, ValueError) as exc:
+                        raise ProviderError(
+                            str(exc),
+                            telemetry={
+                                "request_bytes": request_size * attempts_made,
+                                "wall_seconds": round(
+                                    time.perf_counter() - started, 3
+                                ),
+                                "retries": attempts_made - 1,
+                                "prompt_tokens": 0,
+                                "completion_tokens": 0,
+                            },
+                        ) from exc
+                    result["telemetry"] = {
+                        "request_bytes": request_size * attempts_made,
+                        "wall_seconds": round(time.perf_counter() - started, 3),
+                        "retries": attempts_made - 1,
+                        "prompt_tokens": result["usage"].get("prompt_tokens"),
+                        "completion_tokens": result["usage"].get(
+                            "completion_tokens"
+                        ),
+                    }
+                    return result
                 body = response.text[:400]
                 last_error = f"HTTP {response.status_code}: {body}"
                 if response.status_code not in RETRYABLE_STATUS:
@@ -352,7 +421,14 @@ class ChatClient:
             if attempt < self._max_attempts:
                 time.sleep(2**attempt)
         raise ProviderError(
-            f"{self.config.provider}/{self.config.model} request failed: {last_error}"
+            f"{self.config.provider}/{self.config.model} request failed: {last_error}",
+            telemetry={
+                "request_bytes": request_size * attempts_made,
+                "wall_seconds": round(time.perf_counter() - started, 3),
+                "retries": max(attempts_made - 1, 0),
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+            },
         )
 
     def _extract(self, data: dict) -> dict:

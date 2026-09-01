@@ -44,11 +44,16 @@ class AnalyzeSpeechRequest(BaseModel):
     model_size: str | None = Field(default=None, pattern=r"^[a-z0-9.-]{1,40}$")
 
 
+class AnalyzeContextRequest(BaseModel):
+    model: str | None = Field(default=None, max_length=160)
+
+
 class GenerateConceptsRequest(BaseModel):
     provider: str = Field(default="qwen", pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
     model: str | None = Field(default=None, max_length=160)
     guidance: str | None = Field(default=None, max_length=2000)
     keep_concept_ids: list[str] | None = Field(default=None, max_length=10)
+    use_source_context: bool = False
 
 
 class CompilePlanRequest(BaseModel):
@@ -370,6 +375,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             lambda: projects.analyze_speech(project_id, options.model_size),
         )
 
+    @application.post("/api/projects/{project_id}/analysis/context", status_code=202)
+    def analyze_context(project_id: str, request: AnalyzeContextRequest | None = None):
+        project_call(lambda: projects.get_project(project_id))
+        options = request or AnalyzeContextRequest()
+        return jobs.submit(
+            "source_context_analysis",
+            project_id,
+            lambda: projects.analyze_context(project_id, options.model),
+        )
+
     @application.post("/api/projects/{project_id}/concepts", status_code=202)
     def generate_concepts(project_id: str, request: GenerateConceptsRequest | None = None):
         project_call(lambda: projects.get_project(project_id))
@@ -383,6 +398,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 options.model,
                 options.guidance,
                 options.keep_concept_ids,
+                options.use_source_context,
             ),
         )
 
@@ -413,6 +429,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @application.get("/api/projects/{project_id}/analysis/runs")
     def list_semantic_runs(project_id: str):
         return {"runs": project_call(lambda: projects.semantic_runs(project_id))}
+
+    @application.get("/api/projects/{project_id}/analysis/telemetry")
+    def get_analysis_telemetry(project_id: str):
+        return project_call(lambda: projects.analysis_telemetry(project_id))
 
     @application.get("/api/projects/{project_id}/analysis/runs/{run_key}")
     def get_semantic_run(project_id: str, run_key: str):

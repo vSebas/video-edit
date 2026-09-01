@@ -16,6 +16,7 @@ from .providers import (
     video_part,
 )
 from .semantic import RISK_PATTERNS, utc_now
+from .telemetry import aggregate_call_telemetry
 
 PROMPT_VERSION = "live-visual-v2-video"
 MAX_CONCURRENT_CALLS = 6
@@ -198,9 +199,18 @@ def describe_shot(
         ],
         temperature=0.1,
     )
-    parsed = parse_json_content(response["content"])
+    try:
+        parsed = parse_json_content(response["content"])
+    except json.JSONDecodeError as exc:
+        raise ProviderError(
+            f"Shot description was not valid JSON for {filename}",
+            telemetry=response.get("telemetry"),
+        ) from exc
     if not isinstance(parsed, dict) or not str(parsed.get("caption", "")).strip():
-        raise ProviderError(f"Shot description missing caption for {filename}")
+        raise ProviderError(
+            f"Shot description missing caption for {filename}",
+            telemetry=response.get("telemetry"),
+        )
     raw = {
         "filename": filename,
         "shot_start_seconds": start,
@@ -210,6 +220,7 @@ def describe_shot(
         "model": response["model"],
         "content": response["content"],
         "usage": response["usage"],
+        "telemetry": response.get("telemetry"),
     }
     return parsed, raw
 
@@ -260,7 +271,7 @@ def analyze_assets(
     media_root: Path,
     project_id: str,
     run_id: str,
-) -> tuple[dict, list[dict]]:
+) -> tuple[dict, list[dict], dict]:
     """Run live VLM analysis over video/image assets and return a
     schema-valid semantic-evidence.v1 document plus raw exchanges."""
     observations: list[dict] = []
@@ -290,6 +301,7 @@ def analyze_assets(
             tasks.append((sequence, asset, path, start, end))
 
     results: dict[int, tuple[dict, dict]] = {}
+    failures: dict[int, dict] = {}
     with ThreadPoolExecutor(max_workers=MAX_CONCURRENT_CALLS) as pool:
         futures = {
             pool.submit(
@@ -305,12 +317,33 @@ def analyze_assets(
                 warnings.append(
                     f"Shot {asset['filename']} [{start:.2f}-{end:.2f}s] failed: {exc}"
                 )
+                telemetry = getattr(exc, "telemetry", None)
+                if telemetry:
+                    failures[index] = {
+                        "asset_id": asset["asset_id"],
+                        "filename": asset["filename"],
+                        "source_start_seconds": start,
+                        "source_end_seconds": end,
+                        "prompt_version": PROMPT_VERSION,
+                        "model": client.config.model,
+                        "error": str(exc),
+                        "telemetry": telemetry,
+                    }
 
     for sequence, asset, path, start, end in tasks:
         if sequence not in results:
+            if sequence in failures:
+                raw_records.append(failures[sequence])
             continue
         parsed, raw = results[sequence]
         duration = float(asset.get("duration_seconds") or 0.0)
+        raw.update(
+            {
+                "asset_id": asset["asset_id"],
+                "source_start_seconds": start,
+                "source_end_seconds": end,
+            }
+        )
         raw_records.append(raw)
         caption = str(parsed["caption"]).strip()
         extras = []
@@ -423,7 +456,7 @@ def analyze_assets(
         ],
         "observations": observations,
     }
-    return normalized, raw_records
+    return normalized, raw_records, aggregate_call_telemetry(raw_records)
 
 
 def auto_review_decisions(normalized: dict) -> dict:

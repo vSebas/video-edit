@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import Settings
+from .context import ContextAnalysisError, analyze_context
 from .planning import (
     PlanningError,
     compile_edit_plan,
@@ -42,6 +43,7 @@ SUPPORTED_EXTENSIONS = VIDEO_EXTENSIONS | IMAGE_EXTENSIONS | AUDIO_EXTENSIONS
 # user preferred deepseek's and fable's cuts over both Qwens'; deepseek is
 # the default (available on the existing workspace key).
 PLANNER_DEFAULT_MODELS = {"qwen": "deepseek-v4-pro"}
+EVIDENCE_ADAPTERS = {"openstoryline", "owned-live-visual", "local-asr"}
 
 
 def utc_now() -> str:
@@ -321,7 +323,7 @@ class ProjectService:
         run_key = f"{provider}-live-{run_id}"
         try:
             client = make_client(provider, model)
-            normalized, raw_records = analyze_assets(
+            normalized, raw_records, telemetry = analyze_assets(
                 client, assets, media_root, project_id, run_id
             )
             validate_semantic_evidence(
@@ -358,6 +360,7 @@ class ProjectService:
                 "safe_for_edit_plan": normalized["safe_for_edit_plan"],
                 "summary": normalized["summary"],
                 "warnings": normalized["warnings"],
+                "telemetry": telemetry,
                 "imported_at": normalized["generated_at"],
                 "detail_url": f"/api/projects/{project_id}/analysis/runs/{run_key}",
             }
@@ -369,6 +372,63 @@ class ProjectService:
 
         self._corroborate_speech_claims(project_id)
         self._mark_semantic_progress(project_id, "visual")
+        return self.semantic_run(project_id, run_key)
+
+    def analyze_context(self, project_id: str, model: str | None = None) -> dict:
+        """Build derived source/event/relationship context without promoting
+        any of it into the semantic evidence or review pipelines."""
+        project = self.get_project(project_id)
+        assets = project.get("inventory", {}).get("assets", [])
+        if not assets:
+            raise ProjectError("The project has no indexed media to analyze")
+
+        run_id = uuid.uuid4().hex[:12]
+        run_key = f"ctx-live-{run_id}"
+        try:
+            client = make_client("gemini", model)
+            normalized, raw_records, telemetry = analyze_context(
+                client,
+                assets,
+                self.settings.root,
+                project_id,
+                run_id,
+                self._fine_observations(project_id),
+            )
+            self._validate_schema(
+                normalized,
+                SCHEMA_DIR / "source-context.schema.json",
+                "Source context",
+            )
+        except (ProviderError, ContextAnalysisError) as exc:
+            raise ProjectError(f"Source context analysis failed: {exc}") from exc
+
+        runs_dir = self.settings.runtime / project_id / "analysis" / "runs"
+        runs_dir.mkdir(parents=True, exist_ok=True)
+        staging = Path(tempfile.mkdtemp(prefix=f".{run_key}-", dir=runs_dir))
+        try:
+            raw_dir = staging / "raw"
+            raw_dir.mkdir()
+            write_json(raw_dir / "source-responses.json", {"responses": raw_records})
+            write_json(staging / "normalized.json", normalized)
+            manifest = {
+                "schema_version": "semantic-run-manifest.v1",
+                "run_key": run_key,
+                "run_id": run_id,
+                "project_id": project_id,
+                "provider": normalized["provider"],
+                "review_status": "not_applicable",
+                "safe_for_edit_plan": False,
+                "summary": normalized["summary"],
+                "warnings": normalized["warnings"],
+                "telemetry": telemetry,
+                "imported_at": normalized["generated_at"],
+                "detail_url": f"/api/projects/{project_id}/analysis/runs/{run_key}",
+            }
+            write_json(staging / "manifest.json", manifest)
+            os.replace(staging, runs_dir / run_key)
+        except Exception:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
         return self.semantic_run(project_id, run_key)
 
     def analyze_speech(self, project_id: str, model_size: str | None = None) -> dict:
@@ -514,6 +574,8 @@ class ProjectService:
         path = self.settings.runtime / project_id / "project.json"
         pending_risky = 0
         for manifest in self._semantic_run_manifests(project_id):
+            if manifest["provider"]["adapter"] not in EVIDENCE_ADAPTERS:
+                continue
             run = self.semantic_run(project_id, manifest["run_key"])
             pending_risky += run["summary"].get("pending_review_count", 0)
         # Visual and speech analysis complete on different job threads and
@@ -566,12 +628,32 @@ class ProjectService:
         latest: dict[str, dict] = {}
         for manifest in self._semantic_run_manifests(project_id):
             adapter = manifest["provider"]["adapter"]
+            if adapter not in EVIDENCE_ADAPTERS:
+                continue
             if (
                 adapter not in latest
                 or manifest["imported_at"] > latest[adapter]["imported_at"]
             ):
                 latest[adapter] = manifest
         return list(latest.values())
+
+    def _fine_observations(self, project_id: str) -> list[dict]:
+        observations = []
+        for manifest in self._current_run_manifests(project_id):
+            run = self.semantic_run(project_id, manifest["run_key"])
+            observations.extend(run.get("observations") or [])
+        return observations
+
+    def _latest_source_context(self, project_id: str) -> dict | None:
+        newest = None
+        for manifest in self._semantic_run_manifests(project_id):
+            if manifest.get("provider", {}).get("adapter") != "owned-source-context":
+                continue
+            if newest is None or manifest.get("imported_at", "") > newest.get(
+                "imported_at", ""
+            ):
+                newest = manifest
+        return self.semantic_run(project_id, newest["run_key"]) if newest else None
 
     def approved_evidence(self, project_id: str) -> list[dict]:
         """Approved observations from the current evidence runs, with
@@ -630,6 +712,7 @@ class ProjectService:
         model: str | None = None,
         guidance: str | None = None,
         keep_concept_ids: list[str] | None = None,
+        use_source_context: bool = False,
     ) -> dict:
         """Generate grounded creative concepts with missing-shot advice from
         the project's approved evidence. Kept concepts survive regeneration;
@@ -657,6 +740,11 @@ class ProjectService:
                 guidance=guidance,
                 keep_concepts=keep_concepts,
                 footage_language=self._footage_language(project_id),
+                source_context=(
+                    self._latest_source_context(project_id)
+                    if use_source_context
+                    else None
+                ),
             )
             self._validate_schema(
                 document,
@@ -1001,7 +1089,20 @@ class ProjectService:
             if (source_root / "thumbnails").is_dir():
                 shutil.copytree(source_root / "thumbnails", staging / "thumbnails")
             runs_src = source_root / "analysis" / "runs"
-            has_runs = runs_src.is_dir() and any(runs_src.iterdir())
+            run_manifests = (
+                [
+                    load_json(path)
+                    for path in runs_src.glob("*/manifest.json")
+                    if path.is_file()
+                ]
+                if runs_src.is_dir()
+                else []
+            )
+            has_runs = bool(run_manifests)
+            has_evidence = any(
+                item.get("provider", {}).get("adapter") in EVIDENCE_ADAPTERS
+                for item in run_manifests
+            )
             if has_runs:
                 shutil.copytree(runs_src, staging / "analysis" / "runs")
             stored = json.loads(json.dumps(source_stored))
@@ -1012,7 +1113,9 @@ class ProjectService:
                     "created_at": utc_now(),
                     "updated_at": utc_now(),
                     "prompt": (prompt or source_stored.get("prompt", "")).strip(),
-                    "status": "semantic_ready" if has_runs else "awaiting_semantic_analysis",
+                    "status": (
+                        "semantic_ready" if has_evidence else "awaiting_semantic_analysis"
+                    ),
                     "concepts": [],
                     "selected_concept_id": None,
                     "plan": None,
@@ -1023,8 +1126,12 @@ class ProjectService:
                     ),
                 }
             )
-            stored["analysis"]["visual"] = "completed" if has_runs else "unavailable"
-            stored["analysis"]["speech"] = "completed" if has_runs else "unavailable"
+            stored["analysis"]["visual"] = (
+                "completed" if has_evidence else "unavailable"
+            )
+            stored["analysis"]["speech"] = (
+                "completed" if has_evidence else "unavailable"
+            )
             write_json(staging / "project.json", stored)
             try:
                 os.replace(staging, clone_root)
@@ -1049,7 +1156,7 @@ class ProjectService:
             shutil.rmtree(root / "analysis", ignore_errors=True)
 
         stored = load_json(root / "project.json")
-        has_runs = bool(self._semantic_run_manifests(project_id))
+        has_runs = bool(self._current_run_manifests(project_id))
         stored.update(
             {
                 "updated_at": utc_now(),
@@ -1244,12 +1351,32 @@ class ProjectService:
             manifests.append(load_json(path))
         return manifests
 
+    def analysis_telemetry(self, project_id: str) -> dict:
+        self.get_project(project_id)
+        runs = []
+        for manifest in self._semantic_run_manifests(project_id):
+            telemetry = manifest.get("telemetry")
+            if not isinstance(telemetry, dict):
+                continue
+            runs.append(
+                {
+                    "run_key": manifest["run_key"],
+                    "imported_at": manifest.get("imported_at"),
+                    "provider": manifest.get("provider"),
+                    "telemetry": telemetry,
+                }
+            )
+        runs.sort(key=lambda item: item.get("imported_at") or "")
+        return {"project_id": project_id, "runs": runs}
+
     def semantic_run(self, project_id: str, run_key: str) -> dict:
         self.get_project(project_id)
         if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,160}", run_key):
             raise ProjectError("Invalid semantic run id")
         path = self._semantic_run_path(project_id, run_key)
         result = load_json(self._require_file(path))
+        if result.get("schema_version") == "source-context.v1":
+            return result
         reviews_path = path.parent / "reviews.json"
         reviews = load_json(reviews_path) if reviews_path.is_file() else {"decisions": {}}
         decisions = reviews.get("decisions") or {}
@@ -1299,6 +1426,8 @@ class ProjectService:
             raise ProjectError("Review action must be approve or reject")
         normalized_path = self._semantic_run_path(project_id, run_key)
         normalized = load_json(self._require_file(normalized_path))
+        if normalized.get("schema_version") == "source-context.v1":
+            raise ProjectError("Source context is derived and cannot be reviewed as evidence")
         observation = next(
             (
                 item
