@@ -86,6 +86,11 @@ class DriveImportRequest(BaseModel):
     folder: str = Field(min_length=1, max_length=200)
 
 
+class CleanupApplyRequest(BaseModel):
+    indices: list[int] = Field(min_length=1, max_length=200)
+    readback: dict | None = None
+
+
 class OpenTakeSyncRequest(BaseModel):
     # Host-side callers (CLI/browser) pass the get_timeline readback; when
     # omitted the server fetches it over MCP itself (host-run app only —
@@ -355,6 +360,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @application.post("/api/projects/{project_id}/opentake/place")
     def opentake_place(project_id: str):
         return project_call(lambda: projects.opentake_place(project_id))
+
+    @application.post("/api/projects/{project_id}/opentake/cleanup")
+    def opentake_cleanup_candidates(project_id: str, request: OpenTakeSyncRequest | None = None):
+        payload = request or OpenTakeSyncRequest()
+        return project_call(
+            lambda: projects.opentake_cleanup_candidates(project_id, payload.readback)
+        )
+
+    @application.post("/api/projects/{project_id}/opentake/cleanup/apply")
+    def opentake_cleanup_apply(project_id: str, request: CleanupApplyRequest):
+        return project_call(
+            lambda: projects.opentake_cleanup_apply(
+                project_id, request.indices, request.readback
+            )
+        )
 
     @application.post("/api/projects/{project_id}/opentake/sync")
     def opentake_sync_preview(project_id: str, request: OpenTakeSyncRequest | None = None):

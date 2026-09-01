@@ -928,6 +928,95 @@ class ProjectService:
         write_json(plan_dir.parent / "opentake-bridge.json", bridge)
         return summary
 
+    def opentake_cleanup_candidates(
+        self, project_id: str, readback: dict | None = None
+    ) -> dict:
+        """Conservative Spanish filler/dead-air candidates for the live
+        OpenTake timeline, revision-bound for a safe later apply."""
+        from .cleanup import (
+            CleanupError, candidates_for, clip_layout, timeline_fingerprint,
+            transcript_words,
+        )
+
+        project = self.get_project(project_id)
+        bridge_path = self.settings.runtime / project_id / "opentake-bridge.json"
+        if not bridge_path.is_file():
+            raise ProjectError("Place the plan into OpenTake first")
+        bridge = load_json(bridge_path)
+        if readback is None:
+            from .opentake_mcp import OpenTakeMcp, OpenTakeMcpError
+
+            try:
+                readback = OpenTakeMcp().get_timeline()
+            except OpenTakeMcpError as exc:
+                raise ProjectError(str(exc)) from exc
+        try:
+            words = transcript_words(
+                self.settings.runtime / project_id / "analysis" / "runs"
+            )
+            clips = clip_layout(readback, bridge, project["inventory"])
+            found = candidates_for(words, clips, bridge["fps"])
+        except CleanupError as exc:
+            raise ProjectError(str(exc)) from exc
+        fingerprint = timeline_fingerprint(readback)
+        write_json(
+            self.settings.runtime / project_id / "opentake-cleanup.json",
+            {"fingerprint": fingerprint, "candidates": found},
+        )
+        total = sum(b - a for a, b in (c["frames"] for c in found))
+        return {
+            "candidates": found,
+            "total_frames": total,
+            "total_seconds": round(total / bridge["fps"], 2),
+            "fingerprint": fingerprint,
+        }
+
+    def opentake_cleanup_apply(
+        self, project_id: str, indices: list[int], readback: dict | None = None
+    ) -> dict:
+        """Apply the approved candidate subset in one atomic ripple. The
+        stored fingerprint must still match the live timeline."""
+        from .cleanup import timeline_fingerprint
+        from .opentake_mcp import OpenTakeMcp, OpenTakeMcpError
+
+        stored_path = self.settings.runtime / project_id / "opentake-cleanup.json"
+        if not stored_path.is_file():
+            raise ProjectError("List cleanup candidates before applying")
+        stored = load_json(stored_path)
+        try:
+            chosen = [stored["candidates"][i] for i in indices]
+        except (IndexError, TypeError) as exc:
+            raise ProjectError("Unknown candidate selection") from exc
+        if not chosen:
+            raise ProjectError("Nothing selected")
+        try:
+            client = None
+            live = readback
+            if live is None:
+                client = OpenTakeMcp()
+                live = client.get_timeline()
+            if timeline_fingerprint(live) != stored["fingerprint"]:
+                stored_path.unlink(missing_ok=True)
+                raise ProjectError(
+                    "The OpenTake timeline changed since the candidates were "
+                    "computed — list them again"
+                )
+            client = client or OpenTakeMcp()
+            result = client.tool("ripple_delete_ranges", {
+                "trackIndex": 0,
+                "units": "frames",
+                "ranges": [c["frames"] for c in chosen],
+            })
+        except OpenTakeMcpError as exc:
+            raise ProjectError(str(exc)) from exc
+        stored_path.unlink(missing_ok=True)
+        removed = sum(b - a for a, b in (c["frames"] for c in chosen))
+        return {
+            "applied": len(chosen),
+            "removed_frames": removed,
+            "detail": result.get("text", ""),
+        }
+
     def opentake_sync_preview(
         self, project_id: str, readback: dict | None = None
     ) -> dict:

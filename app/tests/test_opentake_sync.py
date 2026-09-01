@@ -405,3 +405,100 @@ class TestStalenessGuard:
 
         assert saved_bundle_state(tmp_path / "nope") is None
         assert staleness_warning({"tracks": []}, None) is None
+
+
+class TestCleanupCandidates:
+    """Pure candidate computation, revision binding, and the endpoints."""
+
+    def _words(self):
+        return {"img_a": [
+            {"word": "hola", "start": 1.0, "end": 1.3},
+            {"word": "este", "start": 1.4, "end": 1.7},   # + 0.8s gap -> filler
+            {"word": "vamos", "start": 2.5, "end": 2.8},
+            {"word": "ya", "start": 4.5, "end": 4.7},     # 1.7s gap before -> dead air
+        ]}
+
+    def _clips(self):
+        return [{"clipId": "c1", "asset_id": "img_a", "startFrame": 0,
+                 "durationFrames": 150, "trimStartFrame": 0}]
+
+    def test_filler_and_dead_air_found(self) -> None:
+        from video_app.cleanup import candidates_for
+
+        found = candidates_for(self._words(), self._clips(), 30)
+        reasons = [c["reason"] for c in found]
+        assert any("este" in r for r in reasons)
+        assert any("silencio" in r for r in reasons)
+
+    def test_este_without_gap_is_not_filler(self) -> None:
+        from video_app.cleanup import candidates_for
+
+        words = {"img_a": [
+            {"word": "este", "start": 1.0, "end": 1.2},
+            {"word": "camino", "start": 1.25, "end": 1.6},  # tight -> demonstrative
+        ]}
+        found = candidates_for(words, self._clips(), 30)
+        assert not any("este" in c["reason"] for c in found)
+
+    def test_fingerprint_changes_with_timeline(self) -> None:
+        from video_app.cleanup import timeline_fingerprint
+
+        a = {"tracks": [{"type": "video", "clips": [
+            {"clipId": "x", "startFrame": 0, "durationFrames": 10}]}]}
+        b = {"tracks": [{"type": "video", "clips": [
+            {"clipId": "x", "startFrame": 0, "durationFrames": 12}]}]}
+        assert timeline_fingerprint(a) != timeline_fingerprint(b)
+
+
+class TestCleanupEndpoints:
+    def test_candidates_and_stale_apply(self, tmp_path) -> None:
+        import json as _json
+
+        from fastapi.testclient import TestClient
+        from video_app.config import Settings
+        from video_app.main import create_app
+
+        fx = __import__("pathlib").Path(__file__).parent / "fixtures" / "opentake_sync"
+        pid = "cleanup-test"
+        root = tmp_path / "runtime" / pid
+        (root / "plan").mkdir(parents=True)
+        runs = root / "analysis" / "runs" / "asr-live-abc" 
+        (runs / "raw").mkdir(parents=True)
+        (runs / "manifest.json").write_text(_json.dumps(
+            {"run_key": "asr-live-abc", "imported_at": "2026-09-01T00:00:00Z",
+             "provider": {"adapter": "local-asr"}}))
+        (runs / "raw" / "transcripts.json").write_text(_json.dumps({"transcripts": [
+            {"asset_id": "img_2539", "segments": [{"words": [
+                {"word": "hola", "start_seconds": 13.2, "end_seconds": 13.4},
+                {"word": "listo", "start_seconds": 15.0, "end_seconds": 15.2},
+            ]}]}]}))
+        bridge = _json.loads((fx / "bridge.json").read_text())
+        (root / "opentake-bridge.json").write_text(_json.dumps(bridge))
+        inventory = _json.loads((fx / "inventory.json").read_text())
+        (root / "project.json").write_text(_json.dumps({
+            "schema_version": "video-app-project.v1", "project_id": pid,
+            "name": "t", "created_at": "2026-09-01T00:00:00Z",
+            "updated_at": "2026-09-01T00:00:00Z", "source_directory": "footage",
+            "prompt": "", "status": "plan_ready", "footage_summary": "",
+            "analysis": {}, "inventory": inventory, "concepts": [],
+            "selected_concept_id": None, "plan": None, "outputs": {},
+        }))
+        readback = _json.loads((fx / "readback-untouched.json").read_text())
+        settings = Settings(root=PROJECT_ROOT, runtime=tmp_path / "runtime")
+        with TestClient(create_app(settings)) as client:
+            listed = client.post(
+                f"/api/projects/{pid}/opentake/cleanup", json={"readback": readback}
+            )
+            assert listed.status_code == 200, listed.text
+            body = listed.json()
+            # the 13.2-15.2s gap inside v01 (source 13.0-15.3s) -> dead air
+            assert any("silencio" in c["reason"] for c in body["candidates"])
+            # apply against a MUTATED timeline must be refused (fingerprint)
+            mutated = _json.loads(_json.dumps(readback))
+            mutated["tracks"][0]["clips"][0]["durationFrames"] += 1
+            stale = client.post(
+                f"/api/projects/{pid}/opentake/cleanup/apply",
+                json={"indices": [0], "readback": mutated},
+            )
+            assert stale.status_code == 400
+            assert "changed" in stale.json()["detail"]

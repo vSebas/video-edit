@@ -569,3 +569,5 @@ input[type="file"] {
 .sync-diff ul { margin: 8px 0; padding-left: 18px; }
 .sync-diff li { font-size: 13px; margin: 4px 0; }
 .sync-diff code { opacity: .8; }
+.cleanup-item { display: flex; gap: 8px; align-items: baseline; font-size: 13px; margin: 4px 0; }
+.cleanup-item em { opacity: .7; }

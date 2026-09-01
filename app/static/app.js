@@ -499,6 +499,13 @@ function advancedSection(project) {
           <span>Lee la línea de tiempo y muestra qué cambiaría en el plan</span>
         </button>
       </div>
+      <div class="pipeline-grid">
+        <button class="pipeline-step" id="opentake-cleanup">
+          <strong>Limpieza de diálogo</strong>
+          <span>Busca muletillas y silencios en la línea de tiempo de OpenTake</span>
+        </button>
+      </div>
+      <div id="opentake-cleanup-list"></div>
       <div id="opentake-diff"></div>
       <div class="pipeline-grid">
         <button class="pipeline-step" id="clone-project">
@@ -603,6 +610,7 @@ function renderProject() {
     button.addEventListener('click', () => runAdvancedStep(button.dataset.pipeline, button));
   $('#opentake-place')?.addEventListener('click', openTakePlace);
   $('#opentake-sync')?.addEventListener('click', openTakeSyncPreview);
+  $('#opentake-cleanup')?.addEventListener('click', openTakeCleanup);
   });
   $('#delete-project')?.addEventListener('click', deleteProject);
   $('#clone-project')?.addEventListener('click', cloneProject);
@@ -996,6 +1004,42 @@ async function openTakeSyncPreview() {
   } catch (error) {
     notice(error.message, true);
   }
+}
+
+async function openTakeCleanup() {
+  const project = state.activeProject;
+  if (!project) return;
+  const box = $('#opentake-cleanup-list');
+  try {
+    const found = await api(`/api/projects/${project.project_id}/opentake/cleanup`, { method: 'POST' });
+    if (!found.candidates.length) {
+      box.innerHTML = '<p class="notice">Sin candidatos — el habla está limpia (nota: Whisper omite los «eh» puros, así que esto es normal en discurso preparado).</p>';
+      return;
+    }
+    box.innerHTML = `
+      <div class="sync-diff">
+        <p><strong>${found.candidates.length}</strong> candidato(s), ${found.total_seconds}s en total. Marca los que quieras cortar:</p>
+        ${found.candidates.map((c, i) => `
+          <label class="cleanup-item">
+            <input type="checkbox" data-cleanup-index="${i}" checked />
+            <span>${escapeHtml(c.reason)} — <em>${escapeHtml(c.context)}</em> (${((c.frames[1] - c.frames[0]) / 30).toFixed(1)}s)</span>
+          </label>`).join('')}
+        <button class="pipeline-step" id="opentake-cleanup-apply"><strong>Cortar seleccionados en OpenTake</strong>
+        <span>Un solo corte atómico; luego usa «Traer cambios» para llevarlo al plan</span></button>
+      </div>`;
+    $('#opentake-cleanup-apply')?.addEventListener('click', async () => {
+      const indices = [...document.querySelectorAll('[data-cleanup-index]')]
+        .filter((el) => el.checked).map((el) => Number(el.dataset.cleanupIndex));
+      if (!indices.length) { notice('Nada seleccionado.', true); return; }
+      try {
+        const applied = await api(`/api/projects/${project.project_id}/opentake/cleanup/apply`, {
+          method: 'POST', body: JSON.stringify({ indices }),
+        });
+        notice(`${applied.applied} corte(s) aplicados en OpenTake (${applied.detail}). Ahora «Traer cambios de OpenTake» para actualizar el plan.`);
+        box.innerHTML = '';
+      } catch (error) { notice(error.message, true); }
+    });
+  } catch (error) { notice(error.message, true); }
 }
 
 async function runAdvancedStep(stepId, button) {
