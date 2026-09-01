@@ -84,6 +84,9 @@ class ProjectService:
         self._semantic_review_lock = threading.Lock()
         self._project_locks: dict[str, threading.Lock] = {}
         self._project_locks_guard = threading.Lock()
+        # Placement rewrites the open OpenTake timeline; two concurrent
+        # clicks interleaving remove/add would shred it.
+        self._opentake_place_lock = threading.Lock()
 
     @contextmanager
     def _project_write(self, project_id: str):
@@ -914,10 +917,14 @@ class ProjectService:
             if inventory_path.is_file()
             else project["inventory"]
         )
+        if not self._opentake_place_lock.acquire(blocking=False):
+            raise ProjectError("A placement is already running — wait for it")
         try:
             summary, bridge = place_plan(plan, inventory, project_id)
         except BridgeError as exc:
             raise ProjectError(str(exc)) from exc
+        finally:
+            self._opentake_place_lock.release()
         write_json(plan_dir.parent / "opentake-bridge.json", bridge)
         return summary
 

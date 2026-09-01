@@ -100,7 +100,11 @@ mounted from the host. Model choices are evidence-based: see
 
 ## Reaching it from other devices
 
-`VIDEO_EDITING_BIND=0.0.0.0` opens the port beyond the laptop. Pair it with
+The app container runs with host networking (required to reach OpenTake's
+loopback-only MCP listener), which also means the container is no longer
+network-isolated from other host-local services — a consequence to keep in
+mind alongside the token gate. `VIDEO_EDITING_BIND=0.0.0.0` opens the port
+beyond the laptop. Pair it with
 `VIDEO_EDITING_TOKEN=<secret>`: unset, the API has no authentication at all,
 and anyone who can route to the port can download footage, delete clips, and
 spend API credit. With it set, open `http://<host>:8787/?token=<secret>` once
