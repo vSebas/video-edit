@@ -388,3 +388,67 @@ class TestRotationDetection:
         finally:
             visual_module.extract_frame = original
         assert (degrees, confidence) == (0, 0.0)
+
+
+class TestVoiceoverOps:
+    def _inventory(self):
+        return {"assets": [
+            {"asset_id": "clip_a", "media_type": "video",
+             "duration_seconds": 10.0},
+            {"asset_id": "clip_b", "media_type": "video",
+             "duration_seconds": 6.0},
+            {"asset_id": "memo", "media_type": "audio",
+             "duration_seconds": 3.0, "filename": "memo.m4a"},
+        ]}
+
+    def test_add_voiceover_creates_a2_track(self) -> None:
+        candidate, summary = apply_op(_plan(), {
+            "op": "add_voiceover", "asset_id": "memo",
+            "timeline_start_seconds": 2.0,
+        }, self._inventory())
+        audios = [t for t in candidate["tracks"] if t["kind"] == "audio"]
+        assert len(audios) == 2 and audios[1]["role"] == "voiceover"
+        (event,) = audios[1]["events"]
+        assert event["event_id"] == "vo-01"
+        assert event["duration_seconds"] == 3.0
+        assert "voz en off" in summary.lower()
+
+    def test_voiceover_requires_audio_asset(self) -> None:
+        with pytest.raises(PlanOpError, match="not an audio asset"):
+            apply_op(_plan(), {
+                "op": "add_voiceover", "asset_id": "clip_b",
+                "timeline_start_seconds": 0.0,
+            }, self._inventory())
+
+    def test_overlapping_voiceovers_refused_and_removal_works(self) -> None:
+        with_vo, _ = apply_op(_plan(), {
+            "op": "add_voiceover", "asset_id": "memo",
+            "timeline_start_seconds": 2.0,
+        }, self._inventory())
+        with pytest.raises(PlanOpError, match="Overlaps"):
+            apply_op(with_vo, {
+                "op": "add_voiceover", "asset_id": "memo",
+                "timeline_start_seconds": 3.0,
+            }, self._inventory())
+        removed, _ = apply_op(with_vo, {
+            "op": "remove_voiceover", "event_id": "vo-01",
+        }, self._inventory())
+        audios = [t for t in removed["tracks"] if t["kind"] == "audio"]
+        assert audios[1]["events"] == []
+
+    def test_delete_pushing_voiceover_past_end_is_refused(self) -> None:
+        with_vo, _ = apply_op(_plan(), {
+            "op": "add_voiceover", "asset_id": "memo",
+            "timeline_start_seconds": 6.5,
+        }, self._inventory())
+        with pytest.raises(PlanOpError, match="voiceover"):
+            apply_op(with_vo, {"op": "delete_event", "event_id": "v03"},
+                     self._inventory())
+
+    def test_instruction_table_lists_audio_assets(self) -> None:
+        client = FakeClient({"op": "add_voiceover", "asset_id": "memo",
+                             "timeline_start_seconds": 0.0})
+        instruction_to_op(client, _plan(), "pon la nota de voz",
+                          self._inventory())
+        system = client.messages[0]["content"]
+        assert "memo (3.0s)" in system and "memo.m4a" in system

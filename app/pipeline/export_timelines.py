@@ -31,6 +31,13 @@ def track(plan, kind: str):
     return next(item for item in plan["tracks"] if item["kind"] == kind)
 
 
+def voiceover_track_events(plan):
+    matches = [item for item in plan["tracks"] if item["kind"] == "audio"]
+    if len(matches) == 2 and matches[1].get("role") == "voiceover":
+        return matches[1]["events"]
+    return []
+
+
 def broll_events(plan):
     matches = [item for item in plan["tracks"] if item["kind"] == "video"]
     if len(matches) == 2 and matches[1].get("role") == "broll":
@@ -156,6 +163,38 @@ def export_otio(plan, assets):
             )
         timeline.tracks.append(output_track)
 
+    voiceovers = voiceover_track_events(plan)
+    if voiceovers:
+        output_track = otio.schema.Track(
+            name="A2 — Voiceover", kind=otio.schema.TrackKind.Audio
+        )
+        previous_end = 0.0
+        for event in voiceovers:
+            gap = event["timeline_start_seconds"] - previous_end
+            if gap > 1e-9:
+                output_track.append(
+                    otio.schema.Gap(source_range=time_range(0, gap, fps))
+                )
+            asset = assets[event["asset_id"]]
+            clip = otio.schema.Clip(
+                name=f"{event['event_id']} — {asset['filename']}",
+                media_reference=make_reference(asset, fps),
+                source_range=time_range(
+                    event["source_start_seconds"], event["duration_seconds"], fps
+                ),
+            )
+            clip.metadata["video_editing_poc"] = {
+                "event_id": event["event_id"],
+                "asset_id": event["asset_id"],
+                "role": "voiceover",
+                "timeline_start_seconds": event["timeline_start_seconds"],
+            }
+            output_track.append(clip)
+            previous_end = (
+                event["timeline_start_seconds"] + event["duration_seconds"]
+            )
+        timeline.tracks.append(output_track)
+
     for event in track(plan, "title")["events"]:
         marker = otio.schema.Marker(
             name=event["text"],
@@ -185,14 +224,15 @@ def add_file_node(clipitem, asset, fps):
     add(file_node, "duration", math.ceil(asset["duration_seconds"] * fps))
     add_rate(file_node, fps)
     media = add(file_node, "media")
-    video = add(media, "video")
-    sample = add(video, "samplecharacteristics")
-    add_rate(sample, fps)
-    add(sample, "width", asset["video"]["width"])
-    add(sample, "height", asset["video"]["height"])
-    add(sample, "anamorphic", "FALSE")
-    add(sample, "pixelaspectratio", "square")
-    add(sample, "fielddominance", "none")
+    if asset.get("video"):
+        video = add(media, "video")
+        sample = add(video, "samplecharacteristics")
+        add_rate(sample, fps)
+        add(sample, "width", asset["video"]["width"])
+        add(sample, "height", asset["video"]["height"])
+        add(sample, "anamorphic", "FALSE")
+        add(sample, "pixelaspectratio", "square")
+        add(sample, "fielddominance", "none")
     if asset.get("audio"):
         audio = add(media, "audio")
         sample = add(audio, "samplecharacteristics")
@@ -408,6 +448,42 @@ def export_xmeml(plan, assets):
             add(parameter, "name", name)
             add(parameter, "value", value)
 
+    voiceovers = voiceover_track_events(plan)
+    vo_xml_track = None
+    if voiceovers:
+        vo_xml_track = add(audio_parent, "track")
+        for event in voiceovers:
+            asset = assets[event["asset_id"]]
+            start = frame(event["timeline_start_seconds"], fps)
+            end = start + frame(event["duration_seconds"], fps)
+            source_in = frame(event["source_start_seconds"], fps)
+            source_out = source_in + frame(event["duration_seconds"], fps)
+            clipitem = add(
+                vo_xml_track, "clipitem",
+                attributes={"id": f"audio-{event['event_id']}"},
+            )
+            add(clipitem, "masterclipid", f"master-{asset['asset_id']}")
+            add(clipitem, "name", f"{event['event_id']} — {asset['filename']}")
+            add(clipitem, "enabled", "TRUE")
+            add(clipitem, "duration", math.ceil(asset["duration_seconds"] * fps))
+            add_rate(clipitem, fps)
+            add(clipitem, "start", start)
+            add(clipitem, "end", end)
+            add(clipitem, "in", source_in)
+            add(clipitem, "out", source_out)
+            if asset["asset_id"] not in seen_files:
+                add_file_node(clipitem, asset, fps)
+                seen_files.add(asset["asset_id"])
+            else:
+                add(clipitem, "file", attributes={"id": f"file-{asset['asset_id']}"})
+            sourcetrack = add(clipitem, "sourcetrack")
+            add(sourcetrack, "mediatype", "audio")
+            add(sourcetrack, "trackindex", 2)
+            add_audio_level_filter(clipitem, event.get("volume_db"))
+        add(vo_xml_track, "enabled", "TRUE")
+        add(vo_xml_track, "locked", "FALSE")
+        add(vo_xml_track, "outputchannelindex", 2)
+
     add(video_track, "enabled", "TRUE")
     add(video_track, "locked", "FALSE")
     if broll_xml_track is not None:
@@ -439,7 +515,8 @@ def validate_exports(plan):
     expected_audio = len(track(plan, "audio")["events"])
     expected_titles = len(track(plan, "title")["events"])
     expected_broll = len(broll_events(plan))
-    expected_tracks = 3 if expected_broll else 2
+    expected_voiceover = len(voiceover_track_events(plan))
+    expected_tracks = 2 + (1 if expected_broll else 0) + (1 if expected_voiceover else 0)
     checks = []
 
     timeline = otio.adapters.read_from_file(str(OTIO_PATH))
@@ -476,7 +553,8 @@ def validate_exports(plan):
     xml_titles = sequence.findall(
         f"./media/video/track[{3 if expected_broll else 2}]/generatoritem"
     )
-    xml_audio = sequence.findall("./media/audio/track/clipitem")
+    xml_audio = sequence.findall("./media/audio/track[1]/clipitem")
+    xml_voiceover = sequence.findall("./media/audio/track[2]/clipitem")
     sequence_duration = int(sequence.findtext("duration"))
     checks.append(
         {
@@ -491,8 +569,9 @@ def validate_exports(plan):
             "pass": len(xml_video) == expected_video
             and len(xml_audio) == expected_audio
             and len(xml_broll) == expected_broll
+            and len(xml_voiceover) == expected_voiceover
             and len(xml_titles) == expected_titles,
-            "detail": f"video={len(xml_video)} audio={len(xml_audio)} broll={len(xml_broll)} titles={len(xml_titles)}",
+            "detail": f"video={len(xml_video)} audio={len(xml_audio)} broll={len(xml_broll)} voiceover={len(xml_voiceover)} titles={len(xml_titles)}",
         }
     )
     expected_rotations = [

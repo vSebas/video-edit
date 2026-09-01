@@ -4,23 +4,63 @@
   "title": "Edit Plan v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "generated_at", "benchmark_id", "concept_id", "project", "tracks"],
+  "required": [
+    "schema_version",
+    "generated_at",
+    "benchmark_id",
+    "concept_id",
+    "project",
+    "tracks"
+  ],
   "properties": {
-    "schema_version": {"const": "edit-plan.v1"},
-    "generated_at": {"type": "string", "format": "date-time"},
-    "benchmark_id": {"type": "string"},
-    "concept_id": {"type": "string"},
-    "revision": {"type": "integer", "minimum": 1, "default": 1},
+    "schema_version": {
+      "const": "edit-plan.v1"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "benchmark_id": {
+      "type": "string"
+    },
+    "concept_id": {
+      "type": "string"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 1
+    },
     "project": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["width", "height", "fps", "duration_seconds", "background_color"],
+      "required": [
+        "width",
+        "height",
+        "fps",
+        "duration_seconds",
+        "background_color"
+      ],
       "properties": {
-        "width": {"type": "integer", "minimum": 1},
-        "height": {"type": "integer", "minimum": 1},
-        "fps": {"type": "number", "exclusiveMinimum": 0},
-        "duration_seconds": {"type": "number", "exclusiveMinimum": 0},
-        "background_color": {"type": "string"}
+        "width": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "fps": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "duration_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "background_color": {
+          "type": "string"
+        }
       }
     },
     "tracks": {
@@ -29,12 +69,36 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["track_id", "kind", "events"],
+        "required": [
+          "track_id",
+          "kind",
+          "events"
+        ],
         "properties": {
-          "track_id": {"type": "string"},
-          "kind": {"enum": ["video", "audio", "caption", "title"]},
-          "role": {"enum": ["primary", "broll"]},
-          "events": {"type": "array", "items": {"$ref": "#/$defs/event"}}
+          "track_id": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "video",
+              "audio",
+              "caption",
+              "title"
+            ]
+          },
+          "role": {
+            "enum": [
+              "primary",
+              "broll",
+              "voiceover"
+            ]
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/event"
+            }
+          }
         }
       }
     }
@@ -43,42 +107,146 @@
     "event": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["event_id", "timeline_start_seconds", "duration_seconds", "intent", "confidence"],
+      "required": [
+        "event_id",
+        "timeline_start_seconds",
+        "duration_seconds",
+        "intent",
+        "confidence"
+      ],
       "properties": {
-        "event_id": {"type": "string"},
-        "asset_id": {"type": ["string", "null"]},
-        "source_start_seconds": {"type": ["number", "null"], "minimum": 0},
-        "source_end_seconds": {"type": ["number", "null"], "minimum": 0},
-        "timeline_start_seconds": {"type": "number", "minimum": 0},
-        "duration_seconds": {"type": "number", "exclusiveMinimum": 0},
-        "playback_rate": {"type": "number", "exclusiveMinimum": 0, "default": 1},
-        "intent": {"type": "string"},
-        "observed_content": {"type": ["string", "null"]},
-        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "event_id": {
+          "type": "string"
+        },
+        "asset_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_start_seconds": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "source_end_seconds": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "timeline_start_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "duration_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "playback_rate": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 1
+        },
+        "intent": {
+          "type": "string"
+        },
+        "observed_content": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
         "reframe": {
-          "type": ["object", "null"],
+          "type": [
+            "object",
+            "null"
+          ],
           "additionalProperties": false,
-          "required": ["mode", "center_x", "center_y", "scale", "manual_review"],
+          "required": [
+            "mode",
+            "center_x",
+            "center_y",
+            "scale",
+            "manual_review"
+          ],
           "properties": {
-            "mode": {"enum": ["fit", "fill", "subject_track", "manual"]},
-            "center_x": {"type": "number", "minimum": 0, "maximum": 1},
-            "center_y": {"type": "number", "minimum": 0, "maximum": 1},
-            "scale": {"type": "number", "exclusiveMinimum": 0},
-            "rotation_degrees": {"type": "number", "default": 0},
-            "manual_review": {"type": "boolean"}
+            "mode": {
+              "enum": [
+                "fit",
+                "fill",
+                "subject_track",
+                "manual"
+              ]
+            },
+            "center_x": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "center_y": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "scale": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "rotation_degrees": {
+              "type": "number",
+              "default": 0
+            },
+            "manual_review": {
+              "type": "boolean"
+            }
           }
         },
         "transition_out": {
-          "type": ["object", "null"],
+          "type": [
+            "object",
+            "null"
+          ],
           "additionalProperties": false,
-          "required": ["type", "duration_seconds"],
+          "required": [
+            "type",
+            "duration_seconds"
+          ],
           "properties": {
-            "type": {"enum": ["cut", "dissolve", "fade_black", "fade_white"]},
-            "duration_seconds": {"type": "number", "minimum": 0}
+            "type": {
+              "enum": [
+                "cut",
+                "dissolve",
+                "fade_black",
+                "fade_white"
+              ]
+            },
+            "duration_seconds": {
+              "type": "number",
+              "minimum": 0
+            }
           }
         },
-        "text": {"type": ["string", "null"]},
-        "volume_db": {"type": ["number", "null"]}
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "volume_db": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
       }
     }
   }

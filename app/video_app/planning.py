@@ -938,6 +938,27 @@ def validate_edit_plan(plan: dict, schema_path: Path, project: dict) -> None:
                 f"{kind} track covers {cursor:.3f}s, past the plan duration "
                 f"{duration:.3f}s"
             )
+    audio_tracks = [t for t in plan["tracks"] if t["kind"] == "audio"]
+    if len(audio_tracks) > 2:
+        raise PlanningError("At most one voiceover track beyond the primary audio")
+    if len(audio_tracks) == 2:
+        if audio_tracks[1].get("role") != "voiceover":
+            raise PlanningError(
+                "A second audio track must declare role 'voiceover'"
+            )
+        for event in audio_tracks[1]["events"]:
+            asset = assets.get(event.get("asset_id"))
+            if asset is not None and asset.get("media_type") != "audio":
+                raise PlanningError(
+                    f"Voiceover event {event['event_id']} must use an audio "
+                    "asset"
+                )
+            if (event["timeline_start_seconds"] + event["duration_seconds"]
+                    > duration + 0.05):
+                raise PlanningError(
+                    f"Voiceover event {event['event_id']} extends past the "
+                    "plan duration"
+                )
     video_tracks = [t for t in plan["tracks"] if t["kind"] == "video"]
     if len(video_tracks) > 2:
         raise PlanningError("At most one B-roll track is supported beyond the primary")

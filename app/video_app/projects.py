@@ -1179,7 +1179,9 @@ class ProjectService:
             provider, model or PLANNER_DEFAULT_MODELS.get(provider)
         ))
         try:
-            op = instruction_to_op(client, plan, instruction)
+            op = instruction_to_op(
+                client, plan, instruction, project.get("inventory") or {}
+            )
         except ProviderError as exc:
             raise ProjectError(f"The instruction model failed: {exc}") from exc
         except PlanOpError as exc:

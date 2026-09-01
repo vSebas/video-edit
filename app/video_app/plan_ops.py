@@ -78,7 +78,11 @@ def _ripple(plan: dict, from_seconds: float, delta: float) -> None:
     """Shift everything at/after a timeline position; overlays and titles
     ride along so they stay glued to their content."""
     video, audio = _primary_tracks(plan)
-    for events in (video["events"], audio["events"], _broll_events(plan)):
+    voiceover = _voiceover_track(plan)
+    for events in (
+        video["events"], audio["events"], _broll_events(plan),
+        voiceover["events"] if voiceover else [],
+    ):
         for event in events:
             if event["timeline_start_seconds"] >= from_seconds - 1e-6:
                 event["timeline_start_seconds"] = _r(
@@ -106,6 +110,14 @@ def _check_overlays_fit(plan: dict) -> None:
             raise PlanOpError(
                 f"This edit would push B-roll {event['event_id']} past the "
                 "end of the video — remove or move that overlay first"
+            )
+    voiceover = _voiceover_track(plan)
+    for event in voiceover["events"] if voiceover else []:
+        if (event["timeline_start_seconds"] + event["duration_seconds"]
+                > primary_end + 0.05):
+            raise PlanOpError(
+                f"This edit would push voiceover {event['event_id']} past "
+                "the end of the video — remove it first"
             )
 
 
@@ -259,12 +271,80 @@ def _apply_title(plan: dict, op: dict, assets: dict) -> str:
     return f"Título {events[index]['event_id']} ahora dice: «{text}»"
 
 
+def _voiceover_track(plan: dict, create: bool = False) -> dict | None:
+    audios = [t for t in plan["tracks"] if t["kind"] == "audio"]
+    if len(audios) == 2 and audios[1].get("role") == "voiceover":
+        return audios[1]
+    if create:
+        track = {"track_id": "a2", "kind": "audio", "role": "voiceover",
+                 "events": []}
+        plan["tracks"].append(track)
+        return track
+    return None
+
+
+def _apply_add_voiceover(plan: dict, op: dict, assets: dict) -> str:
+    asset = assets.get(op["asset_id"])
+    if asset is None:
+        raise PlanOpError(f"No asset {op['asset_id']!r} in the inventory")
+    if asset.get("media_type") != "audio":
+        raise PlanOpError(
+            f"{op['asset_id']} is not an audio asset — voiceovers come from "
+            "recorded audio files in the footage folder"
+        )
+    start = float(op["timeline_start_seconds"])
+    total = plan["project"]["duration_seconds"]
+    if not 0 <= start <= total - 0.5:
+        raise PlanOpError(
+            f"timeline_start_seconds must be within [0, {total - 0.5:.1f}]"
+        )
+    available = float(asset.get("duration_seconds") or 0.0)
+    if available < 0.5:
+        raise PlanOpError(f"{op['asset_id']} is shorter than 0.5s")
+    duration = _r(min(available, total - start))
+    track = _voiceover_track(plan, create=True)
+    event_id = f"vo-{len(track['events']) + 1:02d}"
+    for existing in track["events"]:
+        a, b = existing["timeline_start_seconds"], (
+            existing["timeline_start_seconds"] + existing["duration_seconds"]
+        )
+        if start < b and start + duration > a:
+            raise PlanOpError(
+                f"Overlaps voiceover {existing['event_id']} — remove it first"
+            )
+    track["events"].append({
+        "event_id": event_id, "asset_id": op["asset_id"],
+        "source_start_seconds": 0.0, "source_end_seconds": duration,
+        "timeline_start_seconds": _r(start), "duration_seconds": duration,
+        "playback_rate": 1.0, "intent": "voiceover",
+        "observed_content": None, "confidence": 1.0, "reframe": None,
+        "transition_out": None, "text": None, "volume_db": None,
+    })
+    return (
+        f"Voz en off {event_id} ({op['asset_id']}) desde "
+        f"{start:.1f}s, {duration:.1f}s; el audio original baja -9dB "
+        "debajo (solo en el render final)"
+    )
+
+
+def _apply_remove_voiceover(plan: dict, op: dict, assets: dict) -> str:
+    track = _voiceover_track(plan)
+    if track is None:
+        raise PlanOpError("This plan has no voiceover track")
+    index = _index_of(track["events"], op["event_id"])
+    removed = track["events"].pop(index)
+    return f"Voz en off {removed['event_id']} eliminada"
+
+
 _APPLIERS = {
     "delete_event": (_apply_delete, {"event_id"}),
     "trim_event": (_apply_trim, {"event_id", "edge", "direction", "seconds"}),
     "set_volume": (_apply_volume, {"event_id", "volume_db"}),
     "jl_cut": (_apply_jl, {"event_id", "lead_seconds"}),
     "set_title": (_apply_title, {"event_id", "text"}),
+    "add_voiceover": (_apply_add_voiceover,
+                      {"asset_id", "timeline_start_seconds"}),
+    "remove_voiceover": (_apply_remove_voiceover, {"event_id"}),
 }
 
 
@@ -289,7 +369,7 @@ def apply_op(plan: dict, op: dict, inventory: dict) -> tuple[dict, str]:
     return candidate, summary
 
 
-def _event_table(plan: dict) -> str:
+def _event_table(plan: dict, inventory: dict | None = None) -> str:
     lines = []
     video, audio = _primary_tracks(plan)
     for v, a in zip(video["events"], audio["events"]):
@@ -312,6 +392,23 @@ def _event_table(plan: dict) -> str:
             f"- {b['event_id']} (b-roll, {b['timeline_start_seconds']:.1f}-"
             f"{end:.1f}s)"
         )
+    vo = _voiceover_track(plan)
+    for v in (vo["events"] if vo else []):
+        lines.append(
+            f"- {v['event_id']} (voz en off, "
+            f"{v['timeline_start_seconds']:.1f}s, {v['asset_id']})"
+        )
+    audio_assets = [
+        a for a in (inventory or {}).get("assets", [])
+        if a.get("media_type") == "audio"
+    ]
+    if audio_assets:
+        lines.append("Available voiceover audio assets:")
+        for a in audio_assets:
+            lines.append(
+                f"- {a['asset_id']} ({float(a.get('duration_seconds') or 0):.1f}s)"
+                f" :: {a.get('filename', '')}"
+            )
     return "\n".join(lines)
 
 
@@ -322,6 +419,8 @@ Respond with EXACTLY one JSON object, nothing else. One of:
 {"op":"set_volume","event_id":"...","volume_db":<-96..12, -96 mutes>}
 {"op":"jl_cut","event_id":"...","lead_seconds":<0.1..5 J-cut (audio of this scene starts early) or -5..-0.1 L-cut>}
 {"op":"set_title","event_id":"...","text":"..."}
+{"op":"add_voiceover","asset_id":"<an available voiceover audio asset>","timeline_start_seconds":<number>}
+{"op":"remove_voiceover","event_id":"vo-.."}
 {"op":"reject","reason":"<short reason in the instruction's language>"}
 
 Rules: pick exactly ONE operation. Use event ids from the timeline listing
@@ -331,7 +430,9 @@ reason. Do not invent event ids.
 """.strip()
 
 
-def instruction_to_op(client, plan: dict, instruction: str) -> dict:
+def instruction_to_op(
+    client, plan: dict, instruction: str, inventory: dict | None = None
+) -> dict:
     """Map a natural-language instruction to one closed-set op via the LLM."""
     instruction = (instruction or "").strip()
     if not 2 <= len(instruction) <= 500:
@@ -342,7 +443,7 @@ def instruction_to_op(client, plan: dict, instruction: str) -> dict:
             "content": (
                 "You translate ONE editing instruction into ONE structured "
                 "operation on a video edit plan.\n\nTimeline:\n"
-                + _event_table(plan)
+                + _event_table(plan, inventory)
                 + "\n\n" + _OPS_CONTRACT
             ),
         },

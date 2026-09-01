@@ -328,3 +328,63 @@ class TestP5Polish:
                 assert pixel[0] > 150 and pixel[2] < 100, pixel
             else:
                 assert pixel[2] > 150 and pixel[0] < 100, pixel
+
+
+class TestVoiceoverRender:
+    def test_voiceover_plays_over_ducked_bed(self, tmp_path) -> None:
+        """Voiceover (1200Hz) mixed on top from 1s; bed (300Hz) ducks -9dB
+        inside the window and recovers outside it."""
+        _make_clip(tmp_path / "red.mp4", "red", 4.0, 300)
+        subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+             "-f", "lavfi", "-i", "sine=frequency=1200:sample_rate=48000",
+             "-t", "2", "-c:a", "aac", str(tmp_path / "memo.m4a")],
+            check=True,
+        )
+        inventory = {"assets": [
+            {"asset_id": "red", "filename": "red.mp4",
+             "source_path": "red.mp4", "duration_seconds": 4.0,
+             "sha256": "0" * 64, "media_type": "video",
+             "audio": {"sample_rate": 48000, "channels": 1},
+             "video": {"width": 320, "height": 240}},
+            {"asset_id": "memo", "filename": "memo.m4a",
+             "source_path": "memo.m4a", "duration_seconds": 2.0,
+             "sha256": "1" * 64, "media_type": "audio",
+             "audio": {"sample_rate": 48000, "channels": 1}},
+        ]}
+        vo_event = _event("vo-01", "memo", 0.0, 1.0, 2.0, "voiceover")
+        plan = {
+            "schema_version": "edit-plan.v1",
+            "generated_at": "2026-09-01T00:00:00Z",
+            "benchmark_id": "t", "concept_id": "t", "revision": 1,
+            "project": {"width": 320, "height": 240, "fps": 30,
+                        "duration_seconds": 4.0,
+                        "background_color": "black"},
+            "tracks": [
+                {"track_id": "v1", "kind": "video", "events": [
+                    _event("v01", "red", 0.0, 0.0, 4.0, "base")]},
+                {"track_id": "a1", "kind": "audio", "events": [
+                    _event("a01", "red", 0.0, 0.0, 4.0, "base")]},
+                {"track_id": "t1", "kind": "title", "events": []},
+                {"track_id": "a2", "kind": "audio", "role": "voiceover",
+                 "events": [vo_event]},
+            ],
+        }
+        (tmp_path / "plan.json").write_text(json.dumps(plan))
+        (tmp_path / "inventory.json").write_text(json.dumps(inventory))
+        output = tmp_path / "review.mp4"
+        subprocess.run(
+            [sys.executable, str(PIPELINE / "render_edit.py"),
+             "--plan", str(tmp_path / "plan.json"), "--output", str(output),
+             "--inventory", str(tmp_path / "inventory.json"),
+             "--media-root", str(tmp_path)],
+            check=True, capture_output=True, text=True,
+        )
+        # voiceover tone audible inside its window, absent outside
+        vo_in = _band_volume(output, 1.4, 2.4, "highpass=f=600,highpass=f=600")
+        vo_out = _band_volume(output, 3.2, 3.8, "highpass=f=600,highpass=f=600")
+        assert vo_in > vo_out + 15, f"voiceover should be audible: {vo_in} vs {vo_out}"
+        # bed ducked inside the window vs after it
+        bed_in = _band_volume(output, 1.4, 2.4, "lowpass=f=600,lowpass=f=600")
+        bed_out = _band_volume(output, 3.2, 3.8, "lowpass=f=600,lowpass=f=600")
+        assert bed_out > bed_in + 4, f"bed should duck: in={bed_in} out={bed_out}"

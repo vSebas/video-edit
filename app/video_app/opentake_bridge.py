@@ -236,6 +236,13 @@ def place_plan(
             "or send the earlier mirrored revision and keep J/L as the final "
             "render-side polish."
         )
+    audio_tracks = [t for t in plan["tracks"] if t["kind"] == "audio"]
+    if len(audio_tracks) > 1 and audio_tracks[1].get("events"):
+        raise BridgeError(
+            "This plan has a voiceover track — render-side polish that "
+            "OpenTake cannot represent. Remove the voiceover (instrucción: "
+            "'quita la voz en off') before sending, or render directly."
+        )
     entries = plan_entries(plan)
     broll = broll_entries(plan)
     needed = sorted({e["asset_id"] for e in entries + broll})

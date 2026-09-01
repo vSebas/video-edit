@@ -33,6 +33,13 @@ def broll_track(plan):
     return matches[1] if len(matches) == 2 and matches[1].get("role") == "broll" else None
 
 
+def voiceover_events(plan):
+    matches = [item for item in plan["tracks"] if item["kind"] == "audio"]
+    if len(matches) == 2 and matches[1].get("role") == "voiceover":
+        return matches[1]["events"]
+    return []
+
+
 def ffmpeg_text(value: str) -> str:
     return (
         value.replace("\\", "\\\\")
@@ -78,6 +85,7 @@ def main() -> None:
     title_events = track(plan, "title")["events"]
     overlay = broll_track(plan)
     broll_events = overlay["events"] if overlay else []
+    vo_events = voiceover_events(plan)
 
     # Video and audio are independent timelines (J/L cuts move the audio
     # boundary without moving the picture boundary). Overlaps are errors;
@@ -108,10 +116,11 @@ def main() -> None:
     duration = plan["project"]["duration_seconds"]
 
     command = ["ffmpeg", "-hide_banner", "-y"]
-    for event in video_events + broll_events + audio_events:
+    for event in video_events + broll_events + audio_events + vo_events:
         source = (media_root / assets[event["asset_id"]]["source_path"]).resolve()
         command.extend(["-i", str(source)])
     audio_input_base = len(video_events) + len(broll_events)
+    vo_input_base = audio_input_base + len(audio_events)
 
     def gaps(events):
         """(position, length) of every hole a track leaves in [0, duration)."""
@@ -249,6 +258,38 @@ def main() -> None:
         )
         current_video = output_label
 
+    audio_out = "acat"
+    if vo_events:
+        # Duck the production audio -9dB inside every voiceover window,
+        # then mix the delayed voiceover streams on top.
+        windows = "+".join(
+            f"between(t\\,{e['timeline_start_seconds']}\\,"
+            f"{e['timeline_start_seconds'] + e['duration_seconds']})"
+            for e in vo_events
+        )
+        filters.append(
+            f"[acat]volume=-9dB:enable='{windows}'[aducked]"
+        )
+        vo_labels = []
+        for index, event in enumerate(vo_events):
+            start = event["source_start_seconds"] or 0
+            end = event["source_end_seconds"] or (start + event["duration_seconds"])
+            gain = event.get("volume_db") or 0
+            delay_ms = int(round(event["timeline_start_seconds"] * 1000))
+            filters.append(
+                f"[{vo_input_base + index}:a:0]"
+                f"atrim=start={start}:end={end},asetpts=PTS-STARTPTS,"
+                f"volume={gain}dB,aresample=48000,"
+                f"aformat=sample_fmts=fltp:channel_layouts=stereo,"
+                f"adelay={delay_ms}|{delay_ms}[vo{index}]"
+            )
+            vo_labels.append(f"[vo{index}]")
+        filters.append(
+            f"[aducked]{''.join(vo_labels)}"
+            f"amix=inputs={len(vo_events) + 1}:duration=first:normalize=0[amix]"
+        )
+        audio_out = "amix"
+
     if args.captions:
         srt = str(args.captions.resolve())
         escaped = srt.replace("\\", "\\\\").replace("'", "\\'").replace(":", "\\:")
@@ -263,7 +304,7 @@ def main() -> None:
         current_video = "vsubs"
 
     filters.append(
-        "[acat]loudnorm=I=-16:LRA=11:TP=-1.5,aresample=48000,"
+        f"[{audio_out}]loudnorm=I=-16:LRA=11:TP=-1.5,aresample=48000,"
         "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[afinal]"
     )
 
