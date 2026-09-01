@@ -83,9 +83,14 @@ than ours.
 
 ## Trial steps and gate
 
-1. [ ] App builds from source and launches on Wayland/NVIDIA. *(in progress:
-       frontend and opentake-media build clean; full app compiling)*
-2. [ ] Pair our service as an external MCP client; list tools.
+1. [x] App builds from source and launches on Wayland/NVIDIA (2026-08-26;
+       release build + embedded frontend; run.sh carries the workarounds).
+2. [x] Paired as external MCP client (2026-09-01): bearer pairing receipt,
+       streamable-HTTP handshake, 54 tools listed, and get_timeline read the
+       real open project (3 linked A/V clips, 2531 frames, 1080x1920@30).
+       The ChatTurnGate correctly refused calls until a saved project was
+       open. Note: the listener stays "paused" until the first client pairs
+       — the UI's "temporarily unavailable" is that resting state.
 3. [ ] Import one real day's clips; adapter reproduces an existing
        `edit-plan.json` in its timeline; read back and verify every clip
        (same discipline as the 937/937 Resolve check).
