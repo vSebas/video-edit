@@ -213,7 +213,7 @@ our planner and ported Palmier features. That proposal was drafted, reviewed
 adversarially, and recommended against — see `EXECUTION_LAYER_PLAN.md` for
 the analysis, the two factual errors the draft contained, and the seven-phase
 owned-compiler plan. The owner then chose, risks in view, to trial the
-OpenTake path first (fork vSebas/OpenTake, pinned to v1.0.0-beta.5, five
+OpenTake path first (fork vSebas/OpenTake, based on v1.0.0-beta.5, five
 Linux patches). The trial ran 2026-08-20 to 2026-09-01 and closed with a
 HYBRID verdict — OpenTake as editing surface, our renderer for final
 pixels; evidence in `TRIAL_OPENTAKE.md`.

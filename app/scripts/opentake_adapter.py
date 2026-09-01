@@ -120,8 +120,8 @@ def plan_entries(plan: dict, fps: int) -> list[dict]:
 
 def verify(client: McpClient, entries: list[dict], ref_for: dict[str, str],
            readback_path: Path) -> list[str]:
-    """Full verification per the step-3 review: geometry, source trims,
-    A/V pairing — and the raw readback persisted for independent audit."""
+    """Verify the trial-emitted geometry, source trims, and A/V pairing,
+    then persist the raw readback for independent audit."""
     after = client.tool("get_timeline")
     readback_path.write_text(json.dumps(after, indent=1))
     video = sorted((c for t in after.get("tracks", []) if t.get("type") == "video"
@@ -245,7 +245,7 @@ def main() -> None:
     client.tool("add_clips", {"entries": batch})
     print(f"placed {len(batch)} clips")
 
-    # 4. Full verification (geometry + trims + A/V pairing), readback persisted.
+    # 4. Verify the emitted fields and persist the raw readback.
     failures = verify(client, entries, ref_for, readback_path)
     print(f"readback persisted: {readback_path}")
     if failures:
