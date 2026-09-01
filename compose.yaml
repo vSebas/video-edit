@@ -21,7 +21,7 @@ services:
       VIDEO_EDITING_ROOT: ${PWD}
       VIDEO_EDITING_RUNTIME: ${PWD}/runtime/projects
       HF_HOME: ${PWD}/runtime/model-cache
-      RCLONE_CONFIG: /rclone/rclone.conf
+      RCLONE_CONFIG: /tmp/rclone/rclone.conf
       DASHSCOPE_API_KEY: "${DASHSCOPE_API_KEY:-}"
       DASHSCOPE_BASE_URL: "${DASHSCOPE_BASE_URL:-}"
       GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
@@ -31,15 +31,31 @@ services:
       # Set this before exposing the port beyond localhost: without it the
       # API is open to anyone who can reach it (footage, deletion, paid calls).
       VIDEO_EDITING_TOKEN: "${VIDEO_EDITING_TOKEN:-}"
+    security_opt:
+      - no-new-privileges:true
     volumes:
       - ./:${PWD}
-      # Read-write so rclone can refresh its OAuth token.
-      - ${HOME}/.config/rclone:/rclone
+      # Read-only: the host's Drive credentials can no longer be modified
+      # from inside the container. The startup script copies the config to
+      # a container-local path so rclone's OAuth refresh still works (the
+      # refreshed copy is ephemeral; the durable refresh token stays on
+      # the host untouched).
+      - ${HOME}/.config/rclone:/rclone-ro:ro
       # Read-only view of OpenTake project bundles so the sync staleness
       # guard can compare the live MCP timeline against the saved file.
       - ${OPENTAKE_PROJECTS_DIR:-${HOME}/Documents/OpenTake}:/opentake-projects:ro
     # Set VIDEO_EDITING_BIND=0.0.0.0 to reach the app from your phone on
     # the same WiFi (http://<laptop-ip>:8787). Default is laptop-only.
-    # Pair that with VIDEO_EDITING_TOKEN — campus WiFi is not private.
-    command: ["sh", "-c", "uvicorn video_app.main:app --host ${VIDEO_EDITING_BIND:-127.0.0.1} --port ${VIDEO_EDITING_APP_PORT:-8787}"]
+    # A non-loopback bind REQUIRES VIDEO_EDITING_TOKEN — the app refuses to
+    # start open to the network without auth (footage, deletion, paid calls).
+    command:
+      - sh
+      - -c
+      - >
+        BIND="${VIDEO_EDITING_BIND:-127.0.0.1}";
+        if [ "$$BIND" != "127.0.0.1" ] && [ -z "${VIDEO_EDITING_TOKEN:-}" ];
+        then echo "REFUSING to bind $$BIND without VIDEO_EDITING_TOKEN" >&2; exit 1; fi;
+        mkdir -p /tmp/rclone &&
+        { cp /rclone-ro/rclone.conf /tmp/rclone/rclone.conf 2>/dev/null || true; } &&
+        exec uvicorn video_app.main:app --host "$$BIND" --port "${VIDEO_EDITING_APP_PORT:-8787}"
 

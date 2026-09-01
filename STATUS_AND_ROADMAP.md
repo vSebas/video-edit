@@ -349,9 +349,14 @@ closed between 2026-08-05 and 2026-08-19. What is genuinely still open:
   version. Both the Codex and internal reviews independently recommended that
   redesign; it would make caching, invalidation, retries, and provenance fall
   out naturally instead of being hand-maintained. Not attempted.
-- **Access control.** `VIDEO_EDITING_TOKEN` is opt-in and unset by default;
-  the workspace and the full-scope rclone Drive token are still mounted
-  read-write into the container.
+- **Access control.** Hardened 2026-09-01: a non-loopback bind now refuses
+  to start without `VIDEO_EDITING_TOKEN` (one was generated into `.env` —
+  open `http://<ip>:8787/?token=…` once on the phone and a cookie keeps it
+  logged in); the host's rclone Drive credentials mount read-only with an
+  ephemeral in-container copy for OAuth refresh; `no-new-privileges` set.
+  Remaining: the workspace itself is necessarily read-write (it is the
+  app's job), and the Drive token's scope is still full — a narrower scope
+  needs re-authorization on the rclone side.
 - **Concept-stage trust.** Citations are checked for overlap against observed
   evidence, but a plausible-looking hallucination inside a real observation's
   range still reaches the concept UI; only compilation applies the
