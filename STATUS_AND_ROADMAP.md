@@ -344,8 +344,6 @@ The bullets that used to sit here — no live visual provider, no live speech,
 no automatic planning, no generic render, unverified Resolve import — were all
 closed between 2026-08-05 and 2026-08-19. What is genuinely still open:
 
-- **Durability.** Jobs live in memory, so a container restart loses their
-  status; there is no dedup, so a double-submitted analysis pays twice.
 - **Artifact identity.** State is a mutable `project.json` rather than
   content-addressed artifacts keyed by media hash, adapter, and prompt
   version. Both the Codex and internal reviews independently recommended that
@@ -360,12 +358,11 @@ closed between 2026-08-05 and 2026-08-19. What is genuinely still open:
   approved-only coverage gate.
 - **Rotation.** Sideways clips without rotation metadata still render
   unrotated; the compiler does not set `rotation_degrees` automatically.
+  (The renderer honors rotation and `fill` reframing since P5 — the gap is
+  only DETECTION, not execution.)
 - **Voiceover placement.** Audio assets are barred from the video track, but
   the planned feature — drop a recording in and have it placed at the beat it
   belongs to, with ducking — is not built.
-- **Hybrid round trip.** OpenTake placement and cleanup work as trial scripts,
-  but its timeline cannot yet update the canonical plan; therefore its edits
-  do not yet reach the owned final renderer automatically.
 - A multi-day, dialogue-heavy comparison corpus remains an open acceptance
   check.
 
@@ -373,20 +370,18 @@ closed between 2026-08-05 and 2026-08-19. What is genuinely still open:
 
 The trial gate closed 2026-09-01: **hybrid** (see `TRIAL_OPENTAKE.md`).
 OpenTake is the editing surface over MCP; our renderer produces final
-pixels; Resolve remains the editor-handoff escape hatch.
+pixels; Resolve remains the editor-handoff escape hatch. Items 1-3 of the
+original list (timeline→plan sync, productionized adapter, cleanup review
+UI) all shipped 2026-09-01 — see the P0-P6 log above.
 
-1. **Timeline→plan sync (the new keystone).** First build a read-only inverse
-   translator: saved OpenTake readback + an explicit media/event bridge map →
-   candidate plan revision + deterministic diff. Prove it on the 2346→2314
-   frame cleanup readback before allowing it to replace `edit-plan.json`.
-2. **Productionize the adapter** per the cross-review hardening list:
-   revision-bound asset identity, fps/track/rate validation, safe reconnect
-   and read-after-timeout reconciliation, idempotent replacement or rollback,
-   structured verification reports, and app integration (a "Send to
-   OpenTake" step) instead of trial scripts.
-3. **Dialogue-cleanup review UI**: surface the candidate ranges (fillers,
-   dead air) in our workbench for approval before the atomic apply — the
-   trial applied them from the terminal.
+1. **Real-footage acceptance runs (needs the user).** A fresh day of footage
+   end-to-end through the new loop (place → edit in OpenTake → cleanup →
+   sync → instruction edits → captioned render); the first REAL B-roll
+   session (create a V2 track in the OpenTake GUI, drop clips, sync); and
+   the sidecar's second sealed-blind A/B on that same day.
+2. **Act on the P1-P6 Codex cross-review** (auto-fires 16:54 2026-09-01).
+3. **Rotation detection** — the highest-value small item left: probe/visual
+   evidence → `rotation_degrees` set automatically; execution already works.
 4. **Fork/upstream queue**, in hybrid-value order: project lifecycle tools on
    external MCP (unlocks unattended editing; upstream PR preferred), GTK
    main-thread fix PR (already proven in the fork), progress-event staleness,
