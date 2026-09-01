@@ -1103,7 +1103,10 @@ async function runAdvancedStep(stepId, button) {
   button.disabled = true;
   try {
     notice('Running…');
-    await runStep(path, path === 'exports' ? { include_proxies: true } : {});
+    // An explicit "Re-analyze" click means re-run even if nothing changed.
+    const body = stepId === 'analyze-visual' ? { force: true }
+      : path === 'exports' ? { include_proxies: true } : {};
+    await runStep(path, body);
     notice('Done.');
     await loadProject(state.activeProjectId);
   } catch (error) {

@@ -344,11 +344,12 @@ The bullets that used to sit here — no live visual provider, no live speech,
 no automatic planning, no generic render, unverified Resolve import — were all
 closed between 2026-08-05 and 2026-08-19. What is genuinely still open:
 
-- **Artifact identity.** State is a mutable `project.json` rather than
-  content-addressed artifacts keyed by media hash, adapter, and prompt
-  version. Both the Codex and internal reviews independently recommended that
-  redesign; it would make caching, invalidation, retries, and provenance fall
-  out naturally instead of being hand-maintained. Not attempted.
+- **Artifact identity.** v1 landed 2026-09-01: visual analysis runs carry a
+  content key (media sha256s + adapter + model + prompt version) and a
+  repeat run with an unchanged key returns the existing artifact instead of
+  paying again ("Re-analyze footage" forces); renders were already cached by
+  plan content. The full redesign — content-addressed state replacing the
+  mutable `project.json` — remains open and is still the recommended shape.
 - **Access control.** Hardened 2026-09-01: a non-loopback bind now refuses
   to start without `VIDEO_EDITING_TOKEN` (one was generated into `.env` —
   open `http://<ip>:8787/?token=…` once on the phone and a cookie keeps it

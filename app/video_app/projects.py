@@ -27,7 +27,12 @@ from .planning import (
 )
 from .providers import ChatClient, ProviderError, make_client, resolve_provider
 from .semantic import SemanticEvidenceError, validate_semantic_evidence
-from .visual import VisualAnalysisError, analyze_assets, auto_review_decisions
+from .visual import (
+    PROMPT_VERSION as VISUAL_PROMPT_VERSION,
+    VisualAnalysisError,
+    analyze_assets,
+    auto_review_decisions,
+)
 
 
 # Schemas and the deterministic render/export scripts ship with the app.
@@ -313,6 +318,7 @@ class ProjectService:
         project_id: str,
         provider: str = "gemini",
         model: str | None = None,
+        force: bool = False,
     ) -> dict:
         """Run the owned live visual adapter over the project's media and
         persist the result as a reviewed-by-policy semantic evidence run."""
@@ -326,6 +332,16 @@ class ProjectService:
         run_key = f"{provider}-live-{run_id}"
         try:
             client = make_client(provider, model)
+            content_key = self._analysis_content_key(
+                assets,
+                adapter="owned-live-visual",
+                model=getattr(client.config, "model", model),
+                prompt_version=VISUAL_PROMPT_VERSION,
+            )
+            if not force:
+                cached = self._existing_run_for(project_id, content_key)
+                if cached is not None:
+                    return cached
             normalized, raw_records, telemetry = analyze_assets(
                 client, assets, media_root, project_id, run_id
             )
@@ -358,6 +374,7 @@ class ProjectService:
                 "run_key": run_key,
                 "run_id": run_id,
                 "project_id": project_id,
+                "content_key": content_key,
                 "provider": normalized["provider"],
                 "review_status": normalized["review_status"],
                 "safe_for_edit_plan": normalized["safe_for_edit_plan"],
@@ -377,6 +394,38 @@ class ProjectService:
         self._mark_semantic_progress(project_id, "visual")
         self._detect_rotations(project_id, client)
         return self.semantic_run(project_id, run_key)
+
+    def _analysis_content_key(
+        self, assets: list[dict], *, adapter: str, model: str | None,
+        prompt_version: str,
+    ) -> str:
+        """Artifact identity v1: the same media through the same adapter,
+        model, and prompt version is the same computation — key it so a
+        repeat run returns the existing artifact instead of paying again."""
+        identity = {
+            "media": sorted(
+                a.get("sha256", a["asset_id"]) for a in assets
+            ),
+            "adapter": adapter,
+            "model": model or "",
+            "prompt_version": prompt_version,
+        }
+        return hashlib.sha256(
+            json.dumps(identity, sort_keys=True).encode()
+        ).hexdigest()[:24]
+
+    def _existing_run_for(self, project_id: str, content_key: str) -> dict | None:
+        runs_dir = self.settings.runtime / project_id / "analysis" / "runs"
+        for manifest_path in sorted(runs_dir.glob("*/manifest.json"), reverse=True):
+            try:
+                manifest = load_json(manifest_path)
+            except (OSError, ValueError):
+                continue
+            if manifest.get("content_key") == content_key:
+                result = self.semantic_run(project_id, manifest["run_key"])
+                result["cached"] = True
+                return result
+        return None
 
     def _detect_rotations(self, project_id: str, client) -> None:
         """Best-effort sideways-clip detection: one frame per video asset
@@ -457,6 +506,7 @@ class ProjectService:
                 "run_key": run_key,
                 "run_id": run_id,
                 "project_id": project_id,
+                "content_key": content_key,
                 "provider": normalized["provider"],
                 "review_status": "not_applicable",
                 "safe_for_edit_plan": False,
@@ -513,6 +563,7 @@ class ProjectService:
                 "run_key": run_key,
                 "run_id": run_id,
                 "project_id": project_id,
+                "content_key": content_key,
                 "provider": normalized["provider"],
                 "review_status": normalized["review_status"],
                 "safe_for_edit_plan": normalized["safe_for_edit_plan"],

@@ -108,3 +108,48 @@ class TestRenderCache:
         from video_app.projects import ProjectError
         with pytest.raises(ProjectError, match="speech analysis"):
             service.render("cache-test", burn_captions=True)
+
+
+class TestAnalysisArtifactIdentity:
+    def test_same_media_same_computation_is_reused(self, tmp_path, monkeypatch) -> None:
+        from pathlib import Path
+
+        from video_app.config import Settings
+        from video_app.projects import ProjectService
+
+        service = ProjectService(
+            Settings(root=Path(__file__).resolve().parents[2],
+                     runtime=tmp_path / "runtime")
+        )
+        assets = [{"asset_id": "a1", "sha256": "aa" * 32},
+                  {"asset_id": "a2", "sha256": "bb" * 32}]
+        key = service._analysis_content_key(
+            assets, adapter="owned-live-visual",
+            model="gemini-x", prompt_version="live-visual-v2-video",
+        )
+        # stable under asset order; sensitive to media, model, prompt
+        assert key == service._analysis_content_key(
+            list(reversed(assets)), adapter="owned-live-visual",
+            model="gemini-x", prompt_version="live-visual-v2-video",
+        )
+        assert key != service._analysis_content_key(
+            assets[:1], adapter="owned-live-visual",
+            model="gemini-x", prompt_version="live-visual-v2-video",
+        )
+        assert key != service._analysis_content_key(
+            assets, adapter="owned-live-visual",
+            model="gemini-y", prompt_version="live-visual-v2-video",
+        )
+
+        runs = tmp_path / "runtime" / "p1" / "analysis" / "runs" / "gemini-live-x"
+        runs.mkdir(parents=True)
+        (runs / "manifest.json").write_text(json.dumps(
+            {"run_key": "gemini-live-x", "content_key": key}
+        ))
+        monkeypatch.setattr(
+            service, "semantic_run",
+            lambda pid, run_key: {"run_key": run_key},
+        )
+        hit = service._existing_run_for("p1", key)
+        assert hit == {"run_key": "gemini-live-x", "cached": True}
+        assert service._existing_run_for("p1", "different") is None

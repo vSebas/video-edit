@@ -38,6 +38,7 @@ class SelectConceptRequest(BaseModel):
 class AnalyzeVisualRequest(BaseModel):
     provider: str = Field(default="gemini", pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
     model: str | None = Field(default=None, max_length=160)
+    force: bool = False
 
 
 class AnalyzeSpeechRequest(BaseModel):
@@ -421,7 +422,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return jobs.submit(
             "visual_analysis",
             project_id,
-            lambda: projects.analyze_visual(project_id, options.provider, options.model),
+            lambda: projects.analyze_visual(
+                project_id, options.provider, options.model,
+                force=options.force,
+            ),
         )
 
     @application.post("/api/projects/{project_id}/analysis/speech", status_code=202)
