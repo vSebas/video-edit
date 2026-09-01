@@ -61,6 +61,10 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--inventory", type=Path, required=True)
     parser.add_argument("--media-root", type=Path, required=True)
+    parser.add_argument(
+        "--captions", type=Path, default=None,
+        help="Optional SRT file to burn into the review render",
+    )
     args = parser.parse_args()
 
     plan_path = args.plan.resolve()
@@ -122,6 +126,23 @@ def main() -> None:
         return holes
 
     filters = []
+    def framing(event) -> str:
+        """fit letterboxes (default); fill scale-crops toward the reframe
+        center so vertical outputs can use the full frame."""
+        reframe = event.get("reframe") or {}
+        if reframe.get("mode") == "fill":
+            cx = min(1.0, max(0.0, reframe.get("center_x", 0.5)))
+            cy = min(1.0, max(0.0, reframe.get("center_y", 0.5)))
+            return (
+                f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+                f"crop={width}:{height}:(iw-{width})*{cx}:(ih-{height})*{cy},"
+            )
+        return (
+            f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:"
+            f"color={plan['project']['background_color']},"
+        )
+
     for index, video in enumerate(video_events):
         start = video["source_start_seconds"]
         end = video["source_end_seconds"]
@@ -129,8 +150,7 @@ def main() -> None:
         filters.append(
             f"[{index}:v:0]trim=start={start}:end={end},setpts=PTS-STARTPTS,"
             f"{rotation_filter(rotation)}"
-            f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
-            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color={plan['project']['background_color']},"
+            f"{framing(video)}"
             f"setsar=1,fps={fps},format=yuv420p[v{index}]"
         )
     for index, audio in enumerate(audio_events):
@@ -138,10 +158,17 @@ def main() -> None:
         end = audio["source_end_seconds"]
         volume = audio.get("volume_db") or 0
         if assets[audio["asset_id"]].get("audio"):
+            length = end - start
+            # 12ms edge fades suppress clicks at every concat joint.
+            fades = (
+                f",afade=t=in:st=0:d=0.012,"
+                f"afade=t=out:st={round(length - 0.012, 6)}:d=0.012"
+                if length > 0.1 else ""
+            )
             filters.append(
                 f"[{audio_input_base + index}:a:0]"
                 f"atrim=start={start}:end={end},asetpts=PTS-STARTPTS,"
-                f"volume={volume}dB,aresample=48000,"
+                f"volume={volume}dB{fades},aresample=48000,"
                 f"aformat=sample_fmts=fltp:channel_layouts=stereo[a{index}]"
             )
         else:
@@ -196,8 +223,7 @@ def main() -> None:
         filters.append(
             f"[{input_index}:v:0]trim=start={start}:end={end},setpts=PTS-STARTPTS,"
             f"{rotation_filter(rotation)}"
-            f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
-            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color={plan['project']['background_color']},"
+            f"{framing(event)}"
             f"setsar=1,fps={fps},format=yuv420p,"
             f"setpts=PTS+{timeline_start}/TB[b{index}]"
         )
@@ -222,6 +248,19 @@ def main() -> None:
             f"enable='between(t\\,{start}\\,{end})'[{output_label}]"
         )
         current_video = output_label
+
+    if args.captions:
+        srt = str(args.captions.resolve())
+        escaped = srt.replace("\\", "\\\\").replace("'", "\\'").replace(":", "\\:")
+        style = (
+            "FontName=Liberation Sans,FontSize=13,PrimaryColour=&HFFFFFF&,"
+            "OutlineColour=&H99000000&,Outline=2,MarginV=42"
+        )
+        filters.append(
+            f"[{current_video}]subtitles=filename='{escaped}':"
+            f"force_style='{style}'[vsubs]"
+        )
+        current_video = "vsubs"
 
     filters.append(
         "[acat]loudnorm=I=-16:LRA=11:TP=-1.5,aresample=48000,"

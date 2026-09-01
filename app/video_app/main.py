@@ -357,9 +357,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     @application.post("/api/projects/{project_id}/render", status_code=202)
-    def render(project_id: str):
+    def render(project_id: str, burn_captions: bool = False):
         project_call(lambda: projects.get_project(project_id))
-        return jobs.submit("render", project_id, lambda: projects.render(project_id))
+        return jobs.submit(
+            "render", project_id,
+            lambda: projects.render(project_id, burn_captions=burn_captions),
+        )
 
     @application.post("/api/projects/{project_id}/plan/command")
     def plan_command_propose(project_id: str, request: PlanCommandRequest):

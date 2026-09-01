@@ -218,3 +218,113 @@ class TestJCutRender:
         high = _band_volume(output, 1.2, 1.4, "highpass=f=600,highpass=f=600")
         low = _band_volume(output, 1.2, 1.4, "lowpass=f=600,lowpass=f=600")
         assert low > high + 10, f"300Hz should dominate: high={high} low={low}"
+
+
+class TestP5Polish:
+    def test_cut_edges_carry_click_fades(self, rendered) -> None:
+        _, output = rendered
+        manifest = json.loads(
+            output.with_suffix(".render-command.json").read_text()
+        )
+        joined = " ".join(manifest["command"])
+        assert "afade=t=in" in joined and "afade=t=out" in joined
+
+    def test_burned_captions_appear_in_lower_third(self, rendered) -> None:
+        root, _ = rendered
+        (root / "subs.srt").write_text(
+            "1\n00:00:00,200 --> 00:00:03,800\nHOLA HOLA HOLA\n\n"
+        )
+        output = root / "subtitled.mp4"
+        subprocess.run(
+            [
+                sys.executable, str(PIPELINE / "render_edit.py"),
+                "--plan", str(root / "plan.json"), "--output", str(output),
+                "--inventory", str(root / "inventory.json"),
+                "--media-root", str(root),
+                "--captions", str(root / "subs.srt"),
+            ],
+            check=True, capture_output=True, text=True,
+        )
+
+        def lower_third_peak_green(video):
+            raw = subprocess.run(
+                [
+                    "ffmpeg", "-hide_banner", "-loglevel", "error",
+                    "-ss", "0.5", "-i", str(video), "-frames:v", "1",
+                    "-vf", "crop=iw:60:0:ih-80",
+                    "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
+                ],
+                check=True, capture_output=True,
+            ).stdout
+            return max(raw[1::3])  # brightest green byte — red bg has ~0
+
+        plain = lower_third_peak_green(root / "review.mp4")
+        subtitled = lower_third_peak_green(output)
+        assert subtitled > plain + 100, (
+            f"white caption should light up the lower third: "
+            f"{plain} -> {subtitled}"
+        )
+
+    def test_fill_reframe_crops_toward_center(self, tmp_path) -> None:
+        # 640x240 source: left half red, right half blue
+        subprocess.run(
+            [
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                "-f", "lavfi",
+                "-i", "color=c=red:size=320x240:rate=30",
+                "-f", "lavfi",
+                "-i", "color=c=blue:size=320x240:rate=30",
+                "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+                "-filter_complex", "[0:v][1:v]hstack[v]",
+                "-map", "[v]", "-map", "2:a", "-t", "2",
+                "-c:v", "libx264", "-preset", "ultrafast",
+                "-pix_fmt", "yuv420p", "-c:a", "aac",
+                str(tmp_path / "wide.mp4"),
+            ],
+            check=True,
+        )
+        inventory = {"assets": [{
+            "asset_id": "wide", "filename": "wide.mp4",
+            "source_path": "wide.mp4", "duration_seconds": 2.0,
+            "sha256": "0" * 64, "media_type": "video",
+            "audio": {"sample_rate": 48000, "channels": 1},
+            "video": {"width": 640, "height": 240},
+        }]}
+        for center_x, expect in ((0.0, "red"), (1.0, "blue")):
+            event = _event("v01", "wide", 0.0, 0.0, 2.0, "base")
+            event["reframe"] = {
+                "mode": "fill", "center_x": center_x, "center_y": 0.5,
+                "scale": 1.0, "manual_review": False,
+            }
+            audio = _event("a01", "wide", 0.0, 0.0, 2.0, "base")
+            plan = {
+                "schema_version": "edit-plan.v1",
+                "generated_at": "2026-09-01T00:00:00Z",
+                "benchmark_id": "t", "concept_id": "t", "revision": 1,
+                "project": {"width": 240, "height": 240, "fps": 30,
+                            "duration_seconds": 2.0,
+                            "background_color": "black"},
+                "tracks": [
+                    {"track_id": "v1", "kind": "video", "events": [event]},
+                    {"track_id": "a1", "kind": "audio", "events": [audio]},
+                    {"track_id": "t1", "kind": "title", "events": []},
+                ],
+            }
+            (tmp_path / "plan.json").write_text(json.dumps(plan))
+            (tmp_path / "inventory.json").write_text(json.dumps(inventory))
+            output = tmp_path / f"fill-{center_x}.mp4"
+            subprocess.run(
+                [
+                    sys.executable, str(PIPELINE / "render_edit.py"),
+                    "--plan", str(tmp_path / "plan.json"),
+                    "--output", str(output),
+                    "--inventory", str(tmp_path / "inventory.json"),
+                    "--media-root", str(tmp_path),
+                ],
+                check=True, capture_output=True, text=True,
+            )
+            pixel = _center_pixel(output, 1.0)
+            if expect == "red":
+                assert pixel[0] > 150 and pixel[2] < 100, pixel
+            else:
+                assert pixel[2] > 150 and pixel[0] < 100, pixel

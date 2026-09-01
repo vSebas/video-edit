@@ -477,6 +477,7 @@ function advancedSection(project) {
     { id: 'analyze-speech', label: 'Re-transcribe speech' },
     { id: 'generate-concepts', label: 'Regenerate story ideas' },
     { id: 'render', label: 'Re-render preview' },
+    { id: 'render-captions', label: 'Re-render con subtítulos' },
     { id: 'exports', label: 'Rebuild editor files' },
   ];
   return `
@@ -962,6 +963,7 @@ const ADVANCED_CALLS = {
   'analyze-speech': 'analysis/speech',
   'generate-concepts': 'concepts',
   render: 'render',
+  'render-captions': 'render?burn_captions=true',
   exports: 'exports',
 };
 

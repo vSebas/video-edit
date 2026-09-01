@@ -1799,11 +1799,14 @@ class ProjectService:
             write_json(reviews_path, reviews)
         return self.semantic_run(project_id, run_key)
 
-    def render(self, project_id: str) -> dict:
+    def render(self, project_id: str, burn_captions: bool = False) -> dict:
         project = self.get_project(project_id)
         plan = project.get("plan")
         if not plan:
             raise ProjectError("This project does not have an approved edit plan")
+        captions_path = None
+        if burn_captions:
+            captions_path = self.export_captions(project_id)
         selection = self._selection(project_id)
         selected = selection.get("concept_id") if selection else plan["concept_id"]
         if selected != plan["concept_id"]:
@@ -1827,6 +1830,8 @@ class ProjectService:
             "--media-root",
             str(media_root),
         ]
+        if captions_path is not None:
+            command.extend(["--captions", str(captions_path)])
         result = subprocess.run(command, capture_output=True, text=True, check=False)
         if result.returncode:
             detail = (result.stderr or result.stdout).strip()
