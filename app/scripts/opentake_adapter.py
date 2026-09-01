@@ -197,7 +197,37 @@ def main() -> None:
     parser.add_argument("project_id")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--verify-only", action="store_true")
+    parser.add_argument("--sync", action="store_true",
+                        help="fetch the live timeline and preview it as a plan sync via the app")
+    parser.add_argument("--apply-sync", action="store_true",
+                        help="with --sync: apply the previewed candidate")
+    parser.add_argument("--app-url", default="http://127.0.0.1:8787")
     args = parser.parse_args()
+
+    if args.sync:
+        client = McpClient()
+        readback = client.tool("get_timeline")
+        request = urllib.request.Request(
+            f"{args.app_url}/api/projects/{args.project_id}/opentake/sync",
+            json.dumps({"readback": readback}).encode(),
+            {"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=120) as response:
+            preview = json.loads(response.read())
+        print(f"sync preview vs plan rev {preview['base_revision']}: "
+              f"{len(preview['changes'])} change(s), "
+              f"{preview['unchanged_count']} unchanged, "
+              f"new duration {preview['duration_seconds']}s")
+        for change in preview["changes"]:
+            print("  ", json.dumps(change))
+        if args.apply_sync:
+            request = urllib.request.Request(
+                f"{args.app_url}/api/projects/{args.project_id}/opentake/sync/apply",
+                b"", {"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(request, timeout=60) as response:
+                print("applied:", response.read().decode())
+        return
 
     plan, inventory = load_plan(args.project_id)
     fps = plan["project"]["fps"]

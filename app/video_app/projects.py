@@ -897,6 +897,105 @@ class ProjectService:
             write_json(path, stored)
         return {"plan": new_plan, "revision_note": note}
 
+    def opentake_sync_preview(
+        self, project_id: str, readback: dict | None = None
+    ) -> dict:
+        """Translate the OpenTake timeline back into a candidate plan.
+
+        Pure translation + validation; nothing is installed until
+        opentake_sync_apply. The candidate and diff are persisted so apply
+        can verify nothing moved in between."""
+        from .opentake_sync import SyncError, timeline_to_candidate_plan
+
+        project = self.get_project(project_id)
+        plan_dir = self.settings.runtime / project_id / "plan"
+        plan_path = plan_dir / "edit-plan.json"
+        bridge_path = plan_dir.parent / "opentake-bridge.json"
+        if not plan_path.is_file():
+            raise ProjectError("Compile a plan before syncing from OpenTake")
+        if not bridge_path.is_file():
+            raise ProjectError(
+                "No OpenTake bridge found — place the plan into OpenTake first"
+            )
+        plan = load_json(plan_path)
+        bridge = load_json(bridge_path)
+        if readback is None:
+            from .opentake_mcp import OpenTakeMcp, OpenTakeMcpError
+
+            try:
+                readback = OpenTakeMcp().get_timeline()
+            except OpenTakeMcpError as exc:
+                raise ProjectError(str(exc)) from exc
+        try:
+            candidate, diff = timeline_to_candidate_plan(plan, bridge, readback)
+        except SyncError as exc:
+            raise ProjectError(f"Sync rejected: {exc}") from exc
+        try:
+            validate_edit_plan(
+                candidate, SCHEMA_DIR / "edit-plan.schema.json", project
+            )
+        except PlanningError as exc:
+            raise ProjectError(f"Synced plan failed validation: {exc}") from exc
+        write_json(
+            plan_dir / "opentake-candidate.json",
+            {
+                "base_revision": int(plan.get("revision", 1)),
+                "candidate": candidate,
+                "diff": diff,
+            },
+        )
+        changed = [d for d in diff if d.get("kind") != "unchanged"]
+        return {
+            "base_revision": int(plan.get("revision", 1)),
+            "candidate_revision": candidate.get("revision"),
+            "changes": changed,
+            "unchanged_count": len(diff) - len(changed),
+            "duration_seconds": candidate["project"]["duration_seconds"],
+        }
+
+    def opentake_sync_apply(self, project_id: str) -> dict:
+        """Install the previewed candidate as the current plan revision."""
+        plan_dir = self.settings.runtime / project_id / "plan"
+        plan_path = plan_dir / "edit-plan.json"
+        candidate_path = plan_dir / "opentake-candidate.json"
+        if not candidate_path.is_file():
+            raise ProjectError("Run a sync preview before applying")
+        stored = load_json(candidate_path)
+        with self._project_write(project_id):
+            plan = load_json(plan_path)
+            if int(plan.get("revision", 1)) != stored["base_revision"]:
+                candidate_path.unlink(missing_ok=True)
+                raise ProjectError(
+                    "The plan changed since the preview — sync again"
+                )
+            new_plan = stored["candidate"]
+            previous_revision = int(plan.get("revision", 1))
+            write_json(
+                plan_dir / "revisions" / f"edit-plan.rev{previous_revision:03d}.json",
+                plan,
+            )
+            write_json(plan_path, new_plan)
+            log_path = plan_dir / "revisions" / "revision-log.json"
+            log = load_json(log_path) if log_path.is_file() else {"entries": []}
+            log["entries"].append(
+                {
+                    "revision": new_plan["revision"],
+                    "instruction": "opentake-sync",
+                    "note": f"{len([d for d in stored['diff'] if d.get('kind') != 'unchanged'])} timeline change(s) pulled from OpenTake",
+                    "revised_at": new_plan.get("generated_at"),
+                    "provider": "opentake",
+                }
+            )
+            write_json(log_path, log)
+            path = self.settings.runtime / project_id / "project.json"
+            project_state = load_json(path)
+            project_state["updated_at"] = utc_now()
+            project_state["plan"] = new_plan
+            project_state["status"] = "plan_ready"
+            write_json(path, project_state)
+        candidate_path.unlink(missing_ok=True)
+        return {"revision": new_plan["revision"], "status": "plan_ready"}
+
     def _footage_language(self, project_id: str) -> str | None:
         """Dominant detected speech language from the most recent ASR run,
         weighted by transcribed duration."""

@@ -86,6 +86,13 @@ class DriveImportRequest(BaseModel):
     folder: str = Field(min_length=1, max_length=200)
 
 
+class OpenTakeSyncRequest(BaseModel):
+    # Host-side callers (CLI/browser) pass the get_timeline readback; when
+    # omitted the server fetches it over MCP itself (host-run app only —
+    # the container cannot reach OpenTake's loopback listener).
+    readback: dict | None = None
+
+
 class ReviewSemanticEvidenceRequest(BaseModel):
     evidence_id: str = Field(min_length=1, max_length=160)
     action: Literal["approve", "reject"]
@@ -344,6 +351,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def render(project_id: str):
         project_call(lambda: projects.get_project(project_id))
         return jobs.submit("render", project_id, lambda: projects.render(project_id))
+
+    @application.post("/api/projects/{project_id}/opentake/sync")
+    def opentake_sync_preview(project_id: str, request: OpenTakeSyncRequest | None = None):
+        payload = request or OpenTakeSyncRequest()
+        return project_call(
+            lambda: projects.opentake_sync_preview(project_id, payload.readback)
+        )
+
+    @application.post("/api/projects/{project_id}/opentake/sync/apply")
+    def opentake_sync_apply(project_id: str):
+        return project_call(lambda: projects.opentake_sync_apply(project_id))
 
     @application.post("/api/projects/{project_id}/exports", status_code=202)
     def export(project_id: str, request: ExportsRequest | None = None):

@@ -61,6 +61,13 @@ proposal and editable exports:
    and timeline-aligned `captions.srt`.
 6. `POST /plan/revise` — natural-language re-cuts without re-analysis;
    prior revisions kept.
+7. `POST /opentake/sync` + `/opentake/sync/apply` — pull the OpenTake
+   timeline back into the plan: preview returns the diff (splits, trims,
+   moves, deletions, all fail-closed within originally grounded material);
+   apply installs it as a new revision through the same archive/log path as
+   natural-language revisions. Host callers pass the `get_timeline` readback
+   in the body (`opentake_adapter.py --sync [--apply-sync]` does this);
+   a host-run app can fetch it itself via `OPENTAKE_MCP_URL`/`_TOKEN`.
 
 ## OpenTake hybrid bridge (trial tooling)
 

@@ -272,3 +272,90 @@ def test_ambiguous_descendant_attribution_fails_closed() -> None:
         timeline_to_candidate_plan(
             load_fixture("plan.json"), load_fixture("bridge.json"), readback
         )
+
+
+PROJECT_ROOT = __import__("pathlib").Path(__file__).resolve().parents[2]
+
+
+class TestSyncEndpoints:
+    """Preview/apply flow over the API, using the golden fixtures."""
+
+    def _project(self, tmp_path):
+        import json as _json
+        import shutil
+        from pathlib import Path as _P
+
+        fx = _P(__file__).parent / "fixtures" / "opentake_sync"
+        plan = _json.loads((fx / "plan.json").read_text())
+        inventory = _json.loads((fx / "inventory.json").read_text())
+        pid = "sync-endpoint-test"
+        root = tmp_path / "runtime" / pid
+        (root / "plan").mkdir(parents=True)
+        (root / "plan" / "edit-plan.json").write_text(_json.dumps(plan))
+        (root / "plan" / "media-inventory.json").write_text(_json.dumps(inventory))
+        (root / "opentake-bridge.json").write_text((fx / "bridge.json").read_text())
+        (root / "project.json").write_text(_json.dumps({
+            "schema_version": "video-app-project.v1",
+            "project_id": pid, "name": "sync test", "created_at": "2026-09-01T00:00:00Z",
+            "updated_at": "2026-09-01T00:00:00Z", "source_directory": "footage",
+            "prompt": "", "status": "plan_ready", "footage_summary": "",
+            "analysis": {"technical": "completed"},
+            "inventory": inventory, "concepts": [], "selected_concept_id": None,
+            "plan": plan, "outputs": {},
+        }))
+        return pid, fx
+
+    def test_preview_then_apply_installs_synced_revision(self, tmp_path) -> None:
+        import json as _json
+        from pathlib import Path as _P
+
+        from fastapi.testclient import TestClient
+        from video_app.config import Settings
+        from video_app.main import create_app
+
+        pid, fx = self._project(tmp_path)
+        settings = Settings(root=PROJECT_ROOT, runtime=tmp_path / "runtime")
+        readback = _json.loads((fx / "readback-cleanup.json").read_text())
+        with TestClient(create_app(settings)) as client:
+            preview = client.post(
+                f"/api/projects/{pid}/opentake/sync", json={"readback": readback}
+            )
+            assert preview.status_code == 200, preview.text
+            body = preview.json()
+            assert body["duration_seconds"] == round(2314 / 30, 6)
+            kinds = {c["kind"] for c in body["changes"]}
+            assert "split" in kinds
+
+            applied = client.post(f"/api/projects/{pid}/opentake/sync/apply")
+            assert applied.status_code == 200, applied.text
+            plan_now = _json.loads(
+                (tmp_path / "runtime" / pid / "plan" / "edit-plan.json").read_text()
+            )
+            assert plan_now["revision"] == body["candidate_revision"]
+            archived = tmp_path / "runtime" / pid / "plan" / "revisions"
+            assert any(archived.glob("edit-plan.rev*.json"))
+            # replay protection: applying again without a preview fails
+            again = client.post(f"/api/projects/{pid}/opentake/sync/apply")
+            assert again.status_code == 400
+
+    def test_apply_rejects_when_plan_moved_after_preview(self, tmp_path) -> None:
+        import json as _json
+
+        from fastapi.testclient import TestClient
+        from video_app.config import Settings
+        from video_app.main import create_app
+
+        pid, fx = self._project(tmp_path)
+        settings = Settings(root=PROJECT_ROOT, runtime=tmp_path / "runtime")
+        readback = _json.loads((fx / "readback-untouched.json").read_text())
+        with TestClient(create_app(settings)) as client:
+            assert client.post(
+                f"/api/projects/{pid}/opentake/sync", json={"readback": readback}
+            ).status_code == 200
+            plan_path = tmp_path / "runtime" / pid / "plan" / "edit-plan.json"
+            plan = _json.loads(plan_path.read_text())
+            plan["revision"] = plan.get("revision", 1) + 1
+            plan_path.write_text(_json.dumps(plan))
+            stale = client.post(f"/api/projects/{pid}/opentake/sync/apply")
+            assert stale.status_code == 400
+            assert "changed since" in stale.json()["detail"]

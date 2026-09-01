@@ -329,3 +329,16 @@ The normalized visual-run warning always claimed captions came from
 `provenance_note()` now derives the wording from the recorded `input_mode`s;
 three regression tests cover audio, keyframe-fallback, and mixed runs.
 51 tests pass.
+
+## Timeline→plan sync (2026-09-01)
+
+The hybrid's keystone landed: `opentake_sync.py` (pure, fail-closed
+translation of a timeline readback into a candidate plan, with split
+attribution resolved clip-id-first) plus preview/apply endpoints that run
+the candidate through the full edit-plan validator and install it through
+the standard revision archive. Golden tests reproduce the real trial edits:
+the untouched placement round-trips with zero semantic diff, and the
+dead-air cleanup reconstructs as one split (v18__a/__b), 32 source frames
+gone, 2314 frames total. Apply carries replay protection (candidate is
+revision-bound and single-use). The adapter persists opentake-bridge.v1 on
+every verified placement and gained `--sync/--apply-sync`. 68 tests pass.
