@@ -342,3 +342,53 @@ dead-air cleanup reconstructs as one split (v18__a/__b), 32 source frames
 gone, 2314 frames total. Apply carries replay protection (candidate is
 revision-bound and single-use). The adapter persists opentake-bridge.v1 on
 every verified placement and gained `--sync/--apply-sync`. 68 tests pass.
+
+## P1–P6 mandate + follow-on batch (2026-09-01, one session)
+
+Everything below is verified by tests that measure the actual output —
+pixels sampled from renders, band-filtered audio levels, structure parsed
+back out of exports — not by asserting that code ran.
+
+- **P1 dialogue cleanup**: candidates computed from the word transcript
+  mapped through the live clip layout; apply is bound to a timeline
+  fingerprint (a mutated timeline is refused with "list them again"). The
+  stale-apply test caught a real ordering flaw (MCP client built before
+  the fingerprint check).
+- **P2 B-roll**: sync accepts one extra OpenTake video track (clip-id-first
+  identity via bridge `broll_events`, linked audio ignored with a diff
+  note); renderer overlay verified by sampling center pixels before /
+  during / after the overlay window on synthetic red/blue media; OTIO and
+  XMEML carry V2; placement fills an existing second track (the MCP cannot
+  create tracks — probed live).
+- **P3**: OpenTake clip volume round-trips (probed live including explicit
+  0.0 for mute; unchanged levels preserve the stored plan value). J-cut
+  render verified by frequency: the next scene's 1200 Hz tone dominates a
+  band-filtered window while the picture is still the previous scene's
+  pixels. Gaps render as black/silence instead of concat-squeezing (latent
+  bug surfaced by the new contiguity check and fixed).
+- **P4**: LLM chooses ONE op from a closed set; appliers are bounds-checked
+  pure functions (ripple carries B-roll, titles, and voiceovers; J/L plans
+  refuse structural edits). Live: deepseek mapped "baja el volumen de la
+  última escena a -10dB" to set_volume v22_closing on the real project.
+- **P5**: burned captions verified by peak-brightness sampling of the lower
+  third vs a caption-less render; 12 ms edge fades present in the render
+  command; `fill` reframing verified by rendering a half-red/half-blue
+  source at center_x 0 and 1.
+- **P6**: job history survives a restart (active jobs reload as
+  "interrupted"); duplicate active submits return the running job; an
+  unchanged plan returns the cached render — all three also proven live
+  against the running app.
+- **Voiceover**: ducking verified by band-filtered levels — the 1200 Hz
+  voiceover is audible only inside its window, and the 300 Hz bed is
+  measurably ducked under it and recovered after.
+- **Rotation detection**: parser rejects non-cardinal answers; compiler
+  application (with manual_review flagged) covered by compile tests.
+- **Concept trust**: caption cross-check flags fabricated in-range claims,
+  passes matching ones, and gives short abstract claims the benefit of the
+  doubt.
+- **Artifact identity v1**: content keys are order-stable and sensitive to
+  media/model/prompt changes; a matching key returns the existing run.
+- **Access control**: verified live — 401 without the token, 200 with it,
+  host rclone config read-only from inside the container.
+
+Current automated result in `video-editing-app:local`: **125 passed**.
