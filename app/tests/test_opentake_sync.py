@@ -166,8 +166,8 @@ def test_diff_reports_trimmed_and_deleted_events() -> None:
 
 def test_unknown_media_ref_fails_closed() -> None:
     readback = load_fixture("readback-untouched.json")
-    video, audio = linked_pair(readback)
-    video["mediaRef"] = audio["mediaRef"] = "unknown-ref"
+    video, _ = linked_pair(readback)
+    video["mediaRef"] = "unknown-ref"
     with pytest.raises(SyncError, match="unknown mediaRef unknown-ref"):
         timeline_to_candidate_plan(
             load_fixture("plan.json"), load_fixture("bridge.json"), readback

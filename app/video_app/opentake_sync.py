@@ -282,7 +282,7 @@ def timeline_to_candidate_plan(
     readback_fps = _number(readback.get("fps"), "readback fps")
     if fps <= 0:
         raise SyncError("plan fps must be positive")
-    if not math.isclose(fps, bridge_fps) or not math.isclose(fps, readback_fps):
+    if fps != bridge_fps or fps != readback_fps:
         raise SyncError(
             f"fps mismatch: plan={fps:g}, bridge={bridge_fps:g}, "
             f"readback={readback_fps:g}"
@@ -435,6 +435,13 @@ def timeline_to_candidate_plan(
         raise SyncError("readback contains duplicate video clipId values")
     if len({clip["clip_id"] for clip in audio_clips}) != len(audio_clips):
         raise SyncError("readback contains duplicate audio clipId values")
+    for kind, clips in (("video", video_clips), ("audio", audio_clips)):
+        for clip in clips:
+            if clip["media_ref"] not in asset_for_ref:
+                raise SyncError(
+                    f"unknown mediaRef {clip['media_ref']} on "
+                    f"{kind} clip {clip['clip_id']}"
+                )
 
     audio_by_group = defaultdict(list)
     for clip in audio_clips:
