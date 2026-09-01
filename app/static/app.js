@@ -1104,7 +1104,8 @@ async function runAdvancedStep(stepId, button) {
   try {
     notice('Running…');
     // An explicit "Re-analyze" click means re-run even if nothing changed.
-    const body = stepId === 'analyze-visual' ? { force: true }
+    const body = (stepId === 'analyze-visual' || stepId === 'analyze-speech')
+      ? { force: true }
       : path === 'exports' ? { include_proxies: true } : {};
     await runStep(path, body);
     notice('Done.');

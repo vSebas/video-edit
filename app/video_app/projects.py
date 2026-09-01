@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import Settings
+from .context import PROMPT_VERSION as CONTEXT_PROMPT_VERSION
 from .context import ContextAnalysisError, analyze_context
 from .planning import (
     PlanningError,
@@ -477,6 +478,14 @@ class ProjectService:
         run_key = f"ctx-live-{run_id}"
         try:
             client = make_client("gemini", model)
+            content_key = self._analysis_content_key(
+                assets, adapter="owned-source-context",
+                model=getattr(client.config, "model", model),
+                prompt_version=CONTEXT_PROMPT_VERSION,
+            )
+            cached = self._existing_run_for(project_id, content_key)
+            if cached is not None:
+                return cached
             normalized, raw_records, telemetry = analyze_context(
                 client,
                 assets,
@@ -523,9 +532,13 @@ class ProjectService:
             raise
         return self.semantic_run(project_id, run_key)
 
-    def analyze_speech(self, project_id: str, model_size: str | None = None) -> dict:
+    def analyze_speech(
+        self, project_id: str, model_size: str | None = None,
+        force: bool = False,
+    ) -> dict:
         """Run local timestamped ASR over every asset with audio and persist
         the transcript as a semantic evidence run."""
+        from .speech import PROMPT_VERSION as SPEECH_PROMPT_VERSION
         from .speech import SpeechAnalysisError, analyze_speech
 
         project = self.get_project(project_id)
@@ -534,6 +547,14 @@ class ProjectService:
             raise ProjectError("The project has no indexed media to analyze")
         media_root = self.settings.root
 
+        content_key = self._analysis_content_key(
+            assets, adapter="local-asr", model=model_size or "auto",
+            prompt_version=SPEECH_PROMPT_VERSION,
+        )
+        if not force:
+            cached = self._existing_run_for(project_id, content_key)
+            if cached is not None:
+                return cached
         run_id = uuid.uuid4().hex[:12]
         run_key = f"asr-live-{run_id}"
         try:

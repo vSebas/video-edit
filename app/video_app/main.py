@@ -43,6 +43,7 @@ class AnalyzeVisualRequest(BaseModel):
 
 class AnalyzeSpeechRequest(BaseModel):
     model_size: str | None = Field(default=None, pattern=r"^[a-z0-9.-]{1,40}$")
+    force: bool = False
 
 
 class AnalyzeContextRequest(BaseModel):
@@ -435,7 +436,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return jobs.submit(
             "speech_analysis",
             project_id,
-            lambda: projects.analyze_speech(project_id, options.model_size),
+            lambda: projects.analyze_speech(
+                project_id, options.model_size, force=options.force,
+            ),
         )
 
     @application.post("/api/projects/{project_id}/analysis/context", status_code=202)
