@@ -98,7 +98,10 @@ Two questions are deliberately still open, not settled:
   large-v3 ASR, deepseek-v4-pro writer) were each won on evidence, but the
   field moves: rematch new candidates per stage periodically — same blind,
   rendered-output protocols in `bench/` — rather than assuming the
-  leaderboard is permanent.
+  leaderboard is permanent. Note: Anthropic models have never actually run
+  in the pipeline — a client exists in `providers.py` but was never wired
+  into concept generation, and no key is passed to the container — so
+  Claude remains an untested candidate, not a rejected one.
 
 ## Third-party code
 

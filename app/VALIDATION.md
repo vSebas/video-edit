@@ -321,3 +321,11 @@ on 2026-08-19. It now reports what it actually produces.
 Current automated result in `video-editing-app:local`: **48 passed**. The only
 warning is Starlette's deprecation notice for its current `httpx` TestClient
 integration.
+
+## Provenance wording fix (2026-09-01)
+
+The normalized visual-run warning always claimed captions came from
+"deterministic shot keyframes", even for audio-carrying native-video runs.
+`provenance_note()` now derives the wording from the recorded `input_mode`s;
+three regression tests cover audio, keyframe-fallback, and mixed runs.
+51 tests pass.

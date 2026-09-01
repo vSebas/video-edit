@@ -483,3 +483,26 @@ class TestConceptCitationGrounding:
         document = self._document([(1.0, 3.0), (5.0, 7.0), (15.0, 18.0)])
         _sanitize_concepts(document, project)
         assert len(document["concepts"][0]["structure"]) == 3
+
+
+class TestVisualProvenance:
+    """The normalized warning must describe what the model actually saw."""
+
+    def test_audio_video_runs_are_not_described_as_keyframes(self) -> None:
+        from video_app.visual import provenance_note
+
+        note = provenance_note([{"input_mode": "video+audio"}])
+        assert "audio" in note and "keyframes" not in note
+
+    def test_keyframe_fallback_still_says_keyframes(self) -> None:
+        from video_app.visual import provenance_note
+
+        assert "keyframes" in provenance_note([{"input_mode": "keyframes"}])
+
+    def test_mixed_modes_mention_both(self) -> None:
+        from video_app.visual import provenance_note
+
+        note = provenance_note(
+            [{"input_mode": "video+audio"}, {"input_mode": "keyframes"}]
+        )
+        assert "audio" in note and "keyframes" in note

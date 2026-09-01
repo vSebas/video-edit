@@ -449,14 +449,26 @@ def analyze_assets(
             "risk_flagged_count": risk_count,
         },
         "unmapped_media": [],
-        "warnings": warnings
-        + [
-            "Captions were produced by the owned live visual adapter from "
-            "deterministic shot keyframes; risky claims remain pending review."
-        ],
+        "warnings": warnings + [provenance_note(raw_records)],
         "observations": observations,
     }
     return normalized, raw_records, aggregate_call_telemetry(raw_records)
+
+
+def provenance_note(raw_records: list[dict]) -> str:
+    """Describe what the model actually saw, per the recorded input modes —
+    the fixed keyframes wording misstated audio-carrying video runs."""
+    modes = sorted({r.get("input_mode", "keyframes") for r in raw_records})
+    described = {
+        "video+audio": "native video segments with audio",
+        "video": "native video segments (silent)",
+        "keyframes": "deterministic shot keyframes",
+    }
+    seen = " and ".join(described.get(m, m) for m in modes) or "shot media"
+    return (
+        f"Captions were produced by the owned live visual adapter from {seen}; "
+        "risky claims remain pending review."
+    )
 
 
 def auto_review_decisions(normalized: dict) -> dict:
