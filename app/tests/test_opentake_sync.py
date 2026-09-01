@@ -359,3 +359,49 @@ class TestSyncEndpoints:
             stale = client.post(f"/api/projects/{pid}/opentake/sync/apply")
             assert stale.status_code == 400
             assert "changed since" in stale.json()["detail"]
+
+
+class TestStalenessGuard:
+    """A saved-bundle/live-view mismatch must warn, never stay silent."""
+
+    def _bundle(self, tmp_path, video=20, audio=20):
+        import json as _json
+        bundle = tmp_path / "test.opentake"
+        bundle.mkdir()
+        (bundle / "project.json").write_text(_json.dumps({
+            "timeline": {"tracks": [
+                {"type": "video", "clips": [{}] * video},
+                {"type": "audio", "clips": [{}] * audio},
+            ]}
+        }))
+        (tmp_path / ".test.opentake.opentake-lock").write_text("")
+        return tmp_path
+
+    def test_mismatch_produces_warning(self, tmp_path) -> None:
+        from video_app.opentake_bridge import saved_bundle_state, staleness_warning
+
+        saved = saved_bundle_state(self._bundle(tmp_path, video=20, audio=20))
+        assert saved and saved["saved_video_clips"] == 20
+        live = {"tracks": [
+            {"type": "video", "clips": [{}] * 22},
+            {"type": "audio", "clips": [{}] * 22},
+        ]}
+        warning = staleness_warning(live, saved)
+        assert warning and warning["live_clips"]["video"] == 22
+        assert "save" in warning["advice"].lower()
+
+    def test_matching_counts_stay_silent(self, tmp_path) -> None:
+        from video_app.opentake_bridge import saved_bundle_state, staleness_warning
+
+        saved = saved_bundle_state(self._bundle(tmp_path))
+        live = {"tracks": [
+            {"type": "video", "clips": [{}] * 20},
+            {"type": "audio", "clips": [{}] * 20},
+        ]}
+        assert staleness_warning(live, saved) is None
+
+    def test_missing_bundle_dir_is_none(self, tmp_path) -> None:
+        from video_app.opentake_bridge import saved_bundle_state, staleness_warning
+
+        assert saved_bundle_state(tmp_path / "nope") is None
+        assert staleness_warning({"tracks": []}, None) is None

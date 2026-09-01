@@ -957,6 +957,9 @@ class ProjectService:
                 readback = OpenTakeMcp().get_timeline()
             except OpenTakeMcpError as exc:
                 raise ProjectError(str(exc)) from exc
+        from .opentake_bridge import saved_bundle_state, staleness_warning
+
+        warning = staleness_warning(readback, saved_bundle_state())
         try:
             candidate, diff = timeline_to_candidate_plan(plan, bridge, readback)
         except SyncError as exc:
@@ -982,6 +985,7 @@ class ProjectService:
             "changes": changed,
             "unchanged_count": len(diff) - len(changed),
             "duration_seconds": candidate["project"]["duration_seconds"],
+            "staleness": warning,
         }
 
     def opentake_sync_apply(self, project_id: str) -> dict:

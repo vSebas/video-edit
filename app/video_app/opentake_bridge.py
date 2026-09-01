@@ -165,3 +165,76 @@ def place_plan(
         "removed_previous_clips": len(existing),
     }
     return summary, bridge
+
+
+def saved_bundle_state(projects_dir: Path | None = None) -> dict | None:
+    """Clip counts of the currently OPEN OpenTake project's saved bundle.
+
+    The open project is identified by its `.<name>.opentake-lock` file. Used
+    as a staleness cross-check: the live MCP view and the saved file forked
+    within one app session once (2026-09-01), silently reporting "no
+    changes" for real edits. Best-effort — returns None when the bundle
+    directory is not visible (unmounted) or no lock is present.
+    """
+    import os
+
+    root = projects_dir or Path(os.environ.get("OPENTAKE_PROJECTS_DIR", ""))
+    if not root or not root.is_dir():
+        return None
+    locks = sorted(
+        root.glob(".*.opentake-lock"),
+        key=lambda lock: lock.stat().st_mtime,
+        reverse=True,
+    )
+    for lock in locks:
+        # ".test.opentake.opentake-lock" -> bundle "test.opentake"
+        bundle = root / lock.name[1:-len(".opentake-lock")]
+        project_file = bundle / "project.json"
+        if not project_file.is_file():
+            continue
+        try:
+            saved = json.loads(project_file.read_text())
+        except (OSError, json.JSONDecodeError):
+            return None
+        tracks = saved.get("timeline", {}).get("tracks") or saved.get("tracks") or []
+        counts = {"video": 0, "audio": 0}
+        for track in tracks:
+            kind = track.get("type")
+            if kind in counts:
+                counts[kind] += len(track.get("clips", []))
+        return {
+            "bundle": bundle.name,
+            "saved_video_clips": counts["video"],
+            "saved_audio_clips": counts["audio"],
+            "saved_at": project_file.stat().st_mtime,
+        }
+    return None
+
+
+def staleness_warning(readback: dict, saved: dict | None) -> dict | None:
+    """Compare the live MCP timeline against the saved bundle; a clip-count
+    mismatch means one of them is behind (either direction is possible, so
+    the advice covers both)."""
+    if saved is None:
+        return None
+    live = {"video": 0, "audio": 0}
+    for track in readback.get("tracks", []):
+        kind = track.get("type")
+        if kind in live:
+            live[kind] += len(track.get("clips", []))
+    if (live["video"] == saved["saved_video_clips"]
+            and live["audio"] == saved["saved_audio_clips"]):
+        return None
+    return {
+        "bundle": saved["bundle"],
+        "live_clips": live,
+        "saved_clips": {
+            "video": saved["saved_video_clips"],
+            "audio": saved["saved_audio_clips"],
+        },
+        "advice": (
+            "OpenTake's saved project and its live interface disagree — "
+            "save in OpenTake first; if this warning persists, restart "
+            "OpenTake and sync again."
+        ),
+    }

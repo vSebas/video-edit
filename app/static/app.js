@@ -968,11 +968,14 @@ async function openTakeSyncPreview() {
   const box = $('#opentake-diff');
   try {
     const preview = await api(`/api/projects/${project.project_id}/opentake/sync`, { method: 'POST' });
+    const warn = preview.staleness
+      ? `<p class="notice error">⚠ ${escapeHtml(preview.staleness.advice)} (guardado: ${preview.staleness.saved_clips.video} clips, interfaz: ${preview.staleness.live_clips.video})</p>`
+      : '';
     if (!preview.changes.length) {
-      box.innerHTML = '<p class="notice">La línea de tiempo coincide con el plan — nada que traer.</p>';
+      box.innerHTML = warn + '<p class="notice">La línea de tiempo coincide con el plan — nada que traer.</p>';
       return;
     }
-    box.innerHTML = `
+    box.innerHTML = warn + `
       <div class="sync-diff">
         <p><strong>${preview.changes.length}</strong> cambio(s) en OpenTake — nueva duración ${preview.duration_seconds}s
         (${preview.unchanged_count} escenas sin cambios):</p>

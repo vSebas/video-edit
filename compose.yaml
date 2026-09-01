@@ -27,6 +27,7 @@ services:
       GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       OPENTAKE_MCP_TOKEN: "${OPENTAKE_MCP_TOKEN:-}"
+      OPENTAKE_PROJECTS_DIR: /opentake-projects
       # Set this before exposing the port beyond localhost: without it the
       # API is open to anyone who can reach it (footage, deletion, paid calls).
       VIDEO_EDITING_TOKEN: "${VIDEO_EDITING_TOKEN:-}"
@@ -34,6 +35,9 @@ services:
       - ./:${PWD}
       # Read-write so rclone can refresh its OAuth token.
       - ${HOME}/.config/rclone:/rclone
+      # Read-only view of OpenTake project bundles so the sync staleness
+      # guard can compare the live MCP timeline against the saved file.
+      - ${OPENTAKE_PROJECTS_DIR:-${HOME}/Documents/OpenTake}:/opentake-projects:ro
     # Set VIDEO_EDITING_BIND=0.0.0.0 to reach the app from your phone on
     # the same WiFi (http://<laptop-ip>:8787). Default is laptop-only.
     # Pair that with VIDEO_EDITING_TOKEN — campus WiFi is not private.
