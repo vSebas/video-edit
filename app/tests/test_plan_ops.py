@@ -452,3 +452,65 @@ class TestVoiceoverOps:
                           self._inventory())
         system = client.messages[0]["content"]
         assert "memo (3.0s)" in system and "memo.m4a" in system
+
+
+class TestConceptTrust:
+    """In-range hallucinations get flagged by caption cross-check."""
+
+    def test_claim_matching_caption_is_clean(self) -> None:
+        from video_app.planning import _claim_unsupported
+
+        assert not _claim_unsupported(
+            "camina por el pasillo hablando del examen",
+            "una persona camina por un pasillo mientras habla; menciona un examen",
+        )
+
+    def test_fabricated_claim_is_flagged(self) -> None:
+        from video_app.planning import _claim_unsupported
+
+        assert _claim_unsupported(
+            "ella llora emocionada recibiendo el premio",
+            "una persona camina por un pasillo con una mochila",
+        )
+
+    def test_short_abstract_claims_get_benefit_of_doubt(self) -> None:
+        from video_app.planning import _claim_unsupported
+
+        assert not _claim_unsupported("buen ambiente", "cualquier cosa")
+
+    def test_sanitizer_marks_needs_review(self) -> None:
+        from video_app.planning import _sanitize_concepts
+
+        project = {"project_id": "p", "inventory": {"assets": [
+            {"asset_id": "clip_a", "media_type": "video",
+             "duration_seconds": 10.0},
+        ]}}
+        evidence = [{"asset_id": "clip_a", "start_seconds": 0.0,
+                     "end_seconds": 10.0,
+                     "caption": "una persona camina por un pasillo"}]
+        document = {"concepts": [{
+            "concept_id": "c1", "title": "T", "topic": "x",
+            "structure": [
+                {"beat_id": "b1", "purpose": "p", "target_duration_seconds": 2,
+                 "evidence": [{"asset_id": "clip_a", "start_seconds": 0.0,
+                               "end_seconds": 2.0,
+                               "observed_content": "camina por el pasillo",
+                               "confidence": 0.9}]},
+                {"beat_id": "b2", "purpose": "p", "target_duration_seconds": 2,
+                 "evidence": [{"asset_id": "clip_a", "start_seconds": 2.0,
+                               "end_seconds": 4.0,
+                               "observed_content":
+                                   "abraza llorando a sus amigos del equipo",
+                               "confidence": 0.9}]},
+                {"beat_id": "b3", "purpose": "p", "target_duration_seconds": 2,
+                 "evidence": [{"asset_id": "clip_a", "start_seconds": 4.0,
+                               "end_seconds": 6.0,
+                               "observed_content": "sigue caminando pasillo",
+                               "confidence": 0.9}]},
+            ],
+        }]}
+        _sanitize_concepts(document, project, evidence)
+        beats = document["concepts"][0]["structure"]
+        assert "needs_review" not in beats[0]["evidence"][0]
+        assert beats[1]["evidence"][0].get("needs_review") is True
+        assert "needs_review" not in beats[2]["evidence"][0]

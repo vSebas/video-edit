@@ -162,6 +162,9 @@ function storyCard(concept) {
   const required = missing.filter((shot) => shot.priority === 'required').length;
   const beats = (concept.structure || []).length;
   const unchecked = conceptPendingClaims(concept).length;
+  const dubious = (concept.structure || []).reduce((total, beat) =>
+    total + [...(beat.evidence || []), ...(beat.cutaways || [])]
+      .filter((item) => item.needs_review).length, 0);
   const kept = keptStoryIds().has(concept.concept_id);
   const beatThumbs = (concept.structure || []).slice(0, 6).map((beat) => {
     const evidence = (beat.evidence || [])[0];
@@ -172,7 +175,7 @@ function storyCard(concept) {
   return `
     <article class="concept-card story-card ${kept ? 'kept' : ''}">
       <div class="concept-top">
-        <span class="eyebrow">${concept.target_duration_seconds}s · ${beats} scenes${unchecked ? ` · asks about ${unchecked} unchecked moment${unchecked === 1 ? '' : 's'}` : ''}</span>
+        <span class="eyebrow">${concept.target_duration_seconds}s · ${beats} scenes${unchecked ? ` · asks about ${unchecked} unchecked moment${unchecked === 1 ? '' : 's'}` : ''}${dubious ? ` · ⚠ ${dubious} cita${dubious === 1 ? '' : 's'} que no coincide${dubious === 1 ? '' : 'n'} con lo observado` : ''}</span>
         <button class="ghost keep-toggle" data-keep-story="${escapeHtml(concept.concept_id)}" title="Kept stories survive when you ask for new ideas">${kept ? '★ kept' : '☆ keep'}</button>
       </div>
       ${beatThumbs ? `<div class="beat-thumbs">${beatThumbs}</div>` : ''}

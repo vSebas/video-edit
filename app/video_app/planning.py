@@ -291,6 +291,36 @@ duration and at least {MIN_EVENT_SECONDS}s long."""
     return document
 
 
+_STOPWORDS = {
+    # Spanish + English function words; enough to isolate content words
+    "el", "la", "los", "las", "un", "una", "unos", "unas", "de", "del",
+    "en", "con", "por", "para", "que", "se", "su", "sus", "es", "está",
+    "están", "hay", "como", "más", "muy", "esta", "este", "esto", "sobre",
+    "the", "a", "an", "of", "in", "on", "with", "and", "is", "are", "to",
+    "at", "his", "her", "their", "there", "then", "while", "shows", "shot",
+    "clip", "video", "person", "persona", "gente", "camera", "cámara",
+}
+
+
+def _content_words(text: str) -> set[str]:
+    words = re.findall(r"[a-záéíóúüñ]+", text.lower())
+    return {w for w in words if len(w) >= 3 and w not in _STOPWORDS}
+
+
+def _claim_unsupported(claim: str, observed_text: str) -> bool:
+    """True when a citation's description shares no content words with the
+    observations it overlaps — the shape of an in-range hallucination.
+    Conservative: short/abstract claims are given the benefit of the doubt."""
+    claim_words = _content_words(claim)
+    if len(claim_words) < 3:
+        return False
+    support_words = _content_words(observed_text)
+    if not support_words:
+        return False
+    overlap = len(claim_words & support_words)
+    return overlap / len(claim_words) < 0.15
+
+
 def _sanitize_concepts(
     document: dict, project: dict, evidence: list[dict] | None = None
 ) -> None:
@@ -305,12 +335,16 @@ def _sanitize_concepts(
         asset["asset_id"]: asset
         for asset in project.get("inventory", {}).get("assets", [])
     }
-    observed: dict[str, list[tuple[float, float]]] | None = None
+    observed: dict[str, list[tuple[float, float, str]]] | None = None
     if evidence is not None:
         observed = {}
         for item in evidence:
             observed.setdefault(item["asset_id"], []).append(
-                (item["start_seconds"], item["end_seconds"])
+                (
+                    item["start_seconds"],
+                    item["end_seconds"],
+                    str(item.get("caption") or ""),
+                )
             )
     valid_concepts = []
     used_ids: set[str] = set()
@@ -351,25 +385,40 @@ def _sanitize_concepts(
                     continue
                 if end - start < MIN_EVENT_SECONDS:
                     continue
-                if observed is not None and not any(
-                    observed_start < end and observed_end > start
-                    for observed_start, observed_end in observed.get(asset["asset_id"], [])
-                ):
-                    continue
+                supporting = None
+                if observed is not None:
+                    supporting = [
+                        caption
+                        for observed_start, observed_end, caption
+                        in observed.get(asset["asset_id"], [])
+                        if observed_start < end and observed_end > start
+                    ]
+                    if not supporting:
+                        continue
                 try:
                     confidence = min(max(float(item.get("confidence", 0.5)), 0.0), 1.0)
                 except (TypeError, ValueError):
                     confidence = 0.5
-                spans.append(
-                    {
-                        "asset_id": asset["asset_id"],
-                        "start_seconds": round(start, 3),
-                        "end_seconds": round(end, 3),
-                        "observed_content": str(item.get("observed_content", "")).strip()
-                        or "Unlabeled evidence range.",
-                        "confidence": confidence,
-                    }
+                claim = (
+                    str(item.get("observed_content", "")).strip()
+                    or "Unlabeled evidence range."
                 )
+                span = {
+                    "asset_id": asset["asset_id"],
+                    "start_seconds": round(start, 3),
+                    "end_seconds": round(end, 3),
+                    "observed_content": claim,
+                    "confidence": confidence,
+                }
+                # A citation can overlap a real observation yet DESCRIBE
+                # something else — the last place a plausible hallucination
+                # slips through. Flag claims that share no content words
+                # with what was actually observed there.
+                if supporting is not None and _claim_unsupported(
+                    claim, " ".join(supporting)
+                ):
+                    span["needs_review"] = True
+                spans.append(span)
             return spans
 
         beats = []
