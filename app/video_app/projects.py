@@ -1120,6 +1120,110 @@ class ProjectService:
         candidate_path.unlink(missing_ok=True)
         return {"revision": new_plan["revision"], "status": "plan_ready"}
 
+    def plan_command_propose(
+        self,
+        project_id: str,
+        instruction: str,
+        provider: str = "qwen",
+        model: str | None = None,
+    ) -> dict:
+        """One NL instruction → one closed-set op, applied to a COPY and
+        persisted for a revision-guarded apply. The LLM only picks the op;
+        plan_ops computes and bounds-checks the mutation."""
+        from .plan_ops import PlanOpError, apply_op, instruction_to_op
+
+        project = self.get_project(project_id)
+        plan = project.get("plan")
+        if not plan:
+            raise ProjectError("This project does not have an approved edit plan")
+        client = ChatClient(resolve_provider(
+            provider, model or PLANNER_DEFAULT_MODELS.get(provider)
+        ))
+        try:
+            op = instruction_to_op(client, plan, instruction)
+        except ProviderError as exc:
+            raise ProjectError(f"The instruction model failed: {exc}") from exc
+        except PlanOpError as exc:
+            raise ProjectError(str(exc)) from exc
+        if op.get("op") == "reject":
+            return {
+                "status": "rejected",
+                "reason": str(op.get("reason") or "instrucción ambigua"),
+            }
+        try:
+            candidate, summary = apply_op(
+                plan, op, project.get("inventory") or {}
+            )
+            validate_edit_plan(
+                candidate, SCHEMA_DIR / "edit-plan.schema.json", project
+            )
+        except (PlanOpError, PlanningError) as exc:
+            raise ProjectError(str(exc)) from exc
+        write_json(
+            self.settings.runtime / project_id / "plan-command.json",
+            {
+                "base_revision": int(plan.get("revision", 1)),
+                "instruction": instruction,
+                "op": op,
+                "summary": summary,
+                "candidate": candidate,
+            },
+        )
+        return {
+            "status": "proposed",
+            "op": op,
+            "summary": summary,
+            "revision_preview": candidate["revision"],
+        }
+
+    def plan_command_apply(self, project_id: str) -> dict:
+        """Install the last proposed instruction edit as a plan revision."""
+        plan_dir = self.settings.runtime / project_id / "plan"
+        plan_path = plan_dir / "edit-plan.json"
+        stored_path = self.settings.runtime / project_id / "plan-command.json"
+        if not stored_path.is_file():
+            raise ProjectError("No proposed edit — send an instruction first")
+        stored = load_json(stored_path)
+        with self._project_write(project_id):
+            plan = load_json(plan_path)
+            if int(plan.get("revision", 1)) != stored["base_revision"]:
+                stored_path.unlink(missing_ok=True)
+                raise ProjectError(
+                    "The plan changed since the proposal — send the "
+                    "instruction again"
+                )
+            new_plan = stored["candidate"]
+            previous_revision = int(plan.get("revision", 1))
+            write_json(
+                plan_dir / "revisions" / f"edit-plan.rev{previous_revision:03d}.json",
+                plan,
+            )
+            write_json(plan_path, new_plan)
+            log_path = plan_dir / "revisions" / "revision-log.json"
+            log = load_json(log_path) if log_path.is_file() else {"entries": []}
+            log["entries"].append(
+                {
+                    "revision": new_plan["revision"],
+                    "instruction": stored["instruction"],
+                    "note": stored["summary"],
+                    "revised_at": utc_now(),
+                    "provider": "plan-command",
+                }
+            )
+            write_json(log_path, log)
+            path = self.settings.runtime / project_id / "project.json"
+            project_state = load_json(path)
+            project_state["updated_at"] = utc_now()
+            project_state["plan"] = new_plan
+            project_state["status"] = "plan_ready"
+            write_json(path, project_state)
+        stored_path.unlink(missing_ok=True)
+        return {
+            "revision": new_plan["revision"],
+            "summary": stored["summary"],
+            "status": "plan_ready",
+        }
+
     def _footage_language(self, project_id: str) -> str | None:
         """Dominant detected speech language from the most recent ASR run,
         weighted by transcribed duration."""

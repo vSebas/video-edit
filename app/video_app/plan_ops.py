@@ -1,0 +1,355 @@
+"""Atomic natural-language plan edits (P4).
+
+One instruction → ONE operation from a closed set → deterministic
+application to the canonical plan as a new revision. The LLM only ever
+chooses an operation and its arguments; every mutation is computed and
+bounds-checked here, so a hallucinated argument fails closed instead of
+corrupting the timeline.
+
+Ops: delete_event, trim_event, set_volume, jl_cut, set_title. The model may
+also answer reject (with a reason shown to the user) when the instruction
+does not map cleanly onto exactly one op.
+"""
+
+from __future__ import annotations
+
+import json
+from copy import deepcopy
+
+from .providers import parse_json_content
+
+MIN_EVENT_SECONDS = 0.2
+
+
+class PlanOpError(RuntimeError):
+    pass
+
+
+def _primary_tracks(plan: dict) -> tuple[dict, dict]:
+    video = next(t for t in plan["tracks"] if t["kind"] == "video")
+    audio = next(t for t in plan["tracks"] if t["kind"] == "audio")
+    return video, audio
+
+
+def _broll_events(plan: dict) -> list[dict]:
+    videos = [t for t in plan["tracks"] if t["kind"] == "video"]
+    if len(videos) == 2 and videos[1].get("role") == "broll":
+        return videos[1]["events"]
+    return []
+
+
+def _title_events(plan: dict) -> list[dict]:
+    title = next((t for t in plan["tracks"] if t["kind"] == "title"), None)
+    return title["events"] if title else []
+
+
+def _mirrored(video: list[dict], audio: list[dict]) -> bool:
+    return len(video) == len(audio) and all(
+        v["asset_id"] == a["asset_id"]
+        and v["source_start_seconds"] == a["source_start_seconds"]
+        and v["timeline_start_seconds"] == a["timeline_start_seconds"]
+        and v["duration_seconds"] == a["duration_seconds"]
+        for v, a in zip(video, audio)
+    )
+
+
+def _require_mirrored(plan: dict) -> tuple[list[dict], list[dict]]:
+    video, audio = _primary_tracks(plan)
+    if not _mirrored(video["events"], audio["events"]):
+        raise PlanOpError(
+            "This plan already has J/L cuts; structural edits need the "
+            "mirrored revision (revert or re-place first)"
+        )
+    return video["events"], audio["events"]
+
+
+def _index_of(events: list[dict], event_id: str) -> int:
+    for index, event in enumerate(events):
+        if event["event_id"] == event_id:
+            return index
+    raise PlanOpError(f"No event {event_id!r} in the plan")
+
+
+def _r(value: float) -> float:
+    return round(value, 6)
+
+
+def _ripple(plan: dict, from_seconds: float, delta: float) -> None:
+    """Shift everything at/after a timeline position; overlays and titles
+    ride along so they stay glued to their content."""
+    video, audio = _primary_tracks(plan)
+    for events in (video["events"], audio["events"], _broll_events(plan)):
+        for event in events:
+            if event["timeline_start_seconds"] >= from_seconds - 1e-6:
+                event["timeline_start_seconds"] = _r(
+                    event["timeline_start_seconds"] + delta
+                )
+    for event in _title_events(plan):
+        if event["timeline_start_seconds"] >= from_seconds - 1e-6:
+            event["timeline_start_seconds"] = _r(
+                max(0.0, event["timeline_start_seconds"] + delta)
+            )
+    plan["project"]["duration_seconds"] = _r(
+        plan["project"]["duration_seconds"] + delta
+    )
+
+
+def _check_overlays_fit(plan: dict) -> None:
+    video, _ = _primary_tracks(plan)
+    primary_end = max(
+        (e["timeline_start_seconds"] + e["duration_seconds"]
+         for e in video["events"]), default=0.0,
+    )
+    for event in _broll_events(plan):
+        if (event["timeline_start_seconds"] + event["duration_seconds"]
+                > primary_end + 0.05):
+            raise PlanOpError(
+                f"This edit would push B-roll {event['event_id']} past the "
+                "end of the video — remove or move that overlay first"
+            )
+
+
+def _apply_delete(plan: dict, op: dict, assets: dict) -> str:
+    video_events, audio_events = _require_mirrored(plan)
+    index = _index_of(video_events, op["event_id"])
+    removed = video_events.pop(index)
+    audio_events.pop(index)
+    start = removed["timeline_start_seconds"]
+    length = removed["duration_seconds"]
+    _ripple(plan, start + length, -length)
+    _check_overlays_fit(plan)
+    return (
+        f"Eliminada la escena {removed['event_id']} "
+        f"({length:.1f}s); todo lo posterior se adelanta"
+    )
+
+
+def _apply_trim(plan: dict, op: dict, assets: dict) -> str:
+    video_events, audio_events = _require_mirrored(plan)
+    index = _index_of(video_events, op["event_id"])
+    video = video_events[index]
+    audio = audio_events[index]
+    seconds = float(op["seconds"])
+    if not 0 < seconds <= 60:
+        raise PlanOpError("Trim seconds must be within (0, 60]")
+    edge, direction = op["edge"], op["direction"]
+    delta = seconds if direction == "extend" else -seconds
+    new_duration = video["duration_seconds"] + delta
+    if new_duration < MIN_EVENT_SECONDS:
+        raise PlanOpError(
+            f"{video['event_id']} would shrink below {MIN_EVENT_SECONDS}s"
+        )
+    for event in (video, audio):
+        if edge == "start":
+            new_source_start = event["source_start_seconds"] - delta
+            if new_source_start < 0:
+                raise PlanOpError(
+                    f"{video['event_id']} has no source material before "
+                    f"{event['source_start_seconds']:.2f}s to extend into"
+                )
+            event["source_start_seconds"] = _r(new_source_start)
+        else:
+            new_source_end = event["source_end_seconds"] + delta
+            asset = assets.get(event["asset_id"]) or {}
+            available = float(asset.get("duration_seconds") or 0.0)
+            if available and new_source_end > available + 0.05:
+                raise PlanOpError(
+                    f"{video['event_id']} has no source material after "
+                    f"{event['source_end_seconds']:.2f}s to extend into"
+                )
+            event["source_end_seconds"] = _r(new_source_end)
+        event["duration_seconds"] = _r(new_duration)
+    _ripple(
+        plan,
+        video["timeline_start_seconds"] + video["duration_seconds"] - delta + 1e-6,
+        delta,
+    )
+    _check_overlays_fit(plan)
+    action = "alargada" if direction == "extend" else "recortada"
+    lado = "al inicio" if edge == "start" else "al final"
+    return (
+        f"Escena {video['event_id']} {action} {seconds:.1f}s {lado}; "
+        f"ahora dura {new_duration:.1f}s"
+    )
+
+
+def _apply_volume(plan: dict, op: dict, assets: dict) -> str:
+    _, audio_track = _primary_tracks(plan)
+    events = audio_track["events"]
+    event_id = op["event_id"]
+    try:
+        index = _index_of(events, event_id)
+    except PlanOpError:
+        # the model may name the video event of the pair
+        video_track, _ = _primary_tracks(plan)
+        index = _index_of(video_track["events"], event_id)
+        if index >= len(events):
+            raise PlanOpError(f"No audio partner for {event_id!r}")
+    db = float(op["volume_db"])
+    if not -96 <= db <= 12:
+        raise PlanOpError("volume_db must be within [-96, 12]")
+    events[index]["volume_db"] = db
+    label = "silenciado" if db <= -96 else f"a {db:g}dB"
+    return f"Audio de {events[index]['event_id']} {label}"
+
+
+def _apply_jl(plan: dict, op: dict, assets: dict) -> str:
+    video_events, audio_events = _require_mirrored(plan)
+    index = _index_of(video_events, op["event_id"])
+    if index == 0:
+        raise PlanOpError("The first scene has nothing before it to J/L into")
+    lead = float(op["lead_seconds"])
+    if not 0.1 <= abs(lead) <= 5:
+        raise PlanOpError("lead_seconds must be 0.1-5s (either sign)")
+    previous = audio_events[index - 1]
+    current = audio_events[index]
+    if lead > 0:  # J-cut: this scene's audio starts early
+        if previous["duration_seconds"] - lead < MIN_EVENT_SECONDS:
+            raise PlanOpError("Not enough previous audio to lead into")
+        if current["source_start_seconds"] - lead < 0:
+            raise PlanOpError(
+                f"{current['event_id']} has no source audio before "
+                f"{current['source_start_seconds']:.2f}s"
+            )
+        previous["duration_seconds"] = _r(previous["duration_seconds"] - lead)
+        previous["source_end_seconds"] = _r(previous["source_end_seconds"] - lead)
+        current["timeline_start_seconds"] = _r(
+            current["timeline_start_seconds"] - lead
+        )
+        current["source_start_seconds"] = _r(
+            current["source_start_seconds"] - lead
+        )
+        current["duration_seconds"] = _r(current["duration_seconds"] + lead)
+        kind = "J-cut"
+    else:  # L-cut: the previous scene's audio continues under this picture
+        tail = -lead
+        if current["duration_seconds"] - tail < MIN_EVENT_SECONDS:
+            raise PlanOpError("Not enough of this scene's audio to cut into")
+        asset = assets.get(previous["asset_id"]) or {}
+        available = float(asset.get("duration_seconds") or 0.0)
+        if available and previous["source_end_seconds"] + tail > available + 0.05:
+            raise PlanOpError(
+                f"{previous['event_id']} has no source audio after "
+                f"{previous['source_end_seconds']:.2f}s"
+            )
+        previous["duration_seconds"] = _r(previous["duration_seconds"] + tail)
+        previous["source_end_seconds"] = _r(previous["source_end_seconds"] + tail)
+        current["timeline_start_seconds"] = _r(
+            current["timeline_start_seconds"] + tail
+        )
+        current["source_start_seconds"] = _r(
+            current["source_start_seconds"] + tail
+        )
+        current["duration_seconds"] = _r(current["duration_seconds"] - tail)
+        kind = "L-cut"
+    return (
+        f"{kind} de {abs(lead):.1f}s en la transición hacia "
+        f"{video_events[index]['event_id']} (solo en el render final; "
+        "OpenTake mostrará la revisión anterior)"
+    )
+
+
+def _apply_title(plan: dict, op: dict, assets: dict) -> str:
+    events = _title_events(plan)
+    index = _index_of(events, op["event_id"])
+    text = str(op["text"]).strip()
+    if not 1 <= len(text) <= 120:
+        raise PlanOpError("Title text must be 1-120 characters")
+    events[index]["text"] = text
+    return f"Título {events[index]['event_id']} ahora dice: «{text}»"
+
+
+_APPLIERS = {
+    "delete_event": (_apply_delete, {"event_id"}),
+    "trim_event": (_apply_trim, {"event_id", "edge", "direction", "seconds"}),
+    "set_volume": (_apply_volume, {"event_id", "volume_db"}),
+    "jl_cut": (_apply_jl, {"event_id", "lead_seconds"}),
+    "set_title": (_apply_title, {"event_id", "text"}),
+}
+
+
+def apply_op(plan: dict, op: dict, inventory: dict) -> tuple[dict, str]:
+    """Apply one validated op to a COPY of the plan; returns (candidate,
+    Spanish summary). The candidate's revision is bumped by one."""
+    kind = op.get("op")
+    if kind not in _APPLIERS:
+        raise PlanOpError(f"Unknown operation {kind!r}")
+    applier, required = _APPLIERS[kind]
+    missing = required - set(op)
+    if missing:
+        raise PlanOpError(f"{kind} is missing {', '.join(sorted(missing))}")
+    if op.get("edge") not in (None, "start", "end"):
+        raise PlanOpError("edge must be 'start' or 'end'")
+    if op.get("direction") not in (None, "shorten", "extend"):
+        raise PlanOpError("direction must be 'shorten' or 'extend'")
+    assets = {a["asset_id"]: a for a in inventory.get("assets", [])}
+    candidate = deepcopy(plan)
+    summary = applier(candidate, op, assets)
+    candidate["revision"] = int(plan.get("revision", 1)) + 1
+    return candidate, summary
+
+
+def _event_table(plan: dict) -> str:
+    lines = []
+    video, audio = _primary_tracks(plan)
+    for v, a in zip(video["events"], audio["events"]):
+        end = v["timeline_start_seconds"] + v["duration_seconds"]
+        quote = (v.get("observed_content") or "").replace("\n", " ")[:90]
+        volume = a.get("volume_db")
+        vol = f" vol={volume:g}dB" if volume else ""
+        lines.append(
+            f"- {v['event_id']} [{v['timeline_start_seconds']:.1f}-{end:.1f}s]"
+            f" intent={v['intent']}{vol} :: {quote}"
+        )
+    for t in _title_events(plan):
+        lines.append(
+            f"- {t['event_id']} (título, {t['timeline_start_seconds']:.1f}s)"
+            f" :: {t.get('text')!r}"
+        )
+    for b in _broll_events(plan):
+        end = b["timeline_start_seconds"] + b["duration_seconds"]
+        lines.append(
+            f"- {b['event_id']} (b-roll, {b['timeline_start_seconds']:.1f}-"
+            f"{end:.1f}s)"
+        )
+    return "\n".join(lines)
+
+
+_OPS_CONTRACT = """
+Respond with EXACTLY one JSON object, nothing else. One of:
+{"op":"delete_event","event_id":"..."}
+{"op":"trim_event","event_id":"...","edge":"start"|"end","direction":"shorten"|"extend","seconds":<0-60>}
+{"op":"set_volume","event_id":"...","volume_db":<-96..12, -96 mutes>}
+{"op":"jl_cut","event_id":"...","lead_seconds":<0.1..5 J-cut (audio of this scene starts early) or -5..-0.1 L-cut>}
+{"op":"set_title","event_id":"...","text":"..."}
+{"op":"reject","reason":"<short reason in the instruction's language>"}
+
+Rules: pick exactly ONE operation. Use event ids from the timeline listing
+verbatim. If the instruction is ambiguous, asks for several changes at once,
+or asks for something outside these operations, use reject with a helpful
+reason. Do not invent event ids.
+""".strip()
+
+
+def instruction_to_op(client, plan: dict, instruction: str) -> dict:
+    """Map a natural-language instruction to one closed-set op via the LLM."""
+    instruction = (instruction or "").strip()
+    if not 2 <= len(instruction) <= 500:
+        raise PlanOpError("Instruction must be 2-500 characters")
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You translate ONE editing instruction into ONE structured "
+                "operation on a video edit plan.\n\nTimeline:\n"
+                + _event_table(plan)
+                + "\n\n" + _OPS_CONTRACT
+            ),
+        },
+        {"role": "user", "content": instruction},
+    ]
+    response = client.chat(messages, json_object=True, temperature=0.0)
+    op = parse_json_content(response["content"])
+    if not isinstance(op, dict) or not isinstance(op.get("op"), str):
+        raise PlanOpError(f"Model returned no operation: {json.dumps(op)[:200]}")
+    return op

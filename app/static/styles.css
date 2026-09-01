@@ -571,3 +571,20 @@ input[type="file"] {
 .sync-diff code { opacity: .8; }
 .cleanup-item { display: flex; gap: 8px; align-items: baseline; font-size: 13px; margin: 4px 0; }
 .cleanup-item em { opacity: .7; }
+
+.command-row {
+  display: flex;
+  gap: 0.6rem;
+  align-items: stretch;
+  margin-top: 0.6rem;
+}
+.command-row input {
+  flex: 1;
+  padding: 0.55rem 0.8rem;
+  border-radius: 10px;
+  border: 1px solid var(--border, #2c3140);
+  background: var(--panel, #12141c);
+  color: inherit;
+  font: inherit;
+}
+.command-row .pipeline-step { flex: 0 0 auto; }

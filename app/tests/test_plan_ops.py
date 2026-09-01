@@ -1,0 +1,263 @@
+"""P4: atomic natural-language edits — deterministic op appliers and the
+instruction endpoints (LLM stubbed; the model only ever picks an op)."""
+
+import json
+from pathlib import Path
+
+import pytest
+
+from video_app.plan_ops import PlanOpError, apply_op, instruction_to_op
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+FIXTURES = Path(__file__).parent / "fixtures" / "opentake_sync"
+
+
+def _event(event_id, asset_id, src_start, timeline_start, duration,
+           intent="scene", volume_db=None):
+    return {
+        "event_id": event_id, "asset_id": asset_id,
+        "source_start_seconds": src_start,
+        "source_end_seconds": round(src_start + duration, 6),
+        "timeline_start_seconds": timeline_start,
+        "duration_seconds": duration, "playback_rate": 1.0,
+        "intent": intent, "observed_content": None, "confidence": 0.9,
+        "reframe": None, "transition_out": None, "text": None,
+        "volume_db": volume_db,
+    }
+
+
+def _plan(with_broll=False):
+    video = [
+        _event("v01", "clip_a", 0.0, 0.0, 3.0),
+        _event("v02", "clip_b", 1.0, 3.0, 4.0),
+        _event("v03", "clip_a", 5.0, 7.0, 3.0),
+    ]
+    audio = [json.loads(json.dumps(e)) for e in video]
+    for e in audio:
+        e["event_id"] = e["event_id"].replace("v", "a", 1)
+    tracks = [
+        {"track_id": "v1", "kind": "video", "events": video},
+        {"track_id": "a1", "kind": "audio", "events": audio},
+        {"track_id": "t1", "kind": "title", "events": [
+            {"event_id": "t01", "asset_id": None,
+             "source_start_seconds": None, "source_end_seconds": None,
+             "timeline_start_seconds": 8.0, "duration_seconds": 2.0,
+             "playback_rate": 1.0, "intent": "title",
+             "observed_content": None, "confidence": 1.0, "reframe": None,
+             "transition_out": None, "text": "Hola", "volume_db": None},
+        ]},
+    ]
+    if with_broll:
+        tracks.append({"track_id": "v2", "kind": "video", "role": "broll",
+                       "events": [_event("bro-01", "clip_b", 0.0, 8.0, 1.5,
+                                         intent="b-roll")]})
+    return {
+        "schema_version": "edit-plan.v1",
+        "generated_at": "2026-09-01T00:00:00Z",
+        "benchmark_id": "t", "concept_id": "t", "revision": 3,
+        "project": {"width": 1080, "height": 1920, "fps": 30,
+                    "duration_seconds": 10.0, "background_color": "black"},
+        "tracks": tracks,
+    }
+
+
+INVENTORY = {"assets": [
+    {"asset_id": "clip_a", "duration_seconds": 10.0},
+    {"asset_id": "clip_b", "duration_seconds": 6.0},
+]}
+
+
+class TestApplyOp:
+    def test_delete_ripples_everything_after(self) -> None:
+        plan = _plan(with_broll=True)
+        candidate, summary = apply_op(
+            plan, {"op": "delete_event", "event_id": "v02"}, INVENTORY
+        )
+        video = candidate["tracks"][0]["events"]
+        assert [e["event_id"] for e in video] == ["v01", "v03"]
+        assert video[1]["timeline_start_seconds"] == 3.0
+        assert candidate["project"]["duration_seconds"] == 6.0
+        title = candidate["tracks"][2]["events"][0]
+        assert title["timeline_start_seconds"] == 4.0
+        broll = candidate["tracks"][3]["events"][0]
+        assert broll["timeline_start_seconds"] == 4.0
+        assert candidate["revision"] == 4
+        assert plan["revision"] == 3  # original untouched
+        assert "v02" in summary
+
+    def test_delete_that_orphans_broll_is_refused(self) -> None:
+        plan = _plan(with_broll=True)
+        # dropping the LAST primary scene leaves the overlay hanging
+        plan["tracks"][3]["events"][0]["timeline_start_seconds"] = 8.0
+        with pytest.raises(PlanOpError, match="B-roll"):
+            apply_op(plan, {"op": "delete_event", "event_id": "v03"}, INVENTORY)
+
+    def test_trim_shorten_start_moves_source_window(self) -> None:
+        candidate, _ = apply_op(_plan(), {
+            "op": "trim_event", "event_id": "v02", "edge": "start",
+            "direction": "shorten", "seconds": 1.0,
+        }, INVENTORY)
+        video = candidate["tracks"][0]["events"]
+        assert video[1]["source_start_seconds"] == 2.0
+        assert video[1]["duration_seconds"] == 3.0
+        assert video[1]["timeline_start_seconds"] == 3.0
+        assert video[2]["timeline_start_seconds"] == 6.0
+        assert candidate["project"]["duration_seconds"] == 9.0
+        audio = candidate["tracks"][1]["events"]
+        assert audio[1]["source_start_seconds"] == 2.0
+
+    def test_trim_extend_end_needs_source_material(self) -> None:
+        with pytest.raises(PlanOpError, match="no source material after"):
+            apply_op(_plan(), {
+                "op": "trim_event", "event_id": "v02", "edge": "end",
+                "direction": "extend", "seconds": 1.5,
+            }, INVENTORY)  # clip_b is 6.0s; v02 already ends at source 5.0
+
+    def test_trim_extend_start_at_source_zero_is_refused(self) -> None:
+        with pytest.raises(PlanOpError, match="no source material before"):
+            apply_op(_plan(), {
+                "op": "trim_event", "event_id": "v01", "edge": "start",
+                "direction": "extend", "seconds": 0.5,
+            }, INVENTORY)
+
+    def test_set_volume_accepts_video_event_name(self) -> None:
+        candidate, summary = apply_op(_plan(), {
+            "op": "set_volume", "event_id": "v02", "volume_db": -12,
+        }, INVENTORY)
+        assert candidate["tracks"][1]["events"][1]["volume_db"] == -12
+        assert "a02" in summary
+
+    def test_jl_cut_makes_audio_lead_picture(self) -> None:
+        candidate, summary = apply_op(_plan(), {
+            "op": "jl_cut", "event_id": "v02", "lead_seconds": 0.5,
+        }, INVENTORY)
+        video = candidate["tracks"][0]["events"]
+        audio = candidate["tracks"][1]["events"]
+        assert video[1]["timeline_start_seconds"] == 3.0  # picture unmoved
+        assert audio[0]["duration_seconds"] == 2.5
+        assert audio[1]["timeline_start_seconds"] == 2.5
+        assert audio[1]["source_start_seconds"] == 0.5
+        assert audio[1]["duration_seconds"] == 4.5
+        assert "J-cut" in summary
+
+    def test_structural_edit_on_jl_plan_is_refused(self) -> None:
+        jl, _ = apply_op(_plan(), {
+            "op": "jl_cut", "event_id": "v02", "lead_seconds": 0.5,
+        }, INVENTORY)
+        with pytest.raises(PlanOpError, match="J/L"):
+            apply_op(jl, {"op": "delete_event", "event_id": "v01"}, INVENTORY)
+
+    def test_set_title(self) -> None:
+        candidate, _ = apply_op(_plan(), {
+            "op": "set_title", "event_id": "t01", "text": "Nuevo título",
+        }, INVENTORY)
+        assert candidate["tracks"][2]["events"][0]["text"] == "Nuevo título"
+
+    def test_unknown_op_and_missing_fields_fail_closed(self) -> None:
+        with pytest.raises(PlanOpError, match="Unknown operation"):
+            apply_op(_plan(), {"op": "explode"}, INVENTORY)
+        with pytest.raises(PlanOpError, match="missing"):
+            apply_op(_plan(), {"op": "trim_event", "event_id": "v01"}, INVENTORY)
+        with pytest.raises(PlanOpError, match="No event"):
+            apply_op(_plan(), {"op": "delete_event", "event_id": "v99"}, INVENTORY)
+
+
+class FakeClient:
+    def __init__(self, payload):
+        self.payload = payload
+        self.messages = None
+
+    def chat(self, messages, **kwargs):
+        self.messages = messages
+        return {"content": json.dumps(self.payload)}
+
+
+class TestInstructionToOp:
+    def test_prompt_carries_timeline_and_returns_op(self) -> None:
+        client = FakeClient({"op": "delete_event", "event_id": "v02"})
+        op = instruction_to_op(client, _plan(), "quita la segunda escena")
+        assert op == {"op": "delete_event", "event_id": "v02"}
+        system = client.messages[0]["content"]
+        assert "v02 [3.0-7.0s]" in system and "t01" in system
+
+    def test_non_object_reply_fails_closed(self) -> None:
+        client = FakeClient(["not", "an", "op"])
+        with pytest.raises(PlanOpError, match="no operation"):
+            instruction_to_op(client, _plan(), "haz algo")
+
+
+class TestPlanCommandEndpoints:
+    def _scaffold(self, tmp_path):
+        fx_plan = _plan()
+        root = tmp_path / "runtime" / "cmd-test"
+        (root / "plan").mkdir(parents=True)
+        (root / "plan" / "edit-plan.json").write_text(json.dumps(fx_plan))
+        (root / "project.json").write_text(json.dumps({
+            "schema_version": "video-app-project.v1", "project_id": "cmd-test",
+            "name": "t", "created_at": "2026-09-01T00:00:00Z",
+            "updated_at": "2026-09-01T00:00:00Z", "source_directory": "footage",
+            "prompt": "", "status": "plan_ready", "footage_summary": "",
+            "analysis": {}, "inventory": INVENTORY, "concepts": [],
+            "selected_concept_id": None, "plan": fx_plan, "outputs": {},
+        }))
+        return root
+
+    def test_propose_then_apply_installs_revision(self, tmp_path, monkeypatch) -> None:
+        from fastapi.testclient import TestClient
+        from video_app import projects as projects_module
+        from video_app.config import Settings
+        from video_app.main import create_app
+
+        self._scaffold(tmp_path)
+        monkeypatch.setattr(projects_module, "resolve_provider", lambda *a: None)
+        monkeypatch.setattr(
+            projects_module, "ChatClient",
+            lambda *a, **k: FakeClient({"op": "set_volume",
+                                        "event_id": "v02", "volume_db": -12}),
+        )
+        settings = Settings(root=PROJECT_ROOT, runtime=tmp_path / "runtime")
+        with TestClient(create_app(settings)) as client:
+            proposed = client.post(
+                "/api/projects/cmd-test/plan/command",
+                json={"instruction": "baja el volumen de la segunda escena"},
+            )
+            assert proposed.status_code == 200, proposed.text
+            body = proposed.json()
+            assert body["status"] == "proposed"
+            assert body["revision_preview"] == 4
+            applied = client.post("/api/projects/cmd-test/plan/command/apply")
+            assert applied.status_code == 200, applied.text
+            assert applied.json()["revision"] == 4
+            plan = json.loads(
+                (tmp_path / "runtime" / "cmd-test" / "plan" / "edit-plan.json")
+                .read_text()
+            )
+            assert plan["revision"] == 4
+            assert plan["tracks"][1]["events"][1]["volume_db"] == -12
+            # single-use: a second apply has nothing to install
+            again = client.post("/api/projects/cmd-test/plan/command/apply")
+            assert again.status_code == 400
+
+    def test_reject_passes_reason_through(self, tmp_path, monkeypatch) -> None:
+        from fastapi.testclient import TestClient
+        from video_app import projects as projects_module
+        from video_app.config import Settings
+        from video_app.main import create_app
+
+        self._scaffold(tmp_path)
+        monkeypatch.setattr(projects_module, "resolve_provider", lambda *a: None)
+        monkeypatch.setattr(
+            projects_module, "ChatClient",
+            lambda *a, **k: FakeClient({"op": "reject",
+                                        "reason": "pide dos cambios a la vez"}),
+        )
+        settings = Settings(root=PROJECT_ROOT, runtime=tmp_path / "runtime")
+        with TestClient(create_app(settings)) as client:
+            proposed = client.post(
+                "/api/projects/cmd-test/plan/command",
+                json={"instruction": "quita v01 y v02"},
+            )
+            assert proposed.status_code == 200
+            assert proposed.json() == {
+                "status": "rejected", "reason": "pide dos cambios a la vez",
+            }

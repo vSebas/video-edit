@@ -507,6 +507,15 @@ function advancedSection(project) {
       </div>
       <div id="opentake-cleanup-list"></div>
       <div id="opentake-diff"></div>
+      <div class="command-row">
+        <input type="text" id="plan-command-input" maxlength="500"
+          placeholder="Instrucción de edición — p. ej. «quita la escena v05» o «baja el volumen de v03»" />
+        <button class="pipeline-step" id="plan-command-send">
+          <strong>Proponer edición</strong>
+          <span>Una instrucción → un cambio atómico al plan</span>
+        </button>
+      </div>
+      <div id="plan-command-result"></div>
       <div class="pipeline-grid">
         <button class="pipeline-step" id="clone-project">
           <strong>Duplicate vlog</strong>
@@ -608,10 +617,11 @@ function renderProject() {
   });
   document.querySelectorAll('[data-pipeline]').forEach((button) => {
     button.addEventListener('click', () => runAdvancedStep(button.dataset.pipeline, button));
+  });
   $('#opentake-place')?.addEventListener('click', openTakePlace);
   $('#opentake-sync')?.addEventListener('click', openTakeSyncPreview);
   $('#opentake-cleanup')?.addEventListener('click', openTakeCleanup);
-  });
+  $('#plan-command-send')?.addEventListener('click', planCommandPropose);
   $('#delete-project')?.addEventListener('click', deleteProject);
   $('#clone-project')?.addEventListener('click', cloneProject);
   $('#add-clips-input')?.addEventListener('change', addClipsToProject);
@@ -1040,6 +1050,46 @@ async function openTakeCleanup() {
       } catch (error) { notice(error.message, true); }
     });
   } catch (error) { notice(error.message, true); }
+}
+
+async function planCommandPropose() {
+  const project = state.activeProject;
+  if (!project) return;
+  const box = $('#plan-command-result');
+  const instruction = ($('#plan-command-input')?.value || '').trim();
+  if (instruction.length < 2) {
+    box.innerHTML = '<p class="notice">Escribe una instrucción primero.</p>';
+    return;
+  }
+  box.innerHTML = '<p class="notice">Interpretando la instrucción…</p>';
+  try {
+    const proposed = await api(`/api/projects/${project.project_id}/plan/command`, {
+      method: 'POST', body: JSON.stringify({ instruction }),
+    });
+    if (proposed.status === 'rejected') {
+      box.innerHTML = `<p class="notice">No se pudo mapear a un cambio: ${escapeHtml(proposed.reason)}</p>`;
+      return;
+    }
+    box.innerHTML = `
+      <div class="sync-diff">
+        <p><strong>Propuesta:</strong> ${escapeHtml(proposed.summary)}</p>
+        <button class="pipeline-step" id="plan-command-apply">
+          <strong>Aplicar (revisión ${proposed.revision_preview})</strong>
+          <span>Un cambio atómico, con la revisión anterior archivada</span>
+        </button>
+      </div>`;
+    $('#plan-command-apply')?.addEventListener('click', async () => {
+      try {
+        const applied = await api(`/api/projects/${project.project_id}/plan/command/apply`, { method: 'POST' });
+        notice(`${applied.summary} (revisión ${applied.revision}). Re-renderiza, y «Enviar a OpenTake» si quieres seguir editando allí.`);
+        box.innerHTML = '';
+        $('#plan-command-input').value = '';
+        await loadProject(project.project_id);
+      } catch (error) { notice(error.message, true); }
+    });
+  } catch (error) {
+    box.innerHTML = `<p class="notice">${escapeHtml(error.message)}</p>`;
+  }
 }
 
 async function runAdvancedStep(stepId, button) {

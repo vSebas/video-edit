@@ -91,6 +91,10 @@ class CleanupApplyRequest(BaseModel):
     readback: dict | None = None
 
 
+class PlanCommandRequest(BaseModel):
+    instruction: str = Field(min_length=2, max_length=500)
+
+
 class OpenTakeSyncRequest(BaseModel):
     # Host-side callers (CLI/browser) pass the get_timeline readback; when
     # omitted the server fetches it over MCP itself (host-run app only —
@@ -356,6 +360,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def render(project_id: str):
         project_call(lambda: projects.get_project(project_id))
         return jobs.submit("render", project_id, lambda: projects.render(project_id))
+
+    @application.post("/api/projects/{project_id}/plan/command")
+    def plan_command_propose(project_id: str, request: PlanCommandRequest):
+        return project_call(
+            lambda: projects.plan_command_propose(project_id, request.instruction)
+        )
+
+    @application.post("/api/projects/{project_id}/plan/command/apply")
+    def plan_command_apply(project_id: str):
+        return project_call(lambda: projects.plan_command_apply(project_id))
 
     @application.post("/api/projects/{project_id}/opentake/place")
     def opentake_place(project_id: str):
