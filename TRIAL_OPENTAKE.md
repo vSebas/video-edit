@@ -97,6 +97,21 @@ than ours.
   frame-server changes passed their touched-crate tests and the release
   custom-protocol build.
 
+- **2026-09-01 — P0 live round-trip PROVEN, and a serious staleness bug
+  found on the way.** The owner deleted two clips by hand in the OpenTake
+  GUI; the workbench sync button showed the two `deleted` diff entries; one
+  click applied them as plan revision 2 (audit-logged "pulled from
+  OpenTake"); the re-render came out 74.63s — the plan's 74.57s content sum
+  plus tail padding — with the deleted clips gone. First human edit through
+  the full hybrid loop. Two findings: (1) **state divergence** — the GUI's
+  saved timeline (20 clips on disk) and the external-MCP view (still 22)
+  forked within one app session after an external placement; an app restart
+  converged them. Until guarded, the rule is save-then-restart before sync
+  if the diff looks emptier than the edits; upstream-list item with
+  reproduction. (2) Timeline gaps are legal in OpenTake but not in our plan
+  vocabulary — the sync carries positions, the renderer closes gaps;
+  fine for now, a decision point for the plan-vocabulary work.
+
 ## Trial steps and gate
 
 1. [x] App builds from source and launches on Wayland/NVIDIA (2026-08-26;
