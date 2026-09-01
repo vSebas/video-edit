@@ -342,53 +342,32 @@ closed between 2026-08-05 and 2026-08-19. What is genuinely still open:
 
 ## Immediate Next Actions
 
-The active thread is the OpenTake trial; everything else queues behind its
-gate.
+The trial gate closed 2026-09-01: **hybrid** (see `TRIAL_OPENTAKE.md`).
+OpenTake is the editing surface over MCP; our renderer produces final
+pixels; Resolve remains the editor-handoff escape hatch.
 
-1. **Finish the frame-server fix** sitting uncommitted in the fork (resume
-   the 08-27 Codex session): review, test, commit, rebuild. It removes the
-   ~1 fps export penalty on effect-bearing clips.
-2. **Run the trial gate** (`TRIAL_OPENTAKE.md`, steps 2-5): pair our service
-   with the external MCP endpoint; reproduce a real `edit-plan.v1` in the
-   OpenTake timeline with frame-exact readback; apply one reviewed batch of
-   Spanish filler/silence removals from our transcript via a single
-   `ripple_delete_ranges`; export; test restart/recovery under 30 minutes.
-   The owner judges the result against the current pipeline's cut.
-3. **Branch on the gate.** Pass → build the plan→timeline adapter and make
-   OpenTake the execution backend (Resolve and the owned renderer stay as
-   escape paths). Fail → resume `EXECUTION_LAYER_PLAN.md` phases 0-2
-   (reliability floor, plan v2 + command kernel, Spanish dialogue cleanup in
-   the owned compiler).
-4. **Dialogue cleanup ships either way** — it is executor-independent up to
-   the last step: compute filler/false-start/silence ranges from our own
-   word-level transcript, review them in our UI, then apply via
-   `ripple_delete_ranges` (pass) or the owned command kernel (fail).
-
-Adopted from the 2026-08-31 handoff-memo review, run as sidecars that never
-block the gate:
-
-5. `source-context.v1` — BUILT and merged (2026-09-01), dormant by default.
-   First real run: 39/39 clips, 110 events, 50 relationships, 109 anchored,
-   ~15 min wall and cents of cost (telemetry now records all of it). First
-   blind A/B on real footage: the owner preferred the BASELINE concepts, so
-   the sidecar stays opt-in-off; the harness (`bench/context_ab.py`) stays
-   one command away for future footage days, and the proper test still
-   wants a relationship-annotated corpus (n=1 today).
-6. Fold range/model/prompt/sampling identity into the content-addressed
-   artifact design when the durability trigger fires.
-
-Standing items, unchanged: voiceover placement with ducking; trending-audio
-matching and reference-vlog style learning (owner-requested); sideways-clip
-rotation; the durability redesign behind its trigger (restart loses work,
-double-submit pays twice, or stale evidence survives re-analysis); NVENC in
-the owned renderer if the trial fails. Later: CapCut draft export, Resolve
-scripting auto-import.
-
-Closed rather than pending: Vidi retrieval spike, MediaMolder-to-Vidi
-bridge, Crayotter comparison (all evaluated and retired); the memo's P0-P11
-sequence, blocking critic stage, cloud GPU ASR, and any fixed duration
-acceptance gate (duration is earned by content — owner's standing editorial
-rule).
+1. **Timeline→plan sync (the new keystone).** Read the OpenTake timeline
+   back and update `edit-plan.json` so cleanup ripples and manual edits
+   flow into our render. Deterministic mapping already exists in the
+   adapter; this is its inverse, with the same readback verification.
+2. **Productionize the adapter** per the cross-review hardening list:
+   retries, idempotent re-placement, structured verification reports, and
+   app integration (a "Send to OpenTake" step in the daily loop) instead of
+   a trial script.
+3. **Dialogue-cleanup review UI**: surface the candidate ranges (fillers,
+   dead air) in our workbench for approval before the atomic apply — the
+   trial applied them from the terminal.
+4. **Fork/upstream queue**, in value order: wide-source aspect squeeze in
+   the compositor (blocks OpenTake-as-renderer), project lifecycle +
+   export tools on external MCP (unlocks unattended runs; upstream PR
+   preferred), tonemap tuning knob, GTK main-thread fix PR (ready),
+   progress-event staleness, window-close lingering process, thumbnail
+   cache loss after crash (cosmetic).
+5. Standing items, unchanged: voiceover placement with ducking;
+   trending-audio matching; reference-vlog style learning; sideways-clip
+   rotation; durability redesign behind its trigger; writer seat stays
+   deepseek-v4-pro (rematch 2026-09-01: retained blind over gpt-5.6-sol);
+   sidecar dormant with its harness one command away.
 
 ## Durable Sources of Truth
 

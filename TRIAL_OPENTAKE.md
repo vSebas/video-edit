@@ -109,7 +109,7 @@ than ours.
 4. [ ] Dialogue cleanup driven by our transcript: Spanish filler lexicon
        (eh, este, o sea, como que), silences, false starts → reviewed ranges
        → `ripple_delete_ranges`.
-5. [~] Export + comparison done (2026-09-01); recovery test pending.
+5. [x] Export + comparison + recovery done (2026-09-01).
        Owner verdict on the side-by-side: content is (correctly) identical —
        same plan, frame-exact both ways — but OpenTake's RENDER looks worse:
        (a) colors — its HLG tonemap (mobius, desat=2) reads flatter than our
@@ -123,10 +123,28 @@ than ours.
        (single-core tonemap bound; profiled). Duration parity confirmed
        (77.1s vs 78.2s, the delta being the dead-air ripple).
 
-**Gate:** the finished result must be clearly better than the current
-pipeline's cut, the app must be stable enough to trust with a day's edit, and
-a failure must be recoverable in under 30 minutes. Any miss → stop, keep the
-fork bookmarked, resume `EXECUTION_LAYER_PLAN.md`.
+**Gate: CLOSED 2026-09-01 — verdict: HYBRID, ratified by the owner.**
+
+The evidence: stability passed (SIGKILL mid-session; timeline recovered
+byte-identical including an MCP-applied edit; ~1 min to resume), automation
+passed (frame-exact placement, atomic transcript-driven cleanup), but the
+render lost — OpenTake's output looked worse than ours on the same cut
+(flat tonemap, horizontally squeezed 16:9 sources, no title track), and its
+export took ~1 h against our ~5 min.
+
+**Decision: OpenTake is adopted as the EDITING surface — plan placement,
+dialogue cleanup, manual finishing, all over MCP — while final pixels keep
+coming from our renderer (and the Resolve path stays as the editor-handoff
+escape hatch).** Nothing is lost in this split: the daily loop keeps its
+fast, better-looking render, and gains a real timeline for the finishing
+pass. Revisit OpenTake-as-renderer only after its aspect bug and tonemap
+tuning are fixed.
+
+The architectural consequence to build next: the edit-plan stays the source
+of truth for rendering, so edits made on the OpenTake timeline (cleanup
+ripples, manual changes) must flow BACK into the plan — a timeline→plan
+readback sync. That same mechanism is the foundation for "learn from the
+owner's finishing pass" later.
 
 ## Standing risks accepted by the owner
 

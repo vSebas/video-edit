@@ -22,6 +22,7 @@ services:
       DASHSCOPE_API_KEY: "${DASHSCOPE_API_KEY:-}"
       DASHSCOPE_BASE_URL: "${DASHSCOPE_BASE_URL:-}"
       GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       # Set this before exposing the port beyond localhost: without it the
       # API is open to anyone who can reach it (footage, deletion, paid calls).
       VIDEO_EDITING_TOKEN: "${VIDEO_EDITING_TOKEN:-}"
