@@ -1,0 +1,417 @@
+{
+ "canGenerate": false,
+ "fps": 30,
+ "height": 1920,
+ "totalFrames": 2346,
+ "tracks": [
+  {
+   "clips": [
+    {
+     "clipId": "825c0bc5",
+     "durationFrames": 69,
+     "linkGroupId": "a4d9b18c",
+     "mediaRef": "86d120c6",
+     "startFrame": 0,
+     "trimStartFrame": 390
+    },
+    {
+     "clipId": "c81e5749",
+     "durationFrames": 56,
+     "linkGroupId": "45a8aba3",
+     "mediaRef": "1dd75c50",
+     "startFrame": 69,
+     "trimStartFrame": 101
+    },
+    {
+     "clipId": "cae05959",
+     "durationFrames": 59,
+     "linkGroupId": "ec820a38",
+     "mediaRef": "34eee3ac",
+     "startFrame": 125,
+     "trimStartFrame": 114
+    },
+    {
+     "clipId": "cff73c79",
+     "durationFrames": 171,
+     "linkGroupId": "593e71c2",
+     "mediaRef": "355cf961",
+     "startFrame": 184,
+     "trimStartFrame": 265
+    },
+    {
+     "clipId": "cd828497",
+     "durationFrames": 60,
+     "linkGroupId": "3186d8df",
+     "mediaRef": "2cb94f53",
+     "startFrame": 355,
+     "trimStartFrame": 165
+    },
+    {
+     "clipId": "5601caec",
+     "durationFrames": 90,
+     "linkGroupId": "4f62a547",
+     "mediaRef": "2cb94f53",
+     "startFrame": 415,
+     "trimStartFrame": 3278
+    },
+    {
+     "clipId": "60638f7d",
+     "durationFrames": 60,
+     "linkGroupId": "31fc548e",
+     "mediaRef": "2cb94f53",
+     "startFrame": 505,
+     "trimStartFrame": 3428
+    },
+    {
+     "clipId": "59f735f5",
+     "durationFrames": 210,
+     "linkGroupId": "2ca23738",
+     "mediaRef": "2cb94f53",
+     "startFrame": 565,
+     "trimStartFrame": 4917
+    },
+    {
+     "clipId": "2474f9b3",
+     "durationFrames": 60,
+     "linkGroupId": "573196da",
+     "mediaRef": "2cb94f53",
+     "startFrame": 775,
+     "trimStartFrame": 5302
+    },
+    {
+     "clipId": "97ea5078",
+     "durationFrames": 45,
+     "linkGroupId": "2cc543b4",
+     "mediaRef": "1f06cdac",
+     "startFrame": 835,
+     "trimStartFrame": 1350
+    },
+    {
+     "clipId": "dc768d9b",
+     "durationFrames": 45,
+     "linkGroupId": "ba232408",
+     "mediaRef": "1f06cdac",
+     "startFrame": 880,
+     "trimStartFrame": 2786
+    },
+    {
+     "clipId": "a22865d2",
+     "durationFrames": 81,
+     "linkGroupId": "70f576ab",
+     "mediaRef": "25234408",
+     "startFrame": 925,
+     "trimStartFrame": 5
+    },
+    {
+     "clipId": "7f115dbc",
+     "durationFrames": 31,
+     "linkGroupId": "021c7803",
+     "mediaRef": "85237fab",
+     "startFrame": 1006,
+     "trimStartFrame": 112
+    },
+    {
+     "clipId": "96ccf4b0",
+     "durationFrames": 41,
+     "linkGroupId": "460dd4f1",
+     "mediaRef": "85237fab",
+     "startFrame": 1037,
+     "trimStartFrame": 718
+    },
+    {
+     "clipId": "47b47bf7",
+     "durationFrames": 53,
+     "linkGroupId": "95858176",
+     "mediaRef": "47b4996e",
+     "startFrame": 1078,
+     "trimStartFrame": 60
+    },
+    {
+     "clipId": "fe6e5c70",
+     "durationFrames": 94,
+     "linkGroupId": "d2288d85",
+     "mediaRef": "47b4996e",
+     "startFrame": 1131,
+     "trimStartFrame": 190
+    },
+    {
+     "clipId": "af831d69",
+     "durationFrames": 75,
+     "linkGroupId": "7dc71fe2",
+     "mediaRef": "6e75a5b5",
+     "startFrame": 1225,
+     "trimStartFrame": 839
+    },
+    {
+     "clipId": "5c3ac110",
+     "durationFrames": 754,
+     "linkGroupId": "7e6c9c31",
+     "mediaRef": "6e75a5b5",
+     "startFrame": 1300
+    },
+    {
+     "clipId": "ab4ac972",
+     "durationFrames": 82,
+     "linkGroupId": "d966423e",
+     "mediaRef": "6e75a5b5",
+     "startFrame": 2054,
+     "trimStartFrame": 523
+    },
+    {
+     "clipId": "d3f1f4f5",
+     "durationFrames": 90,
+     "linkGroupId": "3d767dc1",
+     "mediaRef": "2bc0bea6",
+     "startFrame": 2136,
+     "trimStartFrame": 2607
+    },
+    {
+     "clipId": "14616f12",
+     "durationFrames": 75,
+     "linkGroupId": "b674d9b2",
+     "mediaRef": "ddac9b82",
+     "startFrame": 2226,
+     "trimStartFrame": 150
+    },
+    {
+     "clipId": "d41508a8",
+     "durationFrames": 45,
+     "linkGroupId": "27039438",
+     "mediaRef": "11e7a7b4",
+     "startFrame": 2301,
+     "trimStartFrame": 2038
+    }
+   ],
+   "track": "V1",
+   "trackIndex": 0,
+   "type": "video"
+  },
+  {
+   "clips": [
+    {
+     "clipId": "55c7075e",
+     "durationFrames": 69,
+     "linkGroupId": "a4d9b18c",
+     "mediaRef": "86d120c6",
+     "mediaType": "audio",
+     "sourceClipType": "video",
+     "startFrame": 0,
+     "trimStartFrame": 390
+    },
+    {
+     "clipId": "9d50b5df",
+     "durationFrames": 56,
+     "linkGroupId": "45a8aba3",
+     "mediaRef": "1dd75c50",
+     "mediaType": "audio",
+     "sourceClipType": "video",
+     "startFrame": 69,
+     "trimStartFrame": 101
+    },
+    {
+     "clipId": "99955b4b",
+     "durationFrames": 59,
+     "linkGroupId": "ec820a38",
+     "mediaRef": "34eee3ac",
+     "mediaType": "audio",
+     "sourceClipType": "video",
+     "startFrame": 125,
+     "trimStartFrame": 114
+    },
+    {
+     "clipId": "a9dfd1a9",
+     "durationFrames": 171,
+     "linkGroupId": "593e71c2",
+     "mediaRef": "355cf961",
+     "mediaType": "audio",
+     "sourceClipType": "video",
+     "startFrame": 184,
+     "trimStartFrame": 265
+    },
+    {
+     "clipId": "fdf7b874",
+     "durationFrames": 60,
+     "linkGroupId": "3186d8df",
+     "mediaRef": "2cb94f53",
+     "mediaType": "audio",
+     "sourceClipType": "video",
+     "startFrame": 355,
+     "trimStartFrame": 165
+    },
+    {
+     "clipId": "d715505d",
+     "durationFrames": 90,
+     "linkGroupId": "4f62a547",
+     "mediaRef": "2cb94f53",
+     "mediaType": "audio",
+     "sourceClipType": "video",
+     "startFrame": 415,
+     "trimStartFrame": 3278
+    },
+    {
+     "clipId": "8d52cc1a",
+     "durationFrames": 60,
+     "linkGroupId": "31fc548e",
+     "mediaRef": "2cb94f53",
+     "mediaType": "audio",
+     "sourceClipType": "video",
+     "startFrame": 505,
+     "trimStartFrame": 3428
+    },
+    {
+     "clipId": "bca04156",
+     "durationFrames": 210,
+     "linkGroupId": "2ca23738",
+     "mediaRef": "2cb94f53",
+     "mediaType": "audio",
+     "sourceClipType": "video",
+     "startFrame": 565,
+     "trimStartFrame": 4917
+    },
+    {
+     "clipId": "13fb8e85",
+     "durationFrames": 60,
+     "linkGroupId": "573196da",
+     "mediaRef": "2cb94f53",
+     "mediaType": "audio",
+     "sourceClipType": "video",
+     "startFrame": 775,
+     "trimStartFrame": 5302
+    },
+    {
+     "clipId": "0b0b1fa4",
+     "durationFrames": 45,
+     "linkGroupId": "2cc543b4",
+     "mediaRef": "1f06cdac",
+     "mediaType": "audio",
+     "sourceClipType": "video",
+     "startFrame": 835,
+     "trimStartFrame": 1350
+    },
+    {
+     "clipId": "4f317f4c",
+     "durationFrames": 45,
+     "linkGroupId": "ba232408",
+     "mediaRef": "1f06cdac",
+     "mediaType": "audio",
+     "sourceClipType": "video",
+     "startFrame": 880,
+     "trimStartFrame": 2786
+    },
+    {
+     "clipId": "0758747f",
+     "durationFrames": 81,
+     "linkGroupId": "70f576ab",
+     "mediaRef": "25234408",
+     "mediaType": "audio",
+     "sourceClipType": "video",
+     "startFrame": 925,
+     "trimStartFrame": 5
+    },
+    {
+     "clipId": "e400bfe7",
+     "durationFrames": 31,
+     "linkGroupId": "021c7803",
+     "mediaRef": "85237fab",
+     "mediaType": "audio",
+     "sourceClipType": "video",
+     "startFrame": 1006,
+     "trimStartFrame": 112
+    },
+    {
+     "clipId": "98853d6f",
+     "durationFrames": 41,
+     "linkGroupId": "460dd4f1",
+     "mediaRef": "85237fab",
+     "mediaType": "audio",
+     "sourceClipType": "video",
+     "startFrame": 1037,
+     "trimStartFrame": 718
+    },
+    {
+     "clipId": "dcec2ec5",
+     "durationFrames": 53,
+     "linkGroupId": "95858176",
+     "mediaRef": "47b4996e",
+     "mediaType": "audio",
+     "sourceClipType": "video",
+     "startFrame": 1078,
+     "trimStartFrame": 60
+    },
+    {
+     "clipId": "8d45cfa6",
+     "durationFrames": 94,
+     "linkGroupId": "d2288d85",
+     "mediaRef": "47b4996e",
+     "mediaType": "audio",
+     "sourceClipType": "video",
+     "startFrame": 1131,
+     "trimStartFrame": 190
+    },
+    {
+     "clipId": "ae5ef3e5",
+     "durationFrames": 75,
+     "linkGroupId": "7dc71fe2",
+     "mediaRef": "6e75a5b5",
+     "mediaType": "audio",
+     "sourceClipType": "video",
+     "startFrame": 1225,
+     "trimStartFrame": 839
+    },
+    {
+     "clipId": "4900ba3f",
+     "durationFrames": 754,
+     "linkGroupId": "7e6c9c31",
+     "mediaRef": "6e75a5b5",
+     "mediaType": "audio",
+     "sourceClipType": "video",
+     "startFrame": 1300
+    },
+    {
+     "clipId": "d42c9d04",
+     "durationFrames": 82,
+     "linkGroupId": "d966423e",
+     "mediaRef": "6e75a5b5",
+     "mediaType": "audio",
+     "sourceClipType": "video",
+     "startFrame": 2054,
+     "trimStartFrame": 523
+    },
+    {
+     "clipId": "830d659b",
+     "durationFrames": 90,
+     "linkGroupId": "3d767dc1",
+     "mediaRef": "2bc0bea6",
+     "mediaType": "audio",
+     "sourceClipType": "video",
+     "startFrame": 2136,
+     "trimStartFrame": 2607
+    },
+    {
+     "clipId": "e59059ac",
+     "durationFrames": 75,
+     "linkGroupId": "b674d9b2",
+     "mediaRef": "ddac9b82",
+     "mediaType": "audio",
+     "sourceClipType": "video",
+     "startFrame": 2226,
+     "trimStartFrame": 150
+    },
+    {
+     "clipId": "e3fff739",
+     "durationFrames": 45,
+     "linkGroupId": "27039438",
+     "mediaRef": "11e7a7b4",
+     "mediaType": "audio",
+     "sourceClipType": "video",
+     "startFrame": 2301,
+     "trimStartFrame": 2038
+    }
+   ],
+   "track": "A1",
+   "trackIndex": 1,
+   "type": "audio"
+  }
+ ],
+ "width": 1080
+}

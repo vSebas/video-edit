@@ -1,0 +1,199 @@
+{
+ "schema_version": "opentake-bridge.v1",
+ "project_id": "last-spring-quarter-class",
+ "plan_revision": 1,
+ "fps": 30,
+ "media": {
+  "img_2539": "86d120c6",
+  "img_2540": "1dd75c50",
+  "img_2541": "34eee3ac",
+  "img_2544": "355cf961",
+  "img_2547": "2cb94f53",
+  "img_2548": "1f06cdac",
+  "img_2549": "25234408",
+  "img_2551": "85237fab",
+  "img_2566": "47b4996e",
+  "img_2572": "6e75a5b5",
+  "img_2574": "2bc0bea6",
+  "img_2567": "ddac9b82",
+  "img_2537": "11e7a7b4"
+ },
+ "events": [
+  {
+   "event_id": "v01_failed_intros",
+   "clip_id": "825c0bc5",
+   "link_group_id": "a4d9b18c",
+   "source_start_frame": 390,
+   "source_end_frame": 459,
+   "timeline_start_frame": 0
+  },
+  {
+   "event_id": "v02_failed_intros",
+   "clip_id": "c81e5749",
+   "link_group_id": "45a8aba3",
+   "source_start_frame": 101,
+   "source_end_frame": 157,
+   "timeline_start_frame": 69
+  },
+  {
+   "event_id": "v03_failed_intros",
+   "clip_id": "cae05959",
+   "link_group_id": "ec820a38",
+   "source_start_frame": 114,
+   "source_end_frame": 173,
+   "timeline_start_frame": 125
+  },
+  {
+   "event_id": "v04_failed_intros",
+   "clip_id": "cff73c79",
+   "link_group_id": "593e71c2",
+   "source_start_frame": 265,
+   "source_end_frame": 436,
+   "timeline_start_frame": 184
+  },
+  {
+   "event_id": "v05_cafeteria",
+   "clip_id": "cd828497",
+   "link_group_id": "3186d8df",
+   "source_start_frame": 165,
+   "source_end_frame": 225,
+   "timeline_start_frame": 355
+  },
+  {
+   "event_id": "v06_cafeteria",
+   "clip_id": "5601caec",
+   "link_group_id": "4f62a547",
+   "source_start_frame": 3278,
+   "source_end_frame": 3368,
+   "timeline_start_frame": 415
+  },
+  {
+   "event_id": "v07_cafeteria",
+   "clip_id": "60638f7d",
+   "link_group_id": "31fc548e",
+   "source_start_frame": 3428,
+   "source_end_frame": 3488,
+   "timeline_start_frame": 505
+  },
+  {
+   "event_id": "v08_cafeteria",
+   "clip_id": "59f735f5",
+   "link_group_id": "2ca23738",
+   "source_start_frame": 4917,
+   "source_end_frame": 5127,
+   "timeline_start_frame": 565
+  },
+  {
+   "event_id": "v09_cafeteria",
+   "clip_id": "2474f9b3",
+   "link_group_id": "573196da",
+   "source_start_frame": 5302,
+   "source_end_frame": 5362,
+   "timeline_start_frame": 775
+  },
+  {
+   "event_id": "v10_cafeteria",
+   "clip_id": "97ea5078",
+   "link_group_id": "2cc543b4",
+   "source_start_frame": 1350,
+   "source_end_frame": 1395,
+   "timeline_start_frame": 835
+  },
+  {
+   "event_id": "v11_cafeteria",
+   "clip_id": "dc768d9b",
+   "link_group_id": "ba232408",
+   "source_start_frame": 2786,
+   "source_end_frame": 2831,
+   "timeline_start_frame": 880
+  },
+  {
+   "event_id": "v12_classes",
+   "clip_id": "a22865d2",
+   "link_group_id": "70f576ab",
+   "source_start_frame": 5,
+   "source_end_frame": 86,
+   "timeline_start_frame": 925
+  },
+  {
+   "event_id": "v13_classes",
+   "clip_id": "7f115dbc",
+   "link_group_id": "021c7803",
+   "source_start_frame": 112,
+   "source_end_frame": 143,
+   "timeline_start_frame": 1006
+  },
+  {
+   "event_id": "v14_classes",
+   "clip_id": "96ccf4b0",
+   "link_group_id": "460dd4f1",
+   "source_start_frame": 718,
+   "source_end_frame": 759,
+   "timeline_start_frame": 1037
+  },
+  {
+   "event_id": "v15_classes",
+   "clip_id": "47b47bf7",
+   "link_group_id": "95858176",
+   "source_start_frame": 60,
+   "source_end_frame": 113,
+   "timeline_start_frame": 1078
+  },
+  {
+   "event_id": "v16_classes",
+   "clip_id": "fe6e5c70",
+   "link_group_id": "d2288d85",
+   "source_start_frame": 190,
+   "source_end_frame": 284,
+   "timeline_start_frame": 1131
+  },
+  {
+   "event_id": "v17_startup_call",
+   "clip_id": "af831d69",
+   "link_group_id": "7dc71fe2",
+   "source_start_frame": 839,
+   "source_end_frame": 914,
+   "timeline_start_frame": 1225
+  },
+  {
+   "event_id": "v18_startup_call",
+   "clip_id": "5c3ac110",
+   "link_group_id": "7e6c9c31",
+   "source_start_frame": 0,
+   "source_end_frame": 754,
+   "timeline_start_frame": 1300
+  },
+  {
+   "event_id": "v19_startup_call",
+   "clip_id": "ab4ac972",
+   "link_group_id": "d966423e",
+   "source_start_frame": 523,
+   "source_end_frame": 605,
+   "timeline_start_frame": 2054
+  },
+  {
+   "event_id": "v20_startup_call",
+   "clip_id": "d3f1f4f5",
+   "link_group_id": "3d767dc1",
+   "source_start_frame": 2607,
+   "source_end_frame": 2697,
+   "timeline_start_frame": 2136
+  },
+  {
+   "event_id": "v21_closing",
+   "clip_id": "14616f12",
+   "link_group_id": "b674d9b2",
+   "source_start_frame": 150,
+   "source_end_frame": 225,
+   "timeline_start_frame": 2226
+  },
+  {
+   "event_id": "v22_closing",
+   "clip_id": "d41508a8",
+   "link_group_id": "27039438",
+   "source_start_frame": 2038,
+   "source_end_frame": 2083,
+   "timeline_start_frame": 2301
+  }
+ ]
+}
