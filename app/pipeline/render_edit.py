@@ -24,6 +24,10 @@ def track(plan, kind: str):
     return next(item for item in plan["tracks"] if item["kind"] == kind)
 
 
+def duration_target(plan):
+    return plan["project"]["duration_seconds"]
+
+
 def broll_track(plan):
     matches = [item for item in plan["tracks"] if item["kind"] == "video"]
     return matches[1] if len(matches) == 2 and matches[1].get("role") == "broll" else None
@@ -71,8 +75,23 @@ def main() -> None:
     overlay = broll_track(plan)
     broll_events = overlay["events"] if overlay else []
 
-    if len(video_events) != len(audio_events):
-        raise ValueError("Video and audio event counts must match for linked rendering")
+    # Video and audio are independent timelines (J/L cuts move the audio
+    # boundary without moving the picture boundary). Overlaps are errors;
+    # gaps are rendered as black/silence by segments() below.
+    for kind, events in (("video", video_events), ("audio", audio_events)):
+        cursor = 0.0
+        for event in sorted(events, key=lambda e: e["timeline_start_seconds"]):
+            if event["timeline_start_seconds"] < cursor - 0.02:
+                raise ValueError(
+                    f"{kind} track overlaps itself at "
+                    f"{event['timeline_start_seconds']}s"
+                )
+            cursor = event["timeline_start_seconds"] + event["duration_seconds"]
+        if cursor > duration_target(plan) + 0.05:
+            raise ValueError(
+                f"{kind} track covers {cursor}s, past the plan duration "
+                f"{duration_target(plan)}s"
+            )
     font_path = next((path for path in FONT_CANDIDATES if path.exists()), None)
     if font_path is None:
         raise FileNotFoundError(
@@ -85,49 +104,82 @@ def main() -> None:
     duration = plan["project"]["duration_seconds"]
 
     command = ["ffmpeg", "-hide_banner", "-y"]
-    for event in video_events + broll_events:
+    for event in video_events + broll_events + audio_events:
         source = (media_root / assets[event["asset_id"]]["source_path"]).resolve()
         command.extend(["-i", str(source)])
+    audio_input_base = len(video_events) + len(broll_events)
+
+    def gaps(events):
+        """(position, length) of every hole a track leaves in [0, duration)."""
+        holes = []
+        cursor = 0.0
+        for event in sorted(events, key=lambda e: e["timeline_start_seconds"]):
+            if event["timeline_start_seconds"] > cursor + 0.02:
+                holes.append((cursor, event["timeline_start_seconds"] - cursor))
+            cursor = event["timeline_start_seconds"] + event["duration_seconds"]
+        if duration > cursor + 0.02:
+            holes.append((cursor, duration - cursor))
+        return holes
 
     filters = []
-    concat_inputs = []
-    for index, (video, audio) in enumerate(zip(video_events, audio_events, strict=True)):
-        if (
-            video["asset_id"] != audio["asset_id"]
-            or video["source_start_seconds"] != audio["source_start_seconds"]
-            or video["source_end_seconds"] != audio["source_end_seconds"]
-        ):
-            raise ValueError(f"Linked A/V mismatch at event index {index}")
-
+    for index, video in enumerate(video_events):
         start = video["source_start_seconds"]
         end = video["source_end_seconds"]
         rotation = (video.get("reframe") or {}).get("rotation_degrees", 0)
-        video_filter = (
+        filters.append(
             f"[{index}:v:0]trim=start={start}:end={end},setpts=PTS-STARTPTS,"
             f"{rotation_filter(rotation)}"
             f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
             f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color={plan['project']['background_color']},"
             f"setsar=1,fps={fps},format=yuv420p[v{index}]"
         )
+    for index, audio in enumerate(audio_events):
+        start = audio["source_start_seconds"]
+        end = audio["source_end_seconds"]
         volume = audio.get("volume_db") or 0
         if assets[audio["asset_id"]].get("audio"):
-            audio_filter = (
-                f"[{index}:a:0]atrim=start={start}:end={end},asetpts=PTS-STARTPTS,"
+            filters.append(
+                f"[{audio_input_base + index}:a:0]"
+                f"atrim=start={start}:end={end},asetpts=PTS-STARTPTS,"
                 f"volume={volume}dB,aresample=48000,"
                 f"aformat=sample_fmts=fltp:channel_layouts=stereo[a{index}]"
             )
         else:
-            # Silent source keeps A/V event pairing intact for clips that
-            # carry no audio stream.
-            audio_filter = (
+            # A silent stand-in keeps the audio timeline contiguous for
+            # sources that carry no audio stream.
+            filters.append(
                 f"anullsrc=r=48000:cl=stereo:d={end - start},"
                 f"aformat=sample_fmts=fltp:channel_layouts=stereo[a{index}]"
             )
-        filters.extend([video_filter, audio_filter])
-        concat_inputs.append(f"[v{index}][a{index}]")
-
+    video_parts = [
+        (event["timeline_start_seconds"], f"[v{i}]")
+        for i, event in enumerate(video_events)
+    ]
+    for j, (position, length) in enumerate(gaps(video_events)):
+        filters.append(
+            f"color=c=black:size={width}x{height}:rate={fps}:d={length},"
+            f"format=yuv420p,setsar=1[vfill{j}]"
+        )
+        video_parts.append((position, f"[vfill{j}]"))
+    audio_parts = [
+        (event["timeline_start_seconds"], f"[a{i}]")
+        for i, event in enumerate(audio_events)
+    ]
+    for j, (position, length) in enumerate(gaps(audio_events)):
+        filters.append(
+            f"anullsrc=r=48000:cl=stereo:d={length},"
+            f"aformat=sample_fmts=fltp:channel_layouts=stereo[afill{j}]"
+        )
+        audio_parts.append((position, f"[afill{j}]"))
+    video_parts.sort()
+    audio_parts.sort()
     filters.append(
-        f"{''.join(concat_inputs)}concat=n={len(video_events)}:v=1:a=1[vcat][acat]"
+        "".join(label for _, label in video_parts)
+        + f"concat=n={len(video_parts)}:v=1:a=0[vcat]"
+    )
+    filters.append(
+        "".join(label for _, label in audio_parts)
+        + f"concat=n={len(audio_parts)}:v=0:a=1[acat]"
     )
 
     current_video = "vcat"

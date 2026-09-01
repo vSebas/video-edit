@@ -220,6 +220,22 @@ def place_plan(
         client = client or OpenTakeMcp()
     except OpenTakeMcpError as exc:
         raise BridgeError(str(exc)) from exc
+    video_events = next(t for t in plan["tracks"] if t["kind"] == "video")["events"]
+    audio_events = next(t for t in plan["tracks"] if t["kind"] == "audio")["events"]
+    mirrored = len(video_events) == len(audio_events) and all(
+        v["asset_id"] == a["asset_id"]
+        and v["source_start_seconds"] == a["source_start_seconds"]
+        and v["timeline_start_seconds"] == a["timeline_start_seconds"]
+        and v["duration_seconds"] == a["duration_seconds"]
+        for v, a in zip(video_events, audio_events)
+    )
+    if not mirrored:
+        raise BridgeError(
+            "This plan has J/L cuts (audio boundaries differ from video). "
+            "OpenTake's linked clips cannot represent that — render directly, "
+            "or send the earlier mirrored revision and keep J/L as the final "
+            "render-side polish."
+        )
     entries = plan_entries(plan)
     broll = broll_entries(plan)
     needed = sorted({e["asset_id"] for e in entries + broll})
@@ -263,6 +279,35 @@ def place_plan(
                 for e in broll
             ]})
         readback = client.get_timeline()
+
+        # Plan volumes ride on the linked audio partner (OpenTake's model:
+        # volume lives on the audio clip, 0..1 with 1.0 omitted).
+        volume_for = {}
+        video_tracks = _video_tracks(readback)
+        primary_clips = sorted(
+            (video_tracks[0].get("clips", []) if video_tracks else []),
+            key=lambda c: c["startFrame"],
+        )
+        partner_for_group = {
+            c.get("linkGroupId"): c["clipId"]
+            for t in readback.get("tracks", []) if t.get("type") == "audio"
+            for c in t.get("clips", [])
+        }
+        for audio_event, clip in zip(audio_events, primary_clips):
+            db = audio_event.get("volume_db")
+            if db is None or db == 0:
+                continue
+            partner = partner_for_group.get(clip.get("linkGroupId"))
+            if partner:
+                volume_for.setdefault(
+                    round(min(1.0, max(0.0, 10 ** (db / 20))), 4), []
+                ).append(partner)
+        for volume, clip_ids in volume_for.items():
+            client.tool(
+                "set_clip_properties", {"clipIds": clip_ids, "volume": volume}
+            )
+        if volume_for:
+            readback = client.get_timeline()
     except OpenTakeMcpError as exc:
         raise BridgeError(str(exc)) from exc
 

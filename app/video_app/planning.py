@@ -807,6 +807,26 @@ def validate_edit_plan(plan: dict, schema_path: Path, project: dict) -> None:
         asset["asset_id"]: asset
         for asset in project.get("inventory", {}).get("assets", [])
     }
+    duration = plan["project"]["duration_seconds"]
+    for kind in ("video", "audio"):
+        track = next((t for t in plan["tracks"] if t["kind"] == kind), None)
+        if track is None:
+            continue
+        cursor = 0.0
+        for event in sorted(
+            track["events"], key=lambda e: e["timeline_start_seconds"]
+        ):
+            if event["timeline_start_seconds"] < cursor - 0.02:
+                raise PlanningError(
+                    f"{kind} track overlaps itself at "
+                    f"{event['timeline_start_seconds']:.3f}s"
+                )
+            cursor = event["timeline_start_seconds"] + event["duration_seconds"]
+        if cursor > duration + 0.05:
+            raise PlanningError(
+                f"{kind} track covers {cursor:.3f}s, past the plan duration "
+                f"{duration:.3f}s"
+            )
     video_tracks = [t for t in plan["tracks"] if t["kind"] == "video"]
     if len(video_tracks) > 2:
         raise PlanningError("At most one B-roll track is supported beyond the primary")

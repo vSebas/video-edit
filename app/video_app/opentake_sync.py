@@ -139,7 +139,13 @@ def _normalize_clip(clip: dict, kind: str, index: int, total_frames: int) -> dic
             f"{label} ends at frame {start + duration}, beyond "
             f"totalFrames {total_frames}"
         )
+    volume = clip.get("volume")
+    if volume is not None:
+        volume = _number(volume, f"{label} volume")
+        if not 0.0 <= volume <= 1.0:
+            raise SyncError(f"{label} volume must be within [0, 1]")
     return {
+        "volume": volume,
         "clip_id": clip_id,
         "link_group_id": clip.get("linkGroupId"),
         "media_ref": media_ref,
@@ -159,6 +165,15 @@ def _geometry(clip: dict) -> tuple:
         clip["trim_start"],
         clip["trim_end"],
     )
+
+
+def _volume_db(volume: float | None) -> float | None:
+    """OpenTake clip volume (0..1, absent means unity) → plan volume_db."""
+    if volume is None:
+        return None
+    if volume <= 0.0:
+        return -96.0
+    return round(20 * math.log10(volume), 2)
 
 
 def _suffix(index: int) -> str:
@@ -683,6 +698,7 @@ def timeline_to_candidate_plan(
     )
     rebuilt_video = []
     rebuilt_audio = []
+    volume_notes = []
     for item in ordered:
         info = item["info"]
         video_event = _rebuilt_event(
@@ -693,6 +709,25 @@ def timeline_to_candidate_plan(
         )
         video_event["asset_id"] = info["asset_id"]
         audio_event["asset_id"] = info["asset_id"]
+        new_db = _volume_db(item["audio"].get("volume"))
+        old_db = info["audio_event"].get("volume_db")
+        changed = (new_db if new_db is not None else 0.0) != (
+            old_db if old_db is not None else 0.0
+        )
+        if changed:
+            audio_event["volume_db"] = new_db
+        if changed:
+            volume_notes.append(
+                {
+                    "kind": "volume_changed",
+                    "event_id": item["audio_event_id"],
+                    "clip_id": item["audio"]["clip_id"],
+                    "detail": (
+                        f"{old_db if old_db is not None else 0}dB -> "
+                        f"{new_db if new_db is not None else 0}dB"
+                    ),
+                }
+            )
         rebuilt_video.append(video_event)
         rebuilt_audio.append(audio_event)
 
@@ -811,5 +846,5 @@ def timeline_to_candidate_plan(
             track["events"] = rebuilt_audio
     candidate["revision"] = plan_revision + 1
     candidate["project"]["duration_seconds"] = _seconds(total_frames, fps)
-    diff = _build_diff(infos, descendants) + broll_diff + broll_notes
+    diff = _build_diff(infos, descendants) + volume_notes + broll_diff + broll_notes
     return candidate, diff

@@ -143,3 +143,78 @@ class TestBrollRender:
         assert report["valid"], report
         xml = (root / "out" / "timeline-davinci.xml").read_text()
         assert xml.count("<track>") >= 3 and "bro-01" in xml
+
+
+def _band_volume(video: Path, start: float, end: float, band: str) -> float:
+    """Mean volume of a time slice after a frequency filter, in dB."""
+    result = subprocess.run(
+        [
+            "ffmpeg", "-hide_banner", "-ss", str(start), "-to", str(end),
+            "-i", str(video), "-af", f"{band},volumedetect", "-f", "null", "-",
+        ],
+        capture_output=True, text=True,
+    )
+    for line in result.stderr.splitlines():
+        if "mean_volume" in line:
+            return float(line.split("mean_volume:")[1].split(" dB")[0])
+    raise AssertionError(result.stderr[-500:])
+
+
+class TestJCutRender:
+    def test_audio_leads_the_picture(self, tmp_path) -> None:
+        """J-cut: the second scene's audio starts 0.4s before its picture."""  # 300Hz vs 1200Hz tones
+        _make_clip(tmp_path / "red.mp4", "red", 4.0, 300)
+        _make_clip(tmp_path / "blue.mp4", "blue", 4.0, 1200)
+        inventory = {"assets": [
+            {
+                "asset_id": aid, "filename": f"{aid}.mp4",
+                "source_path": f"{aid}.mp4", "duration_seconds": 4.0,
+                "sha256": "0" * 64, "media_type": "video", "audio": {
+                    "sample_rate": 48000, "channels": 1,
+                }, "video": {"width": 320, "height": 240},
+            }
+            for aid in ("red", "blue")
+        ]}
+        plan = {
+            "schema_version": "edit-plan.v1",
+            "generated_at": "2026-09-01T00:00:00Z",
+            "benchmark_id": "test", "concept_id": "test", "revision": 1,
+            "project": {
+                "width": 320, "height": 240, "fps": 30,
+                "duration_seconds": 4.0, "background_color": "black",
+            },
+            "tracks": [
+                {"track_id": "v1", "kind": "video", "events": [
+                    _event("v01", "red", 0.0, 0.0, 2.0, "base"),
+                    _event("v02", "blue", 0.0, 2.0, 2.0, "base"),
+                ]},
+                {"track_id": "a1", "kind": "audio", "events": [
+                    _event("a01", "red", 0.0, 0.0, 1.6, "base"),
+                    _event("a02", "blue", 0.0, 1.6, 2.4, "base"),
+                ]},
+                {"track_id": "t1", "kind": "title", "events": []},
+            ],
+        }
+        (tmp_path / "plan.json").write_text(json.dumps(plan))
+        (tmp_path / "inventory.json").write_text(json.dumps(inventory))
+        output = tmp_path / "review.mp4"
+        subprocess.run(
+            [
+                sys.executable, str(PIPELINE / "render_edit.py"),
+                "--plan", str(tmp_path / "plan.json"), "--output", str(output),
+                "--inventory", str(tmp_path / "inventory.json"),
+                "--media-root", str(tmp_path),
+            ],
+            check=True, capture_output=True, text=True,
+        )
+        # picture is still red at 1.8s...
+        pixel = _center_pixel(output, 1.8)
+        assert pixel[0] > 150 and pixel[2] < 100, f"expected red, got {pixel}"
+        # ...but the 1200Hz tone is already playing in the 1.7-1.9s window
+        high = _band_volume(output, 1.7, 1.9, "highpass=f=600,highpass=f=600")
+        low = _band_volume(output, 1.7, 1.9, "lowpass=f=600,lowpass=f=600")
+        assert high > low + 10, f"1200Hz should dominate: high={high} low={low}"
+        # and before the J point the 300Hz tone dominates
+        high = _band_volume(output, 1.2, 1.4, "highpass=f=600,highpass=f=600")
+        low = _band_volume(output, 1.2, 1.4, "lowpass=f=600,lowpass=f=600")
+        assert low > high + 10, f"300Hz should dominate: high={high} low={low}"

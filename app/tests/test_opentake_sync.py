@@ -641,3 +641,69 @@ class TestBrollSync:
         self._add_v2(readback, [], with_audio=False)
         with pytest.raises(SyncError, match="does not cover plan B-roll"):
             timeline_to_candidate_plan(plan, bridge, readback)
+
+
+class TestVolumeSync:
+    """P3: clip volume set in the OpenTake GUI rides into the plan."""
+
+    def _load(self):
+        import json
+        fx = __import__("pathlib").Path(__file__).parent / "fixtures" / "opentake_sync"
+        return (
+            json.loads((fx / "plan.json").read_text()),
+            json.loads((fx / "bridge.json").read_text()),
+            json.loads((fx / "readback-untouched.json").read_text()),
+        )
+
+    def test_volume_maps_to_db_and_is_reported(self) -> None:
+        from video_app.opentake_sync import timeline_to_candidate_plan
+
+        plan, bridge, readback = self._load()
+        audio = next(t for t in readback["tracks"] if t["type"] == "audio")
+        audio["clips"][0]["volume"] = 0.5
+        audio["clips"][1]["volume"] = 0.0
+        candidate, diff = timeline_to_candidate_plan(plan, bridge, readback)
+        events = next(
+            t for t in candidate["tracks"] if t["kind"] == "audio"
+        )["events"]
+        by_start = sorted(events, key=lambda e: e["timeline_start_seconds"])
+        assert by_start[0]["volume_db"] == -6.02
+        assert by_start[1]["volume_db"] == -96.0
+        # untouched clips keep the plan's stored value (0.0 == unity)
+        assert by_start[2]["volume_db"] == 0.0
+        changes = [d for d in diff if d["kind"] == "volume_changed"]
+        assert len(changes) == 2
+
+    def test_out_of_range_volume_fails_closed(self) -> None:
+        import pytest
+        from video_app.opentake_sync import SyncError, timeline_to_candidate_plan
+
+        plan, bridge, readback = self._load()
+        audio = next(t for t in readback["tracks"] if t["type"] == "audio")
+        audio["clips"][0]["volume"] = 1.5
+        with pytest.raises(SyncError, match="volume must be within"):
+            timeline_to_candidate_plan(plan, bridge, readback)
+
+
+class TestJLPlacementRefusal:
+    def test_jl_plan_is_refused_before_touching_opentake(self) -> None:
+        import json
+
+        import pytest
+        from video_app.opentake_bridge import BridgeError, place_plan
+
+        fx = __import__("pathlib").Path(__file__).parent / "fixtures" / "opentake_sync"
+        plan = json.loads((fx / "plan.json").read_text())
+        inventory = json.loads((fx / "inventory.json").read_text())
+        audio = next(t for t in plan["tracks"] if t["kind"] == "audio")
+        audio["events"][0]["duration_seconds"] += 0.4
+        audio["events"][1]["timeline_start_seconds"] += 0.4
+        audio["events"][1]["duration_seconds"] -= 0.4
+        audio["events"][1]["source_start_seconds"] += 0.4
+
+        class Untouchable:
+            def __getattr__(self, name):  # any client call is a failure
+                raise AssertionError(f"client.{name} was called")
+
+        with pytest.raises(BridgeError, match="J/L cuts"):
+            place_plan(plan, inventory, "p", client=Untouchable())

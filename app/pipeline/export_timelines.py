@@ -272,10 +272,19 @@ def export_xmeml(plan, assets):
     seen_files = set()
     video_events = track(plan, "video")["events"]
     audio_events = track(plan, "audio")["events"]
-    for index, (video, audio) in enumerate(zip(video_events, audio_events, strict=True), start=1):
+    # Links only make sense while A/V mirror exactly; J/L-cut plans export
+    # unlinked clips (importers handle both).
+    mirrored = len(video_events) == len(audio_events) and all(
+        v["asset_id"] == a["asset_id"]
+        and v["source_start_seconds"] == a["source_start_seconds"]
+        and v["timeline_start_seconds"] == a["timeline_start_seconds"]
+        and v["duration_seconds"] == a["duration_seconds"]
+        for v, a in zip(video_events, audio_events)
+    )
+    for index, video in enumerate(video_events, start=1):
         asset = assets[video["asset_id"]]
         video_id = f"video-{video['event_id']}"
-        audio_id = f"audio-{audio['event_id']}"
+        audio_id = f"audio-{audio_events[index - 1]['event_id']}" if mirrored else None
         start = frame(video["timeline_start_seconds"], fps)
         end = start + frame(video["duration_seconds"], fps)
         source_in = frame(video["source_start_seconds"], fps)
@@ -304,8 +313,16 @@ def export_xmeml(plan, assets):
             # Internal/FFmpeg convention is clockwise-positive; FCP7 XMEML is
             # counterclockwise-positive, so the interchange value is negated.
             add_motion_filter(clipitem, -rotation)
-        add_links(clipitem, video_id, audio_id, index)
+        if mirrored:
+            add_links(clipitem, video_id, audio_id, index)
 
+    for index, audio in enumerate(audio_events, start=1):
+        asset = assets[audio["asset_id"]]
+        audio_id = f"audio-{audio['event_id']}"
+        start = frame(audio["timeline_start_seconds"], fps)
+        end = start + frame(audio["duration_seconds"], fps)
+        source_in = frame(audio["source_start_seconds"], fps)
+        source_out = source_in + frame(audio["duration_seconds"], fps)
         clipitem = add(audio_track, "clipitem", attributes={"id": audio_id})
         add(clipitem, "masterclipid", f"master-{asset['asset_id']}")
         add(clipitem, "name", f"{audio['event_id']} — {asset['filename']}")
@@ -316,12 +333,18 @@ def export_xmeml(plan, assets):
         add(clipitem, "end", end)
         add(clipitem, "in", source_in)
         add(clipitem, "out", source_out)
-        add(clipitem, "file", attributes={"id": f"file-{asset['asset_id']}"})
+        if asset["asset_id"] not in seen_files:
+            add_file_node(clipitem, asset, fps)
+            seen_files.add(asset["asset_id"])
+        else:
+            add(clipitem, "file", attributes={"id": f"file-{asset['asset_id']}"})
         sourcetrack = add(clipitem, "sourcetrack")
         add(sourcetrack, "mediatype", "audio")
         add(sourcetrack, "trackindex", 1)
         add_audio_level_filter(clipitem, audio.get("volume_db"))
-        add_links(clipitem, video_id, audio_id, index)
+        if mirrored:
+            add_links(clipitem, f"video-{video_events[index - 1]['event_id']}",
+                      audio_id, index)
 
     overlays = broll_events(plan)
     broll_xml_track = None
