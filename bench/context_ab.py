@@ -1,5 +1,17 @@
 #!/usr/bin/env python3
-"""Generate a blind-comparison pair with identical planner settings."""
+"""Sealed-blind A/B for the source-context sidecar (P7 protocol).
+
+The 2026-09-01 first run was contaminated: labeled files sat beside the
+blind copies and the key was in the same folder. This version enforces the
+protocol:
+
+- The judge sees ONLY `judge/SET-1.json` and `judge/SET-2.json` — concepts
+  stripped of every treatment tell, with set assignment randomized.
+- The labeled documents, telemetry, and the key live in `sealed/`, whose
+  README says not to open it before judging.
+- After judging, run `--reveal SET-1|SET-2` to unseal, print the mapping,
+  and append the verdict to `verdicts.jsonl`.
+"""
 
 from __future__ import annotations
 
@@ -7,12 +19,53 @@ import argparse
 import json
 import os
 import re
+import secrets
 import time
 from pathlib import Path
 
 import httpx
 
 BENCH_ROOT = Path(__file__).resolve().parent
+
+# Keys that could reveal which set had the sidecar treatment. Everything
+# not needed for judging story quality is dropped.
+JUDGE_KEYS_CONCEPT = {
+    "concept_id", "title", "topic", "hook", "target_duration_seconds",
+    "structure", "missing_shots",
+}
+JUDGE_KEYS_BEAT = {"purpose", "narrative", "evidence", "duration_seconds"}
+
+
+def sanitize_for_judge(document: dict) -> dict:
+    """Only the creative content survives; provenance, telemetry, and any
+    treatment markers are stripped."""
+    concepts = []
+    for concept in document.get("concepts") or []:
+        clean = {k: concept[k] for k in JUDGE_KEYS_CONCEPT if k in concept}
+        clean["structure"] = [
+            {k: beat[k] for k in JUDGE_KEYS_BEAT if k in beat}
+            for beat in concept.get("structure") or []
+        ]
+        concepts.append(clean)
+    return {"concepts": concepts}
+
+
+def reveal(output: Path, winner: str, notes: str) -> None:
+    key_path = output / "sealed" / "key.json"
+    key = json.loads(key_path.read_text(encoding="utf-8"))
+    treatment = key[winner]
+    verdict = {
+        "judged_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "winner_set": winner,
+        "winner_treatment": treatment,
+        "key": key,
+        "notes": notes,
+    }
+    with (output / "verdicts.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(verdict, ensure_ascii=False) + "\n")
+    print(f"{winner} was: {treatment}")
+    print(f"full mapping: {json.dumps(key)}")
+    print(f"recorded in {output / 'verdicts.jsonl'}")
 
 
 def wait_for_job(client: httpx.Client, job_id: str, timeout_seconds: float) -> dict:
@@ -99,10 +152,18 @@ def main() -> None:
     parser.add_argument(
         "--output-root", type=Path, default=BENCH_ROOT / "results-context"
     )
+    parser.add_argument(
+        "--reveal", choices=["SET-1", "SET-2"], default=None,
+        help="After judging: name the winning set to unseal the mapping",
+    )
+    parser.add_argument("--notes", default="", help="Judge notes for --reveal")
     args = parser.parse_args()
 
     safe_project = re.sub(r"[^a-zA-Z0-9._-]+", "_", args.project_id)
     output = args.output_root / safe_project
+    if args.reveal:
+        reveal(output, args.reveal, args.notes)
+        return
     output.mkdir(parents=True, exist_ok=True)
     headers = {}
     token = os.environ.get("VIDEO_EDITING_TOKEN", "").strip()
@@ -133,19 +194,50 @@ def main() -> None:
         telemetry_response.raise_for_status()
         telemetry = telemetry_response.json()
 
-    (output / "baseline.json").write_text(
+    sealed = output / "sealed"
+    judge = output / "judge"
+    sealed.mkdir(parents=True, exist_ok=True)
+    judge.mkdir(parents=True, exist_ok=True)
+
+    # Randomized assignment; only sealed/key.json knows which is which.
+    flip = secrets.choice([True, False])
+    assignment = {
+        "SET-1": "sidecar" if flip else "baseline",
+        "SET-2": "baseline" if flip else "sidecar",
+    }
+    documents = {"baseline": baseline, "sidecar": sidecar}
+    for set_name, treatment in assignment.items():
+        (judge / f"{set_name}.json").write_text(
+            json.dumps(sanitize_for_judge(documents[treatment]),
+                       ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    (sealed / "key.json").write_text(json.dumps(assignment) + "\n")
+    (sealed / "baseline.json").write_text(
         json.dumps(baseline, indent=2) + "\n", encoding="utf-8"
     )
-    (output / "sidecar.json").write_text(
+    (sealed / "sidecar.json").write_text(
         json.dumps(sidecar, indent=2) + "\n", encoding="utf-8"
     )
-    (output / "telemetry.json").write_text(
+    (sealed / "telemetry.json").write_text(
         json.dumps(telemetry, indent=2) + "\n", encoding="utf-8"
     )
+    (sealed / "README.md").write_text(
+        "DO NOT open anything in this folder before judging.\n"
+        "Judge from ../judge/SET-1.json and ../judge/SET-2.json only, then\n"
+        "run context_ab.py <project> --reveal SET-1|SET-2 [--notes ...].\n"
+    )
+    (judge / "INSTRUCTIONS.md").write_text(
+        "Compare SET-1 and SET-2 as story proposals for this footage.\n"
+        "Pick the set you would rather edit into a vlog. Do not open the\n"
+        "sealed/ folder. Reveal the mapping only after deciding:\n"
+        f"  python3 bench/context_ab.py {args.project_id} --reveal SET-1 "
+        "--notes '...'\n"
+    )
 
-    print(json.dumps({"baseline": summary(baseline)}, ensure_ascii=False))
-    print(json.dumps({"sidecar": summary(sidecar)}, ensure_ascii=False))
-    print(f"saved: {output}")
+    print("Sealed blind pair ready:")
+    print(f"  judge from: {judge}/SET-1.json and SET-2.json")
+    print(f"  key sealed: {sealed}/key.json (do not open)")
 
 
 if __name__ == "__main__":
