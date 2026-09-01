@@ -367,11 +367,13 @@ gate.
 Adopted from the 2026-08-31 handoff-memo review, run as sidecars that never
 block the gate:
 
-5. `source-context.v1` experiment: one derived source/event/relationship
-   summary layer anchored to existing evidence ids; benchmark current vs
-   current+sidecar on relationship-annotated long-dialogue footage before
-   any perception redesign. Add VLM telemetry (unique seconds, tokens,
-   retries) while instrumenting it.
+5. `source-context.v1` — BUILT and merged (2026-09-01), dormant by default.
+   First real run: 39/39 clips, 110 events, 50 relationships, 109 anchored,
+   ~15 min wall and cents of cost (telemetry now records all of it). First
+   blind A/B on real footage: the owner preferred the BASELINE concepts, so
+   the sidecar stays opt-in-off; the harness (`bench/context_ab.py`) stays
+   one command away for future footage days, and the proper test still
+   wants a relationship-annotated corpus (n=1 today).
 6. Fold range/model/prompt/sampling identity into the content-addressed
    artifact design when the durability trigger fires.
 
