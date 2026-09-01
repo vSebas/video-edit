@@ -1,6 +1,9 @@
 # OpenTake trial — brain over OpenTake
 
-**Started:** 2026-08-20
+**Started:** 2026-08-20 · **Closed:** 2026-09-01 — **verdict: HYBRID**
+(OpenTake adopted as the editing surface over MCP; our renderer keeps final
+pixels; Resolve remains the escape hatch — see the Gate section at the
+bottom for the evidence).
 **Owner's decision**, made with `EXECUTION_LAYER_PLAN.md`'s risks in view:
 try OpenTake as the execution layer before committing 14-20 weeks to building
 one. Our pipeline stays the brain; OpenTake's timeline is the hands. If the

@@ -187,11 +187,10 @@ our planner and ported Palmier features. That proposal was drafted, reviewed
 adversarially, and recommended against — see `EXECUTION_LAYER_PLAN.md` for
 the analysis, the two factual errors the draft contained, and the six-phase
 owned-compiler plan. The owner then chose, risks in view, to trial the
-OpenTake path first: fork created (vSebas/OpenTake), pinned to
-v1.0.0-beta.5, source build on Arch under way, Palmier behaviours to be
-implemented in our brain and executed via OpenTake's external MCP. The trial
-and its pass/fail gate are in `TRIAL_OPENTAKE.md`; the owned plan is the
-fallback.
+OpenTake path first (fork vSebas/OpenTake, pinned to v1.0.0-beta.5, five
+Linux patches). The trial ran 2026-08-20 to 2026-09-01 and closed with a
+HYBRID verdict — OpenTake as editing surface, our renderer for final
+pixels; evidence in `TRIAL_OPENTAKE.md`.
 Suggested order with solo-effort estimates: Spanish dialogue cleanup (2-3
 weeks) → atomic edit-command layer with undo and readback (4-6) →
 multi-track execution with B-roll, J/L cuts, VO and ducking (4-6) → dialogue

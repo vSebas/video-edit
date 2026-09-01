@@ -9,6 +9,12 @@
 > below stands as written — its risks were accepted knowingly, not
 > overlooked — and the owned-compiler plan in it remains the fallback if
 > the trial gate fails. Trial record: `TRIAL_OPENTAKE.md`.
+>
+> **Outcome (2026-09-01):** the gate closed with a HYBRID verdict — OpenTake
+> proved itself as the editing surface (stability, frame-exact automation)
+> but not as the renderer (color, aspect bug, export speed), so this
+> document's owned render/export path remains in production for final
+> pixels, and its phase list stays the reference for the render-side work.
 
 **Decided:** 2026-08-20
 **Question:** should OpenTake become the base, hosting our planner and ported

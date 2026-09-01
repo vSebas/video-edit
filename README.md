@@ -52,8 +52,9 @@ daily loop and its endpoints), `app/VALIDATION.md` (what has actually been
 verified, with dates), `bench/RESULTS.md` (the evidence behind every model
 choice), `STATUS_AND_ROADMAP.md` (current state and what is next),
 `EXECUTION_LAYER_PLAN.md` (the execution-layer analysis: build-vs-adopt,
-with the risks of each), and `TRIAL_OPENTAKE.md` (the owner's decision to
-trial OpenTake as the execution layer anyway, and how that trial is judged).
+with the risks of each), and `TRIAL_OPENTAKE.md` (the trial that settled it,
+closed 2026-09-01 with a hybrid verdict: OpenTake edits over MCP, our
+renderer renders, Resolve stays the escape hatch).
 
 ## Principles
 
