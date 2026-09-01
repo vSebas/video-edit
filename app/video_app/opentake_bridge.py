@@ -18,34 +18,66 @@ class BridgeError(RuntimeError):
     pass
 
 
-def plan_entries(plan: dict) -> list[dict]:
-    """Video-track events → add_clips entries, all in project frames."""
-    fps = plan["project"]["fps"]
-    video = next(t for t in plan["tracks"] if t["kind"] == "video")
-    entries = []
-    for event in video["events"]:
-        entries.append({
+def _event_entries(events: list[dict], fps: float) -> list[dict]:
+    return [
+        {
             "asset_id": event["asset_id"],
             "event_id": event["event_id"],
             "startFrame": round(event["timeline_start_seconds"] * fps),
             "durationFrames": round(event["duration_seconds"] * fps),
             "trimStartFrame": round(event["source_start_seconds"] * fps),
-        })
-    return entries
+        }
+        for event in events
+    ]
+
+
+def plan_entries(plan: dict) -> list[dict]:
+    """Primary video-track events → add_clips entries, in project frames."""
+    fps = plan["project"]["fps"]
+    video = next(t for t in plan["tracks"] if t["kind"] == "video")
+    return _event_entries(video["events"], fps)
+
+
+def broll_entries(plan: dict) -> list[dict]:
+    """B-roll track events (if any) → add_clips entries, in project frames."""
+    videos = [t for t in plan["tracks"] if t["kind"] == "video"]
+    if len(videos) == 2 and videos[1].get("role") == "broll":
+        return _event_entries(videos[1]["events"], plan["project"]["fps"])
+    return []
+
+
+def _video_tracks(readback: dict) -> list[dict]:
+    tracks = [t for t in readback.get("tracks", []) if t.get("type") == "video"]
+    return sorted(
+        tracks,
+        key=lambda t: t.get("trackIndex")
+        if isinstance(t.get("trackIndex"), int) else 999,
+    )
 
 
 def map_media(client: OpenTakeMcp, inventory: dict, needed: list[str]) -> dict[str, str]:
-    """asset_id → OpenTake mediaRef by filename stem; missing media is a
-    user action (the GUI picker), never an agent-side import."""
+    """asset_id → OpenTake mediaRef by filename stem for the WHOLE inventory
+    (best effort), so sync can attribute B-roll the user adds in the GUI
+    from any known asset. Assets the plan needs must resolve or this raises
+    with the user action (the GUI picker — never an agent-side import);
+    ambiguous stems are skipped unless needed, keeping the bridge's
+    ref→asset reverse map unambiguous."""
     assets = {a["asset_id"]: a for a in inventory["assets"]}
     by_stem = {e["name"]: e for e in client.tool("get_media").get("entries", [])}
+    stem_owners: dict[str, list[str]] = {}
+    for asset_id, asset in assets.items():
+        stem_owners.setdefault(Path(asset["filename"]).stem, []).append(asset_id)
     ref_for, missing = {}, []
-    for asset_id in needed:
-        hit = by_stem.get(Path(assets[asset_id]["filename"]).stem)
-        if hit:
+    for asset_id, asset in assets.items():
+        stem = Path(asset["filename"]).stem
+        hit = by_stem.get(stem)
+        ambiguous = len(stem_owners[stem]) > 1
+        if hit and not ambiguous:
             ref_for[asset_id] = hit["id"]
-        else:
-            missing.append(assets[asset_id]["filename"])
+        elif asset_id in needed:
+            missing.append(
+                asset["filename"] + (" (duplicate filename)" if ambiguous else "")
+            )
     if missing:
         raise BridgeError(
             "Import these files into OpenTake's media library first "
@@ -57,14 +89,22 @@ def map_media(client: OpenTakeMcp, inventory: dict, needed: list[str]) -> dict[s
 def verify_placement(
     entries: list[dict], ref_for: dict[str, str], readback: dict
 ) -> list[str]:
-    """The trial's full check: geometry, source trims, A/V pairing."""
+    """The trial's full check: geometry, source trims, A/V pairing.
+    Scoped to the primary (lowest-index) video track; B-roll overlays are
+    verified separately by verify_broll_placement."""
+    video_tracks = _video_tracks(readback)
     video = sorted(
-        (c for t in readback.get("tracks", []) if t.get("type") == "video"
-         for c in t.get("clips", [])),
+        (video_tracks[0].get("clips", []) if video_tracks else []),
         key=lambda c: c["startFrame"],
     )
+    broll_groups = {
+        c.get("linkGroupId")
+        for t in video_tracks[1:] for c in t.get("clips", [])
+        if c.get("linkGroupId")
+    }
     audio = [c for t in readback.get("tracks", []) if t.get("type") == "audio"
-             for c in t.get("clips", [])]
+             for c in t.get("clips", [])
+             if c.get("linkGroupId") not in broll_groups]
     failures = []
     if len(video) != len(entries):
         failures.append(f"video clip count {len(video)} != {len(entries)}")
@@ -93,11 +133,57 @@ def verify_placement(
     return failures
 
 
-def build_bridge(plan: dict, entries: list[dict], ref_for: dict[str, str],
-                 readback: dict, project_id: str) -> dict:
+def verify_broll_placement(entries: list[dict], ref_for: dict[str, str],
+                           readback: dict) -> list[str]:
+    """Geometry check for overlay clips on the second video track. No audio
+    pairing requirement — B-roll is picture-only by definition."""
+    video_tracks = _video_tracks(readback)
     clips = sorted(
-        (c for t in readback.get("tracks", []) if t.get("type") == "video"
-         for c in t.get("clips", [])),
+        (video_tracks[1].get("clips", []) if len(video_tracks) > 1 else []),
+        key=lambda c: (c["startFrame"], c.get("trimStartFrame", 0)),
+    )
+    failures = []
+    if len(clips) != len(entries):
+        failures.append(f"B-roll clip count {len(clips)} != {len(entries)}")
+        return failures
+    ordered = sorted(entries, key=lambda e: (e["startFrame"], e["trimStartFrame"]))
+    for want, got in zip(ordered, clips):
+        for field in ("startFrame", "durationFrames", "trimStartFrame"):
+            if got.get(field, 0) != want[field]:
+                failures.append(
+                    f"{want['event_id']}: {field} {got.get(field, 0)} != {want[field]}"
+                )
+        if got.get("mediaRef") != ref_for[want["asset_id"]]:
+            failures.append(f"{want['event_id']}: wrong media {got.get('mediaRef')}")
+    return failures
+
+
+def _broll_bridge_events(entries: list[dict], readback: dict) -> list[dict]:
+    video_tracks = _video_tracks(readback)
+    clips = sorted(
+        (video_tracks[1].get("clips", []) if len(video_tracks) > 1 else []),
+        key=lambda c: (c["startFrame"], c.get("trimStartFrame", 0)),
+    )
+    ordered = sorted(entries, key=lambda e: (e["startFrame"], e["trimStartFrame"]))
+    return [
+        {
+            "event_id": e["event_id"],
+            "clip_id": c["clipId"],
+            "link_group_id": c.get("linkGroupId"),
+            "source_start_frame": e["trimStartFrame"],
+            "source_end_frame": e["trimStartFrame"] + e["durationFrames"],
+            "timeline_start_frame": e["startFrame"],
+        }
+        for e, c in zip(ordered, clips)
+    ]
+
+
+def build_bridge(plan: dict, entries: list[dict], ref_for: dict[str, str],
+                 readback: dict, project_id: str,
+                 broll: list[dict] | None = None) -> dict:
+    video_tracks = _video_tracks(readback)
+    clips = sorted(
+        (video_tracks[0].get("clips", []) if video_tracks else []),
         key=lambda c: c["startFrame"],
     )
     events = [
@@ -111,7 +197,7 @@ def build_bridge(plan: dict, entries: list[dict], ref_for: dict[str, str],
         }
         for e, c in zip(entries, clips)
     ]
-    return {
+    bridge = {
         "schema_version": "opentake-bridge.v1",
         "project_id": project_id,
         "plan_revision": plan.get("revision", 1),
@@ -119,6 +205,9 @@ def build_bridge(plan: dict, entries: list[dict], ref_for: dict[str, str],
         "media": ref_for,
         "events": events,
     }
+    if broll:
+        bridge["broll_events"] = _broll_bridge_events(broll, readback)
+    return bridge
 
 
 def place_plan(
@@ -132,7 +221,9 @@ def place_plan(
     except OpenTakeMcpError as exc:
         raise BridgeError(str(exc)) from exc
     entries = plan_entries(plan)
-    ref_for = map_media(client, inventory, sorted({e["asset_id"] for e in entries}))
+    broll = broll_entries(plan)
+    needed = sorted({e["asset_id"] for e in entries + broll})
+    ref_for = map_media(client, inventory, needed)
 
     try:
         before = client.get_timeline()
@@ -140,6 +231,17 @@ def place_plan(
                     for c in t.get("clips", [])]
         if existing:
             client.tool("remove_clips", {"clipIds": existing})
+        if broll:
+            # The MCP surface cannot create tracks; overlays need an
+            # existing second video track (added once in the OpenTake GUI).
+            before_videos = _video_tracks(before)
+            if len(before_videos) < 2:
+                raise BridgeError(
+                    "This plan has B-roll, but the open OpenTake project has "
+                    "only one video track. Add an empty video track in "
+                    "OpenTake (right-click the track area), then send again."
+                )
+            broll_index = before_videos[1].get("trackIndex")
         client.tool("add_clips", {"entries": [
             {
                 "mediaRef": ref_for[e["asset_id"]],
@@ -149,18 +251,32 @@ def place_plan(
             }
             for e in entries
         ]})
+        if broll:
+            client.tool("add_clips", {"entries": [
+                {
+                    "mediaRef": ref_for[e["asset_id"]],
+                    "startFrame": e["startFrame"],
+                    "durationFrames": e["durationFrames"],
+                    "trimStartFrame": e["trimStartFrame"],
+                    "trackIndex": broll_index,
+                }
+                for e in broll
+            ]})
         readback = client.get_timeline()
     except OpenTakeMcpError as exc:
         raise BridgeError(str(exc)) from exc
 
     failures = verify_placement(entries, ref_for, readback)
+    if broll:
+        failures += verify_broll_placement(broll, ref_for, readback)
     if failures:
         raise BridgeError(
             "Placement verification failed: " + "; ".join(failures[:5])
         )
-    bridge = build_bridge(plan, entries, ref_for, readback, project_id)
+    bridge = build_bridge(plan, entries, ref_for, readback, project_id, broll)
     summary = {
         "placed_clips": len(entries),
+        "placed_broll_clips": len(broll),
         "total_frames": sum(e["durationFrames"] for e in entries),
         "removed_previous_clips": len(existing),
     }

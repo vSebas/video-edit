@@ -502,3 +502,142 @@ class TestCleanupEndpoints:
             )
             assert stale.status_code == 400
             assert "changed" in stale.json()["detail"]
+
+
+class TestBrollSync:
+    """P2: a second video track in OpenTake becomes a plan B-roll track."""
+
+    def _load(self):
+        import json
+        fx = __import__("pathlib").Path(__file__).parent / "fixtures" / "opentake_sync"
+        plan = json.loads((fx / "plan.json").read_text())
+        bridge = json.loads((fx / "bridge.json").read_text())
+        readback = json.loads((fx / "readback-untouched.json").read_text())
+        return plan, bridge, readback
+
+    @staticmethod
+    def _add_v2(readback, clips, with_audio=True):
+        readback["tracks"].append(
+            {"track": "V2", "trackIndex": 2, "type": "video", "clips": clips}
+        )
+        if with_audio:
+            audio = next(t for t in readback["tracks"] if t["type"] == "audio")
+            for clip in clips:
+                if clip.get("linkGroupId"):
+                    audio["clips"].append({
+                        "clipId": f"au-{clip['clipId']}",
+                        "linkGroupId": clip["linkGroupId"],
+                        "mediaRef": clip["mediaRef"],
+                        "startFrame": clip["startFrame"],
+                        "durationFrames": clip["durationFrames"],
+                        "trimStartFrame": clip.get("trimStartFrame", 0),
+                        "mediaType": "audio",
+                    })
+
+    def test_gui_added_broll_becomes_v2_event(self) -> None:
+        from video_app.opentake_sync import timeline_to_candidate_plan
+
+        plan, bridge, readback = self._load()
+        self._add_v2(readback, [{
+            "clipId": "brand-new", "linkGroupId": "lg-broll",
+            "mediaRef": bridge["media"]["img_2540"],
+            "startFrame": 120, "durationFrames": 90, "trimStartFrame": 30,
+        }])
+        candidate, diff = timeline_to_candidate_plan(plan, bridge, readback)
+        videos = [t for t in candidate["tracks"] if t["kind"] == "video"]
+        assert len(videos) == 2 and videos[1]["role"] == "broll"
+        (event,) = videos[1]["events"]
+        assert event["event_id"] == "bro-01"
+        assert event["asset_id"] == "img_2540"
+        assert event["timeline_start_seconds"] == 4.0
+        assert event["duration_seconds"] == 3.0
+        assert event["intent"] == "b-roll"
+        kinds = {d["kind"] for d in diff}
+        assert "broll_added" in kinds and "broll_audio_ignored" in kinds
+        # the primary tracks are untouched by an overlay-only edit
+        assert len(videos[0]["events"]) == 22
+        audio = next(t for t in candidate["tracks"] if t["kind"] == "audio")
+        assert len(audio["events"]) == 22
+
+    def test_two_extra_video_tracks_rejected(self) -> None:
+        import pytest
+        from video_app.opentake_sync import SyncError, timeline_to_candidate_plan
+
+        plan, bridge, readback = self._load()
+        self._add_v2(readback, [], with_audio=False)
+        readback["tracks"].append(
+            {"track": "V3", "trackIndex": 3, "type": "video", "clips": []}
+        )
+        with pytest.raises(SyncError, match="more than one B-roll"):
+            timeline_to_candidate_plan(plan, bridge, readback)
+
+    def test_broll_past_primary_end_rejected(self) -> None:
+        import pytest
+        from video_app.opentake_sync import SyncError, timeline_to_candidate_plan
+
+        plan, bridge, readback = self._load()
+        readback["totalFrames"] += 300
+        self._add_v2(readback, [{
+            "clipId": "hangover", "linkGroupId": "lg-x",
+            "mediaRef": bridge["media"]["img_2540"],
+            "startFrame": 2340, "durationFrames": 90, "trimStartFrame": 0,
+        }], with_audio=False)
+        with pytest.raises(SyncError, match="past the primary track end"):
+            timeline_to_candidate_plan(plan, bridge, readback)
+
+    def _with_plan_broll(self, plan, bridge):
+        plan["tracks"].append({
+            "track_id": "v2", "kind": "video", "role": "broll", "events": [{
+                "event_id": "bro-01", "asset_id": "img_2540",
+                "source_start_seconds": 1.0, "source_end_seconds": 4.0,
+                "timeline_start_seconds": 4.0, "duration_seconds": 3.0,
+                "playback_rate": 1.0, "intent": "b-roll",
+                "observed_content": None, "confidence": 0.5, "reframe": None,
+                "transition_out": None, "text": None, "volume_db": None,
+            }],
+        })
+        bridge["broll_events"] = [{
+            "event_id": "bro-01", "clip_id": "placed-broll",
+            "link_group_id": None, "source_start_frame": 30,
+            "source_end_frame": 120, "timeline_start_frame": 120,
+        }]
+
+    def test_bridged_broll_keeps_identity_and_reports_trim(self) -> None:
+        from video_app.opentake_sync import timeline_to_candidate_plan
+
+        plan, bridge, readback = self._load()
+        self._with_plan_broll(plan, bridge)
+        self._add_v2(readback, [{
+            "clipId": "placed-broll",
+            "mediaRef": bridge["media"]["img_2540"],
+            "startFrame": 120, "durationFrames": 60, "trimStartFrame": 30,
+        }], with_audio=False)
+        candidate, diff = timeline_to_candidate_plan(plan, bridge, readback)
+        videos = [t for t in candidate["tracks"] if t["kind"] == "video"]
+        (event,) = videos[1]["events"]
+        assert event["event_id"] == "bro-01"
+        assert event["duration_seconds"] == 2.0
+        assert any(d["kind"] == "broll_trimmed" for d in diff)
+        assert not any(d["kind"] == "broll_added" for d in diff)
+
+    def test_broll_removed_in_gui_is_reported(self) -> None:
+        from video_app.opentake_sync import timeline_to_candidate_plan
+
+        plan, bridge, readback = self._load()
+        self._with_plan_broll(plan, bridge)
+        self._add_v2(readback, [], with_audio=False)
+        candidate, diff = timeline_to_candidate_plan(plan, bridge, readback)
+        videos = [t for t in candidate["tracks"] if t["kind"] == "video"]
+        assert videos[1]["events"] == []
+        assert any(d["kind"] == "broll_removed" for d in diff)
+
+    def test_plan_broll_without_bridge_coverage_fails_closed(self) -> None:
+        import pytest
+        from video_app.opentake_sync import SyncError, timeline_to_candidate_plan
+
+        plan, bridge, readback = self._load()
+        self._with_plan_broll(plan, bridge)
+        del bridge["broll_events"]
+        self._add_v2(readback, [], with_audio=False)
+        with pytest.raises(SyncError, match="does not cover plan B-roll"):
+            timeline_to_candidate_plan(plan, bridge, readback)

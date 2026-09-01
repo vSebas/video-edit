@@ -807,6 +807,26 @@ def validate_edit_plan(plan: dict, schema_path: Path, project: dict) -> None:
         asset["asset_id"]: asset
         for asset in project.get("inventory", {}).get("assets", [])
     }
+    video_tracks = [t for t in plan["tracks"] if t["kind"] == "video"]
+    if len(video_tracks) > 2:
+        raise PlanningError("At most one B-roll track is supported beyond the primary")
+    if len(video_tracks) == 2:
+        primary, broll = video_tracks
+        if broll.get("role") != "broll":
+            raise PlanningError(
+                "A second video track must declare role 'broll'"
+            )
+        primary_end = max(
+            (e["timeline_start_seconds"] + e["duration_seconds"]
+             for e in primary["events"]), default=0.0,
+        )
+        for event in broll["events"]:
+            if (event["timeline_start_seconds"] + event["duration_seconds"]
+                    > primary_end + 0.05):
+                raise PlanningError(
+                    f"B-roll event {event['event_id']} extends past the primary "
+                    "track end — an overlay needs a base underneath"
+                )
     for track in plan["tracks"]:
         for event in track["events"]:
             asset_id = event.get("asset_id")

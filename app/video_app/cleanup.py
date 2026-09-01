@@ -34,10 +34,15 @@ class CleanupError(RuntimeError):
 def clip_layout(readback: dict, bridge: dict, inventory: dict) -> list[dict]:
     """Live video clips joined to asset ids via the bridge media mapping."""
     asset_for_ref = {ref: asset for asset, ref in bridge.get("media", {}).items()}
+    video_tracks = sorted(
+        (t for t in readback.get("tracks", []) if t.get("type") == "video"),
+        key=lambda t: t.get("trackIndex")
+        if isinstance(t.get("trackIndex"), int) else 999,
+    )
     clips = []
-    for track in readback.get("tracks", []):
-        if track.get("type") != "video":
-            continue
+    # Dialogue lives on the primary track only; B-roll overlays are
+    # picture-only and must never produce cut candidates.
+    for track in video_tracks[:1]:
         for clip in track.get("clips", []):
             clips.append({
                 "clipId": clip["clipId"],

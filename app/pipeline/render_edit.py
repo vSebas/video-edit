@@ -24,6 +24,11 @@ def track(plan, kind: str):
     return next(item for item in plan["tracks"] if item["kind"] == kind)
 
 
+def broll_track(plan):
+    matches = [item for item in plan["tracks"] if item["kind"] == "video"]
+    return matches[1] if len(matches) == 2 and matches[1].get("role") == "broll" else None
+
+
 def ffmpeg_text(value: str) -> str:
     return (
         value.replace("\\", "\\\\")
@@ -63,6 +68,8 @@ def main() -> None:
     video_events = track(plan, "video")["events"]
     audio_events = track(plan, "audio")["events"]
     title_events = track(plan, "title")["events"]
+    overlay = broll_track(plan)
+    broll_events = overlay["events"] if overlay else []
 
     if len(video_events) != len(audio_events):
         raise ValueError("Video and audio event counts must match for linked rendering")
@@ -78,7 +85,7 @@ def main() -> None:
     duration = plan["project"]["duration_seconds"]
 
     command = ["ffmpeg", "-hide_banner", "-y"]
-    for event in video_events:
+    for event in video_events + broll_events:
         source = (media_root / assets[event["asset_id"]]["source_path"]).resolve()
         command.extend(["-i", str(source)])
 
@@ -124,6 +131,29 @@ def main() -> None:
     )
 
     current_video = "vcat"
+    # B-roll overlays sit above the primary picture while its audio continues;
+    # each is offset to its timeline slot and only enabled inside it.
+    for index, event in enumerate(broll_events):
+        input_index = len(video_events) + index
+        start = event["source_start_seconds"]
+        end = event["source_end_seconds"]
+        timeline_start = event["timeline_start_seconds"]
+        timeline_end = timeline_start + event["duration_seconds"]
+        rotation = (event.get("reframe") or {}).get("rotation_degrees", 0)
+        output_label = f"vbroll{index}"
+        filters.append(
+            f"[{input_index}:v:0]trim=start={start}:end={end},setpts=PTS-STARTPTS,"
+            f"{rotation_filter(rotation)}"
+            f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color={plan['project']['background_color']},"
+            f"setsar=1,fps={fps},format=yuv420p,"
+            f"setpts=PTS+{timeline_start}/TB[b{index}]"
+        )
+        filters.append(
+            f"[{current_video}][b{index}]overlay=eof_action=pass:"
+            f"enable='between(t\\,{timeline_start}\\,{timeline_end})'[{output_label}]"
+        )
+        current_video = output_label
     for index, event in enumerate(title_events):
         output_label = f"vtitle{index}"
         start = event["timeline_start_seconds"]

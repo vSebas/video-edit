@@ -68,16 +68,40 @@ def _single_track(document: dict, kind: str, label: str) -> dict:
     return matches[0]
 
 
-def _readback_track(readback: dict, kind: str) -> dict:
+def _readback_tracks(readback: dict, kind: str) -> list[dict]:
     tracks = readback.get("tracks")
     if not isinstance(tracks, list):
         raise SyncError("readback tracks must be a list")
     matches = [track for track in tracks if track.get("type") == kind]
-    if len(matches) != 1:
-        raise SyncError(f"readback must contain exactly one {kind} track")
-    if not isinstance(matches[0].get("clips"), list):
-        raise SyncError(f"readback {kind} clips must be a list")
-    return matches[0]
+    if not matches:
+        raise SyncError(f"readback must contain a {kind} track")
+    for match in matches:
+        if not isinstance(match.get("clips"), list):
+            raise SyncError(f"readback {kind} clips must be a list")
+    return sorted(
+        matches,
+        key=lambda track: (
+            track.get("trackIndex")
+            if isinstance(track.get("trackIndex"), int)
+            else len(tracks)
+        ),
+    )
+
+
+def _plan_video_tracks(plan: dict) -> tuple[dict, dict | None]:
+    """The primary video track plus an optional role-declared B-roll track."""
+    tracks = plan.get("tracks")
+    if not isinstance(tracks, list):
+        raise SyncError("plan tracks must be a list")
+    matches = [track for track in tracks if track.get("kind") == "video"]
+    if not matches or len(matches) > 2:
+        raise SyncError("plan must contain one video track plus at most one B-roll")
+    for match in matches:
+        if not isinstance(match.get("events"), list):
+            raise SyncError("plan video events must be a list")
+    if len(matches) == 2 and matches[1].get("role") != "broll":
+        raise SyncError("a second plan video track must declare role 'broll'")
+    return matches[0], matches[1] if len(matches) == 2 else None
 
 
 def _check_speed_fields(clip: dict, label: str) -> None:
@@ -302,10 +326,21 @@ def timeline_to_candidate_plan(
     if total_frames <= 0:
         raise SyncError("readback totalFrames must be positive")
 
-    video_track = _single_track(plan, "video", "plan")
+    video_track, plan_broll_track = _plan_video_tracks(plan)
     audio_track = _single_track(plan, "audio", "plan")
     original_video = video_track["events"]
     original_audio = audio_track["events"]
+    original_broll = plan_broll_track["events"] if plan_broll_track else []
+    broll_by_id = {}
+    for event in original_broll:
+        event_id = event.get("event_id")
+        if not isinstance(event_id, str) or not event_id:
+            raise SyncError("plan B-roll event has no event_id")
+        if event_id in broll_by_id:
+            raise SyncError(f"duplicate plan B-roll event_id {event_id}")
+        if _number(event.get("playback_rate", 1.0), event_id) != 1.0:
+            raise SyncError(f"unsupported playback_rate on plan event {event_id}")
+        broll_by_id[event_id] = event
     if len(original_video) != len(original_audio):
         raise SyncError("plan video/audio event counts do not match")
 
@@ -416,8 +451,36 @@ def timeline_to_candidate_plan(
         )
     infos = [infos_by_id[event["event_id"]] for event in original_video]
 
-    readback_video = _readback_track(readback, "video")
-    readback_audio = _readback_track(readback, "audio")
+    broll_bridge_events = bridge.get("broll_events", [])
+    if not isinstance(broll_bridge_events, list):
+        raise SyncError("bridge broll_events must be a list")
+    broll_exact_by_clip = {}
+    broll_bridged_ids = set()
+    for item in broll_bridge_events:
+        if not isinstance(item, dict):
+            raise SyncError("bridge broll event must be an object")
+        event_id = item.get("event_id")
+        clip_id = item.get("clip_id")
+        if event_id not in broll_by_id:
+            raise SyncError(f"bridge references unknown plan B-roll event {event_id}")
+        if event_id in broll_bridged_ids:
+            raise SyncError(f"duplicate bridge B-roll event {event_id}")
+        broll_bridged_ids.add(event_id)
+        if not isinstance(clip_id, str) or not clip_id:
+            raise SyncError(f"bridge B-roll event {event_id} has no clip_id")
+        if clip_id in broll_exact_by_clip or clip_id in exact_by_clip:
+            raise SyncError(f"duplicate bridge clip_id {clip_id}")
+        broll_exact_by_clip[clip_id] = broll_by_id[event_id]
+    missing_broll = [eid for eid in broll_by_id if eid not in broll_bridged_ids]
+    if missing_broll:
+        raise SyncError(
+            "bridge does not cover plan B-roll events: " + ", ".join(missing_broll)
+        )
+
+    readback_videos = _readback_tracks(readback, "video")
+    readback_audios = _readback_tracks(readback, "audio")
+    if len(readback_videos) > 2:
+        raise SyncError("readback has more than one B-roll video track")
     for track in readback.get("tracks", []):
         if track.get("type") not in {"video", "audio"} and track.get("clips"):
             raise SyncError(
@@ -425,17 +488,28 @@ def timeline_to_candidate_plan(
             )
     video_clips = [
         _normalize_clip(clip, "video", index, total_frames)
-        for index, clip in enumerate(readback_video["clips"])
+        for index, clip in enumerate(readback_videos[0]["clips"])
+    ]
+    broll_clips = [
+        _normalize_clip(clip, "broll", index, total_frames)
+        for track in readback_videos[1:]
+        for index, clip in enumerate(track["clips"])
     ]
     audio_clips = [
         _normalize_clip(clip, "audio", index, total_frames)
-        for index, clip in enumerate(readback_audio["clips"])
+        for track in readback_audios
+        for index, clip in enumerate(track["clips"])
     ]
-    if len({clip["clip_id"] for clip in video_clips}) != len(video_clips):
+    all_video_ids = [clip["clip_id"] for clip in video_clips + broll_clips]
+    if len(set(all_video_ids)) != len(all_video_ids):
         raise SyncError("readback contains duplicate video clipId values")
     if len({clip["clip_id"] for clip in audio_clips}) != len(audio_clips):
         raise SyncError("readback contains duplicate audio clipId values")
-    for kind, clips in (("video", video_clips), ("audio", audio_clips)):
+    for kind, clips in (
+        ("video", video_clips),
+        ("broll", broll_clips),
+        ("audio", audio_clips),
+    ):
         for clip in clips:
             if clip["media_ref"] not in asset_for_ref:
                 raise SyncError(
@@ -443,6 +517,33 @@ def timeline_to_candidate_plan(
                     f"{kind} clip {clip['clip_id']}"
                 )
 
+    broll_groups = {
+        clip["link_group_id"]
+        for clip in broll_clips
+        if isinstance(clip["link_group_id"], str) and clip["link_group_id"]
+    }
+    broll_notes = []
+    for clip in broll_clips:
+        partners = [
+            audio
+            for audio in audio_clips
+            if audio["link_group_id"] == clip["link_group_id"]
+            and clip["link_group_id"] in broll_groups
+        ]
+        if partners:
+            broll_notes.append(
+                {
+                    "kind": "broll_audio_ignored",
+                    "clip_id": clip["clip_id"],
+                    "detail": (
+                        "B-roll is picture-only: linked audio "
+                        f"{', '.join(a['clip_id'] for a in partners)} is ignored"
+                    ),
+                }
+            )
+    audio_clips = [
+        clip for clip in audio_clips if clip["link_group_id"] not in broll_groups
+    ]
     audio_by_group = defaultdict(list)
     for clip in audio_clips:
         audio_by_group[clip["link_group_id"]].append(clip)
@@ -595,12 +696,120 @@ def timeline_to_candidate_plan(
         rebuilt_video.append(video_event)
         rebuilt_audio.append(audio_event)
 
+    primary_end = max(
+        (clip["start"] + clip["duration"] for clip in video_clips), default=0
+    )
+    broll_diff = []
+    rebuilt_broll = []
+    added_count = 0
+    surviving_broll_ids = set()
+    for clip in sorted(
+        broll_clips, key=lambda c: (c["start"], c["trim_start"], c["clip_id"])
+    ):
+        if clip["start"] + clip["duration"] > primary_end:
+            raise SyncError(
+                f"B-roll clip {clip['clip_id']} ends at frame "
+                f"{clip['start'] + clip['duration']}, past the primary track end "
+                f"{primary_end} — an overlay needs a base underneath"
+            )
+        original = broll_exact_by_clip.get(clip["clip_id"])
+        if original is not None:
+            event = _rebuilt_event(original, original["event_id"], clip, fps)
+            event["asset_id"] = asset_for_ref[clip["media_ref"]]
+            surviving_broll_ids.add(original["event_id"])
+            expected = _event_frames(original, fps, original["event_id"])
+            same = expected == (
+                clip["trim_start"],
+                clip["source_end"],
+                clip["start"],
+            )
+            if not same:
+                if (clip["trim_start"], clip["source_end"]) != expected[:2]:
+                    broll_diff.append(
+                        {
+                            "kind": "broll_trimmed",
+                            "event_id": original["event_id"],
+                            "clip_id": clip["clip_id"],
+                            "detail": (
+                                f"source frames [{expected[0]},{expected[1]}) -> "
+                                f"[{clip['trim_start']},{clip['source_end']})"
+                            ),
+                        }
+                    )
+                if clip["start"] != expected[2]:
+                    broll_diff.append(
+                        {
+                            "kind": "broll_moved",
+                            "event_id": original["event_id"],
+                            "clip_id": clip["clip_id"],
+                            "detail": (
+                                f"timeline frame {expected[2]} -> {clip['start']}"
+                            ),
+                        }
+                    )
+        else:
+            added_count += 1
+            source_start = _seconds(clip["trim_start"], fps)
+            duration = _seconds(clip["duration"], fps)
+            event = {
+                "event_id": f"bro-{added_count:02d}",
+                "asset_id": asset_for_ref[clip["media_ref"]],
+                "source_start_seconds": source_start,
+                "source_end_seconds": round(source_start + duration, 6),
+                "timeline_start_seconds": _seconds(clip["start"], fps),
+                "duration_seconds": duration,
+                "playback_rate": 1.0,
+                "intent": "b-roll",
+                "observed_content": None,
+                "confidence": 0.5,
+                "reframe": None,
+                "transition_out": None,
+                "text": None,
+                "volume_db": None,
+            }
+            broll_diff.append(
+                {
+                    "kind": "broll_added",
+                    "event_id": event["event_id"],
+                    "clip_id": clip["clip_id"],
+                    "detail": (
+                        f"{event['asset_id']} source frames "
+                        f"[{clip['trim_start']},{clip['source_end']}) at "
+                        f"timeline frame {clip['start']}"
+                    ),
+                }
+            )
+        rebuilt_broll.append(event)
+    if len({e["event_id"] for e in rebuilt_broll}) != len(rebuilt_broll):
+        raise SyncError("sync would generate duplicate B-roll event ids")
+    for event_id in broll_by_id:
+        if event_id not in surviving_broll_ids:
+            broll_diff.append(
+                {
+                    "kind": "broll_removed",
+                    "event_id": event_id,
+                    "detail": "B-roll clip removed from the overlay track",
+                }
+            )
+
     candidate = deepcopy(plan)
+    candidate_videos = [t for t in candidate["tracks"] if t.get("kind") == "video"]
+    candidate_videos[0]["events"] = rebuilt_video
+    if len(candidate_videos) == 2:
+        candidate_videos[1]["events"] = rebuilt_broll
+    elif rebuilt_broll:
+        candidate["tracks"].append(
+            {
+                "track_id": "v2",
+                "kind": "video",
+                "role": "broll",
+                "events": rebuilt_broll,
+            }
+        )
     for track in candidate["tracks"]:
-        if track.get("kind") == "video":
-            track["events"] = rebuilt_video
-        elif track.get("kind") == "audio":
+        if track.get("kind") == "audio":
             track["events"] = rebuilt_audio
     candidate["revision"] = plan_revision + 1
     candidate["project"]["duration_seconds"] = _seconds(total_frames, fps)
-    return candidate, _build_diff(infos, descendants)
+    diff = _build_diff(infos, descendants) + broll_diff + broll_notes
+    return candidate, diff

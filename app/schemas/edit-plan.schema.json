@@ -33,6 +33,7 @@
         "properties": {
           "track_id": {"type": "string"},
           "kind": {"enum": ["video", "audio", "caption", "title"]},
+          "role": {"enum": ["primary", "broll"]},
           "events": {"type": "array", "items": {"$ref": "#/$defs/event"}}
         }
       }

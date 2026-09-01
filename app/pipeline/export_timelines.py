@@ -31,6 +31,13 @@ def track(plan, kind: str):
     return next(item for item in plan["tracks"] if item["kind"] == kind)
 
 
+def broll_events(plan):
+    matches = [item for item in plan["tracks"] if item["kind"] == "video"]
+    if len(matches) == 2 and matches[1].get("role") == "broll":
+        return matches[1]["events"]
+    return []
+
+
 def rt(seconds: float, fps: float):
     return otio.opentime.RationalTime(round(seconds * fps), fps)
 
@@ -113,6 +120,40 @@ def export_otio(plan, assets):
                 "volume_db": event.get("volume_db"),
             }
             output_track.append(clip)
+        timeline.tracks.append(output_track)
+
+    overlays = broll_events(plan)
+    if overlays:
+        output_track = otio.schema.Track(
+            name="V2 — B-Roll", kind=otio.schema.TrackKind.Video
+        )
+        previous_end = 0.0
+        for event in overlays:
+            gap = event["timeline_start_seconds"] - previous_end
+            if gap > 1e-9:
+                output_track.append(
+                    otio.schema.Gap(source_range=time_range(0, gap, fps))
+                )
+            asset = assets[event["asset_id"]]
+            clip = otio.schema.Clip(
+                name=f"{event['event_id']} — {asset['filename']}",
+                media_reference=make_reference(asset, fps),
+                source_range=time_range(
+                    event["source_start_seconds"], event["duration_seconds"], fps
+                ),
+            )
+            clip.metadata["video_editing_poc"] = {
+                "event_id": event["event_id"],
+                "asset_id": event["asset_id"],
+                "role": "broll",
+                "intent": event["intent"],
+                "confidence": event["confidence"],
+                "timeline_start_seconds": event["timeline_start_seconds"],
+            }
+            output_track.append(clip)
+            previous_end = (
+                event["timeline_start_seconds"] + event["duration_seconds"]
+            )
         timeline.tracks.append(output_track)
 
     for event in track(plan, "title")["events"]:
@@ -282,6 +323,38 @@ def export_xmeml(plan, assets):
         add_audio_level_filter(clipitem, audio.get("volume_db"))
         add_links(clipitem, video_id, audio_id, index)
 
+    overlays = broll_events(plan)
+    broll_xml_track = None
+    if overlays:
+        broll_xml_track = add(video_parent, "track")
+        for event in overlays:
+            asset = assets[event["asset_id"]]
+            start = frame(event["timeline_start_seconds"], fps)
+            end = start + frame(event["duration_seconds"], fps)
+            source_in = frame(event["source_start_seconds"], fps)
+            source_out = source_in + frame(event["duration_seconds"], fps)
+            clipitem = add(
+                broll_xml_track, "clipitem",
+                attributes={"id": f"video-{event['event_id']}"},
+            )
+            add(clipitem, "masterclipid", f"master-{asset['asset_id']}")
+            add(clipitem, "name", f"{event['event_id']} — {asset['filename']}")
+            add(clipitem, "enabled", "TRUE")
+            add(clipitem, "duration", math.ceil(asset["duration_seconds"] * fps))
+            add_rate(clipitem, fps)
+            add(clipitem, "start", start)
+            add(clipitem, "end", end)
+            add(clipitem, "in", source_in)
+            add(clipitem, "out", source_out)
+            if asset["asset_id"] not in seen_files:
+                add_file_node(clipitem, asset, fps)
+                seen_files.add(asset["asset_id"])
+            else:
+                add(clipitem, "file", attributes={"id": f"file-{asset['asset_id']}"})
+            sourcetrack = add(clipitem, "sourcetrack")
+            add(sourcetrack, "mediatype", "video")
+            add(sourcetrack, "trackindex", 2)
+
     title_track = add(video_parent, "track")
     for event in track(plan, "title")["events"]:
         start = frame(event["timeline_start_seconds"], fps)
@@ -314,6 +387,9 @@ def export_xmeml(plan, assets):
 
     add(video_track, "enabled", "TRUE")
     add(video_track, "locked", "FALSE")
+    if broll_xml_track is not None:
+        add(broll_xml_track, "enabled", "TRUE")
+        add(broll_xml_track, "locked", "FALSE")
     add(title_track, "enabled", "TRUE")
     add(title_track, "locked", "FALSE")
     add(audio_track, "enabled", "TRUE")
@@ -339,6 +415,8 @@ def validate_exports(plan):
     expected_video = len(track(plan, "video")["events"])
     expected_audio = len(track(plan, "audio")["events"])
     expected_titles = len(track(plan, "title")["events"])
+    expected_broll = len(broll_events(plan))
+    expected_tracks = 3 if expected_broll else 2
     checks = []
 
     timeline = otio.adapters.read_from_file(str(OTIO_PATH))
@@ -349,21 +427,32 @@ def validate_exports(plan):
             "detail": f"duration={timeline.duration().to_seconds():.3f}s tracks={len(timeline.tracks)} markers={len(timeline.tracks.markers)}",
         }
     )
+    otio_broll = (
+        len([item for item in timeline.tracks[2] if isinstance(item, otio.schema.Clip)])
+        if expected_broll and len(timeline.tracks) > 2
+        else 0
+    )
     checks.append(
         {
             "check": "otio_structure",
-            "pass": len(timeline.tracks) == 2
+            "pass": len(timeline.tracks) == expected_tracks
             and len(timeline.tracks[0]) == expected_video
             and len(timeline.tracks[1]) == expected_audio
+            and otio_broll == expected_broll
             and len(timeline.tracks.markers) == expected_titles,
-            "detail": f"video={len(timeline.tracks[0])} audio={len(timeline.tracks[1])} title_markers={len(timeline.tracks.markers)}",
+            "detail": f"video={len(timeline.tracks[0])} audio={len(timeline.tracks[1])} broll={otio_broll} title_markers={len(timeline.tracks.markers)}",
         }
     )
 
     root = ET.parse(XMEML_PATH).getroot()
     sequence = root.find("sequence")
     xml_video = sequence.findall("./media/video/track[1]/clipitem")
-    xml_titles = sequence.findall("./media/video/track[2]/generatoritem")
+    xml_broll = (
+        sequence.findall("./media/video/track[2]/clipitem") if expected_broll else []
+    )
+    xml_titles = sequence.findall(
+        f"./media/video/track[{3 if expected_broll else 2}]/generatoritem"
+    )
     xml_audio = sequence.findall("./media/audio/track/clipitem")
     sequence_duration = int(sequence.findtext("duration"))
     checks.append(
@@ -378,8 +467,9 @@ def validate_exports(plan):
             "check": "xmeml_structure",
             "pass": len(xml_video) == expected_video
             and len(xml_audio) == expected_audio
+            and len(xml_broll) == expected_broll
             and len(xml_titles) == expected_titles,
-            "detail": f"video={len(xml_video)} audio={len(xml_audio)} titles={len(xml_titles)}",
+            "detail": f"video={len(xml_video)} audio={len(xml_audio)} broll={len(xml_broll)} titles={len(xml_titles)}",
         }
     )
     expected_rotations = [
