@@ -352,6 +352,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         project_call(lambda: projects.get_project(project_id))
         return jobs.submit("render", project_id, lambda: projects.render(project_id))
 
+    @application.post("/api/projects/{project_id}/opentake/place")
+    def opentake_place(project_id: str):
+        return project_call(lambda: projects.opentake_place(project_id))
+
     @application.post("/api/projects/{project_id}/opentake/sync")
     def opentake_sync_preview(project_id: str, request: OpenTakeSyncRequest | None = None):
         payload = request or OpenTakeSyncRequest()

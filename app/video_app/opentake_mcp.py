@@ -74,17 +74,24 @@ class OpenTakeMcp:
             raise OpenTakeMcpError(f"{method}: {json.dumps(body['error'])[:300]}")
         return body["result"]
 
-    def get_timeline(self) -> dict:
+    def tool(self, name: str, arguments: dict | None = None) -> dict:
         result = self._rpc(
-            "tools/call", {"name": "get_timeline", "arguments": {}}
+            "tools/call", {"name": name, "arguments": arguments or {}}
         )
         if result.get("isError"):
-            raise OpenTakeMcpError(f"get_timeline: {json.dumps(result)[:300]}")
+            raise OpenTakeMcpError(f"{name}: {json.dumps(result)[:300]}")
         texts = [
             item["text"]
             for item in result.get("content", [])
             if item.get("type") == "text"
         ]
         if not texts:
-            raise OpenTakeMcpError("get_timeline returned no content")
-        return json.loads(texts[0])
+            return {}
+        try:
+            return json.loads(texts[0])
+        except json.JSONDecodeError:
+            # Some tool successes reply with plain prose.
+            return {"text": texts[0]}
+
+    def get_timeline(self) -> dict:
+        return self.tool("get_timeline")

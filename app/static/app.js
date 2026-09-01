@@ -490,6 +490,17 @@ function advancedSection(project) {
         `).join('')}
       </div>
       <div class="pipeline-grid">
+        <button class="pipeline-step" id="opentake-place">
+          <strong>Enviar a OpenTake</strong>
+          <span>Coloca el corte en la línea de tiempo abierta (la reemplaza)</span>
+        </button>
+        <button class="pipeline-step" id="opentake-sync">
+          <strong>Traer cambios de OpenTake</strong>
+          <span>Lee la línea de tiempo y muestra qué cambiaría en el plan</span>
+        </button>
+      </div>
+      <div id="opentake-diff"></div>
+      <div class="pipeline-grid">
         <button class="pipeline-step" id="clone-project">
           <strong>Duplicate vlog</strong>
           <span>Same clips, shared analysis, fresh story</span>
@@ -590,6 +601,8 @@ function renderProject() {
   });
   document.querySelectorAll('[data-pipeline]').forEach((button) => {
     button.addEventListener('click', () => runAdvancedStep(button.dataset.pipeline, button));
+  $('#opentake-place')?.addEventListener('click', openTakePlace);
+  $('#opentake-sync')?.addEventListener('click', openTakeSyncPreview);
   });
   $('#delete-project')?.addEventListener('click', deleteProject);
   $('#clone-project')?.addEventListener('click', cloneProject);
@@ -933,6 +946,54 @@ const ADVANCED_CALLS = {
   render: 'render',
   exports: 'exports',
 };
+
+async function openTakePlace() {
+  const project = state.activeProject;
+  if (!project) return;
+  const sure = window.confirm(
+    'Esto REEMPLAZA la línea de tiempo del proyecto abierto en OpenTake con el corte actual. ¿Continuar?'
+  );
+  if (!sure) return;
+  try {
+    const summary = await api(`/api/projects/${project.project_id}/opentake/place`, { method: 'POST' });
+    notice(`Colocado en OpenTake: ${summary.placed_clips} clips (${summary.total_frames} frames).`);
+  } catch (error) {
+    notice(error.message, true);
+  }
+}
+
+async function openTakeSyncPreview() {
+  const project = state.activeProject;
+  if (!project) return;
+  const box = $('#opentake-diff');
+  try {
+    const preview = await api(`/api/projects/${project.project_id}/opentake/sync`, { method: 'POST' });
+    if (!preview.changes.length) {
+      box.innerHTML = '<p class="notice">La línea de tiempo coincide con el plan — nada que traer.</p>';
+      return;
+    }
+    box.innerHTML = `
+      <div class="sync-diff">
+        <p><strong>${preview.changes.length}</strong> cambio(s) en OpenTake — nueva duración ${preview.duration_seconds}s
+        (${preview.unchanged_count} escenas sin cambios):</p>
+        <ul>${preview.changes.map((c) => `<li><code>${escapeHtml(c.kind)}</code> ${escapeHtml(c.event_id || '')} — ${escapeHtml(c.detail || '')}</li>`).join('')}</ul>
+        <button class="pipeline-step" id="opentake-sync-apply"><strong>Aplicar al plan</strong>
+        <span>Archiva la revisión actual y usa estos cambios al renderizar</span></button>
+      </div>`;
+    $('#opentake-sync-apply')?.addEventListener('click', async () => {
+      try {
+        const applied = await api(`/api/projects/${project.project_id}/opentake/sync/apply`, { method: 'POST' });
+        notice(`Plan actualizado a la revisión ${applied.revision}. Re-renderiza para ver el resultado.`);
+        box.innerHTML = '';
+        await loadProject(project.project_id);
+      } catch (error) {
+        notice(error.message, true);
+      }
+    });
+  } catch (error) {
+    notice(error.message, true);
+  }
+}
 
 async function runAdvancedStep(stepId, button) {
   const path = ADVANCED_CALLS[stepId];

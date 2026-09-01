@@ -897,6 +897,30 @@ class ProjectService:
             write_json(path, stored)
         return {"plan": new_plan, "revision_note": note}
 
+    def opentake_place(self, project_id: str) -> dict:
+        """Place the compiled plan into the open OpenTake project and persist
+        the bridge for later sync. Destructive to that timeline by contract."""
+        from .opentake_bridge import BridgeError, place_plan
+
+        project = self.get_project(project_id)
+        plan_dir = self.settings.runtime / project_id / "plan"
+        plan_path = plan_dir / "edit-plan.json"
+        if not plan_path.is_file():
+            raise ProjectError("Compile a plan before sending it to OpenTake")
+        plan = load_json(plan_path)
+        inventory_path = plan_dir / "media-inventory.json"
+        inventory = (
+            load_json(inventory_path)
+            if inventory_path.is_file()
+            else project["inventory"]
+        )
+        try:
+            summary, bridge = place_plan(plan, inventory, project_id)
+        except BridgeError as exc:
+            raise ProjectError(str(exc)) from exc
+        write_json(plan_dir.parent / "opentake-bridge.json", bridge)
+        return summary
+
     def opentake_sync_preview(
         self, project_id: str, readback: dict | None = None
     ) -> dict:

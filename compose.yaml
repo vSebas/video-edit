@@ -9,6 +9,9 @@ services:
     init: true
     user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
     gpus: all
+    # Host networking so the app can reach OpenTake's loopback-only MCP
+    # listener (127.0.0.1:19789). Bind address moves into uvicorn itself.
+    network_mode: host
     # The workspace is mounted at its host path so that exported timelines
     # reference media locations that DaVinci Resolve can open directly.
     working_dir: ${PWD}/app
@@ -23,6 +26,7 @@ services:
       DASHSCOPE_BASE_URL: "${DASHSCOPE_BASE_URL:-}"
       GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      OPENTAKE_MCP_TOKEN: "${OPENTAKE_MCP_TOKEN:-}"
       # Set this before exposing the port beyond localhost: without it the
       # API is open to anyone who can reach it (footage, deletion, paid calls).
       VIDEO_EDITING_TOKEN: "${VIDEO_EDITING_TOKEN:-}"
@@ -30,10 +34,8 @@ services:
       - ./:${PWD}
       # Read-write so rclone can refresh its OAuth token.
       - ${HOME}/.config/rclone:/rclone
-    ports:
-      # Set VIDEO_EDITING_BIND=0.0.0.0 to reach the app from your phone on
-      # the same WiFi (http://<laptop-ip>:8787). Default is laptop-only.
-      # Pair that with VIDEO_EDITING_TOKEN — campus WiFi is not private.
-      - "${VIDEO_EDITING_BIND:-127.0.0.1}:${VIDEO_EDITING_APP_PORT:-8787}:8787"
-    command: ["uvicorn", "video_app.main:app", "--host", "0.0.0.0", "--port", "8787"]
+    # Set VIDEO_EDITING_BIND=0.0.0.0 to reach the app from your phone on
+    # the same WiFi (http://<laptop-ip>:8787). Default is laptop-only.
+    # Pair that with VIDEO_EDITING_TOKEN — campus WiFi is not private.
+    command: ["sh", "-c", "uvicorn video_app.main:app --host ${VIDEO_EDITING_BIND:-127.0.0.1} --port ${VIDEO_EDITING_APP_PORT:-8787}"]
 
