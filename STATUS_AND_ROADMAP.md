@@ -358,17 +358,18 @@ closed between 2026-08-05 and 2026-08-19. What is genuinely still open:
   Remaining: the workspace itself is necessarily read-write (it is the
   app's job), and the Drive token's scope is still full — a narrower scope
   needs re-authorization on the rclone side.
-- **Concept-stage trust.** Citations are checked for overlap against observed
-  evidence, but a plausible-looking hallucination inside a real observation's
-  range still reaches the concept UI; only compilation applies the
-  approved-only coverage gate.
-- **Rotation.** Sideways clips without rotation metadata still render
-  unrotated; the compiler does not set `rotation_degrees` automatically.
-  (The renderer honors rotation and `fill` reframing since P5 — the gap is
-  only DETECTION, not execution.)
-- **Voiceover placement.** Audio assets are barred from the video track, but
-  the planned feature — drop a recording in and have it placed at the beat it
-  belongs to, with ducking — is not built.
+- **Concept-stage trust.** Hardened 2026-09-01: every citation's description
+  is cross-checked against the captions of the observations it overlaps;
+  mismatches are flagged needs_review and surfaced on the story card ("⚠ N
+  citas que no coinciden con lo observado").
+- **Rotation.** Closed 2026-09-01: after each visual analysis, unchecked
+  assets get a one-frame orientation question; confident answers land in
+  the inventory and the compiler applies them with manual_review flagged.
+- **Voiceover placement.** Built 2026-09-01: drop a recording into the
+  footage folder, then one instruction ("pon la nota de voz en X") places it
+  on a voiceover track; the renderer ducks production audio -9dB under it
+  and exports carry an A2 track. Render-side polish — placement to OpenTake
+  refuses voiceover plans like J/L cuts.
 - A multi-day, dialogue-heavy comparison corpus remains an open acceptance
   check.
 
