@@ -375,7 +375,46 @@ class ProjectService:
 
         self._corroborate_speech_claims(project_id)
         self._mark_semantic_progress(project_id, "visual")
+        self._detect_rotations(project_id, client)
         return self.semantic_run(project_id, run_key)
+
+    def _detect_rotations(self, project_id: str, client) -> None:
+        """Best-effort sideways-clip detection: one frame per video asset
+        that has not been checked yet; a confident non-zero answer lands in
+        the inventory as suggested_rotation_degrees for the compiler."""
+        from .visual import detect_orientation
+
+        project = self.get_project(project_id)
+        pending = [
+            asset for asset in project.get("inventory", {}).get("assets", [])
+            if asset.get("media_type") == "video"
+            and "suggested_rotation_degrees" not in asset
+        ]
+        if not pending:
+            return
+        found: dict[str, int] = {}
+        for asset in pending:
+            try:
+                degrees, confidence = detect_orientation(
+                    client,
+                    (self.settings.root / asset["source_path"]).resolve(),
+                    float(asset.get("duration_seconds") or 1.0),
+                )
+            except Exception:
+                continue  # best-effort: an unreadable clip stays unchecked
+            found[asset["asset_id"]] = (
+                degrees if degrees and confidence >= 0.8 else 0
+            )
+        if not found:
+            return
+        with self._project_write(project_id):
+            path = self.settings.runtime / project_id / "project.json"
+            state = load_json(path)
+            for asset in state.get("inventory", {}).get("assets", []):
+                if asset["asset_id"] in found:
+                    asset["suggested_rotation_degrees"] = found[asset["asset_id"]]
+            state["updated_at"] = utc_now()
+            write_json(path, state)
 
     def analyze_context(self, project_id: str, model: str | None = None) -> dict:
         """Build derived source/event/relationship context without promoting

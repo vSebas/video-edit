@@ -339,3 +339,52 @@ class TestPlannerCutaways:
         _sanitize_concepts(document, self._project())
         cutaways = document["concepts"][0]["structure"][0]["cutaways"]
         assert [c["asset_id"] for c in cutaways] == ["clip_b"]
+
+
+class TestRotationDetection:
+    def test_detected_rotation_reaches_the_compiled_plan(self) -> None:
+        from video_app.planning import compile_edit_plan
+
+        project = {"project_id": "p", "inventory": {"assets": [
+            {"asset_id": "clip_a", "media_type": "video",
+             "duration_seconds": 10.0, "suggested_rotation_degrees": 90},
+        ]}}
+        document = {"concepts": [{
+            "concept_id": "c1", "title": "T", "topic": "x",
+            "target_duration_seconds": 6,
+            "structure": [
+                {"beat_id": f"b{i}", "purpose": "p",
+                 "target_duration_seconds": 2.0,
+                 "evidence": [{"asset_id": "clip_a",
+                               "start_seconds": i * 2.0,
+                               "end_seconds": i * 2.0 + 2.0,
+                               "observed_content": "x", "confidence": 0.9}]}
+                for i in range(3)
+            ],
+        }]}
+        plan = compile_edit_plan(project, document, "c1")
+        for event in plan["tracks"][0]["events"]:
+            assert event["reframe"]["rotation_degrees"] == 90
+            assert event["reframe"]["manual_review"] is True
+
+    def test_orientation_parser_rejects_bad_degrees(self) -> None:
+        import json as _json
+
+        from video_app.visual import detect_orientation
+
+        class Client:
+            def chat(self, messages, **kwargs):
+                return {"content": _json.dumps(
+                    {"rotation_degrees_clockwise_needed": 45,
+                     "confidence": 0.99})}
+
+        import video_app.visual as visual_module
+        original = visual_module.extract_frame
+        visual_module.extract_frame = lambda *a: b"jpeg"
+        try:
+            degrees, confidence = detect_orientation(
+                Client(), __import__("pathlib").Path("x.mp4"), 4.0
+            )
+        finally:
+            visual_module.extract_frame = original
+        assert (degrees, confidence) == (0, 0.0)

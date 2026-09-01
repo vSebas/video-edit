@@ -149,6 +149,44 @@ RESPONSE_SHAPE = (
 )
 
 
+def detect_orientation(client, path: Path, duration: float) -> tuple[int, float]:
+    """One mid-clip frame → clockwise degrees needed to make it upright.
+
+    Phone clips whose rotation metadata is present are already auto-rotated
+    by ffmpeg on decode; this catches the physically-sideways ones that
+    carry none. Returns (0|90|180|270, confidence)."""
+    frame = extract_frame(path, max(0.5, duration / 2))
+    response = client.chat(
+        [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Was the camera physically rotated when this was "
+                            "recorded? Answer ONLY JSON: "
+                            '{"rotation_degrees_clockwise_needed": 0|90|180|270, '
+                            '"confidence": <0..1>} — the clockwise rotation to '
+                            "apply so people/text/horizon are upright. 0 if "
+                            "already upright or unclear."
+                        ),
+                    },
+                    image_part(frame),
+                ],
+            }
+        ],
+        json_object=True,
+        temperature=0.0,
+    )
+    parsed = parse_json_content(response["content"])
+    degrees = int(parsed.get("rotation_degrees_clockwise_needed") or 0)
+    confidence = float(parsed.get("confidence") or 0.0)
+    if degrees not in (0, 90, 180, 270):
+        return 0, 0.0
+    return degrees, min(max(confidence, 0.0), 1.0)
+
+
 def describe_shot(
     client: ChatClient,
     path: Path,

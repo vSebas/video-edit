@@ -529,6 +529,17 @@ def build_plan(
         raise PlanningError("No usable evidence ranges to build a plan from")
     if speech_words:
         spans = snap_spans_to_speech(spans, speech_words, project)
+    inventory_assets = {
+        asset["asset_id"]: asset
+        for asset in project.get("inventory", {}).get("assets", [])
+    }
+
+    def detected_rotation(asset_id: str) -> int:
+        return int(
+            inventory_assets.get(asset_id, {}).get("suggested_rotation_degrees")
+            or 0
+        )
+
     video_events = []
     audio_events = []
     beat_windows: dict[str, list[float]] = {}
@@ -557,6 +568,7 @@ def build_plan(
             "transition_out": {"type": "cut", "duration_seconds": 0.0},
             "text": None,
         }
+        rotation = detected_rotation(span["asset_id"])
         video_events.append(
             {
                 "event_id": f"v{index:02d}_{span['label']}"[:64],
@@ -566,8 +578,9 @@ def build_plan(
                     "center_x": 0.5,
                     "center_y": 0.5,
                     "scale": 1.0,
-                    "rotation_degrees": 0,
-                    "manual_review": False,
+                    "rotation_degrees": rotation,
+                    # auto-detected rotation deserves a human glance
+                    "manual_review": bool(rotation),
                 },
                 "volume_db": None,
             }
@@ -621,8 +634,8 @@ def build_plan(
                         "center_x": 0.5,
                         "center_y": 0.5,
                         "scale": 1.0,
-                        "rotation_degrees": 0,
-                        "manual_review": False,
+                        "rotation_degrees": detected_rotation(shot["asset_id"]),
+                        "manual_review": bool(detected_rotation(shot["asset_id"])),
                     },
                     "transition_out": {"type": "cut", "duration_seconds": 0.0},
                     "text": None,
