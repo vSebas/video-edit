@@ -97,6 +97,21 @@ user's transcribed speech and are deliberately **not** in this repository —
 they live in `runtime/` alongside the projects they describe. What is
 reproducible from here is the method above, not the personal evidence.
 
+## Writer rematch — deepseek vs gpt-5.6-sol (2026-09-01)
+
+The August bracket's missing challenger finally ran once API credits landed:
+same evidence pack, same prompt, both models' primary concepts compiled
+through the full grounding gates and rendered; the owner judged the two cuts
+blind. **deepseek-v4-pro retained the title.**
+
+The owner picked deepseek's 69s cut over gpt-5.6-sol's 88s cut on narrative
+structure: gpt announced lunch in the intro but deferred the dining clips
+until after a second lecture and a buildings interlude, breaking the
+setup-payoff chronology; deepseek's ordering read coherent. Shared weakness,
+both writers: the rapid-fire failed-intro montage was cut with awkward
+comedic timing ("I would have to juggle with them manually to make them
+sound funnier") — comedic rhythm remains beyond both models and is a
+finishing-pass task today.
+
 Bench cost: ~$2 RunPod (pod terminated) + a few cents of API calls + free
-TwelveLabs tier. Optional external accounts (OpenAI, Anthropic, Reka) remain
-unrun.
+TwelveLabs tier. Reka remains unrun.

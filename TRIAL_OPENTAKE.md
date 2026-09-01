@@ -109,9 +109,19 @@ than ours.
 4. [ ] Dialogue cleanup driven by our transcript: Spanish filler lexicon
        (eh, este, o sea, como que), silences, false starts → reviewed ranges
        → `ripple_delete_ranges`.
-5. [ ] Owner finishes in the OpenTake GUI and exports; compare against the
-       current pipeline's render of the same footage; also export XMEML and
-       check what survives into Resolve as the escape hatch.
+5. [~] Export + comparison done (2026-09-01); recovery test pending.
+       Owner verdict on the side-by-side: content is (correctly) identical —
+       same plan, frame-exact both ways — but OpenTake's RENDER looks worse:
+       (a) colors — its HLG tonemap (mobius, desat=2) reads flatter than our
+       untonemapped pass-through; a tuning knob, not a defect, but today the
+       owner prefers our color; (b) wide 16:9 clips (Meta glasses footage)
+       come out horizontally squeezed — an aspect-fit defect in the
+       compositor's default handling of non-portrait sources, real bug for
+       the fork list; (c) our render burns the title hook at the start
+       (the "one caption") — the adapter deliberately placed only the video
+       track, so OpenTake's cut lacks it. Export wall time ~1h for 77s
+       (single-core tonemap bound; profiled). Duration parity confirmed
+       (77.1s vs 78.2s, the delta being the dead-air ripple).
 
 **Gate:** the finished result must be clearly better than the current
 pipeline's cut, the app must be stable enough to trust with a day's edit, and
