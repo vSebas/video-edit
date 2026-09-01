@@ -4,73 +4,200 @@
   "title": "Creative Concepts v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "generated_at", "benchmark_id", "footage_summary", "concepts"],
+  "required": [
+    "schema_version",
+    "generated_at",
+    "benchmark_id",
+    "footage_summary",
+    "concepts"
+  ],
   "properties": {
-    "schema_version": {"const": "creative-concepts.v1"},
-    "generated_at": {"type": "string", "format": "date-time"},
-    "benchmark_id": {"type": "string"},
-    "footage_summary": {"type": "string"},
-    "provenance": {"type": "object"},
+    "schema_version": {
+      "const": "creative-concepts.v1"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "benchmark_id": {
+      "type": "string"
+    },
+    "footage_summary": {
+      "type": "string"
+    },
+    "provenance": {
+      "type": "object"
+    },
     "concepts": {
       "type": "array",
       "minItems": 2,
-      "items": {"$ref": "#/$defs/concept"}
+      "items": {
+        "$ref": "#/$defs/concept"
+      }
     }
   },
   "$defs": {
     "evidence": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["asset_id", "start_seconds", "end_seconds", "observed_content", "confidence"],
+      "required": [
+        "asset_id",
+        "start_seconds",
+        "end_seconds",
+        "observed_content",
+        "confidence"
+      ],
       "properties": {
-        "asset_id": {"type": "string"},
-        "start_seconds": {"type": "number", "minimum": 0},
-        "end_seconds": {"type": "number", "minimum": 0},
-        "observed_content": {"type": "string"},
-        "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+        "asset_id": {
+          "type": "string"
+        },
+        "start_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "end_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "observed_content": {
+          "type": "string"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
       }
     },
     "missingShot": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["purpose", "recording_instruction", "priority", "fallback"],
+      "required": [
+        "purpose",
+        "recording_instruction",
+        "priority",
+        "fallback"
+      ],
       "properties": {
-        "purpose": {"type": "string"},
-        "recording_instruction": {"type": "string"},
-        "priority": {"enum": ["required", "recommended", "optional"]},
-        "fallback": {"type": ["string", "null"]}
+        "purpose": {
+          "type": "string"
+        },
+        "recording_instruction": {
+          "type": "string"
+        },
+        "priority": {
+          "enum": [
+            "required",
+            "recommended",
+            "optional"
+          ]
+        },
+        "fallback": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       }
     },
     "concept": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["concept_id", "title", "topic", "audience", "platforms", "target_duration_seconds", "hook", "structure", "strengths", "weaknesses", "missing_shots"],
+      "required": [
+        "concept_id",
+        "title",
+        "topic",
+        "audience",
+        "platforms",
+        "target_duration_seconds",
+        "hook",
+        "structure",
+        "strengths",
+        "weaknesses",
+        "missing_shots"
+      ],
       "properties": {
-        "concept_id": {"type": "string"},
-        "title": {"type": "string"},
-        "topic": {"type": "string"},
-        "audience": {"type": "string"},
-        "platforms": {"type": "array", "items": {"type": "string"}},
-        "target_duration_seconds": {"type": "number", "minimum": 1},
-        "hook": {"type": "string"},
+        "concept_id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "topic": {
+          "type": "string"
+        },
+        "audience": {
+          "type": "string"
+        },
+        "platforms": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "target_duration_seconds": {
+          "type": "number",
+          "minimum": 1
+        },
+        "hook": {
+          "type": "string"
+        },
         "structure": {
           "type": "array",
           "minItems": 2,
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["beat_id", "purpose", "target_duration_seconds", "evidence"],
+            "required": [
+              "beat_id",
+              "purpose",
+              "target_duration_seconds",
+              "evidence"
+            ],
             "properties": {
-              "beat_id": {"type": "string"},
-              "purpose": {"type": "string"},
-              "target_duration_seconds": {"type": "number", "exclusiveMinimum": 0},
-              "evidence": {"type": "array", "items": {"$ref": "#/$defs/evidence"}}
+              "beat_id": {
+                "type": "string"
+              },
+              "purpose": {
+                "type": "string"
+              },
+              "target_duration_seconds": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "evidence": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/evidence"
+                }
+              },
+              "cutaways": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/evidence"
+                }
+              }
             }
           }
         },
-        "strengths": {"type": "array", "items": {"type": "string"}},
-        "weaknesses": {"type": "array", "items": {"type": "string"}},
-        "missing_shots": {"type": "array", "items": {"$ref": "#/$defs/missingShot"}}
+        "strengths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "weaknesses": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "missing_shots": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/missingShot"
+          }
+        }
       }
     }
   }

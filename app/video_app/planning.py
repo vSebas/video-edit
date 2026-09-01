@@ -190,6 +190,12 @@ Duration and structure rules:
 - Missing material is not only video: recommend VOICEOVERS (voz en off)
   when narration would strengthen the story — say what to talk about, the
   tone, and a target length, so the user can record it and drop it in.
+- CUTAWAYS (optional, per beat): when a beat is someone talking and OTHER
+  footage visibly shows what they talk about, add 1-2 "cutaways" — short
+  ranges (1.5-4s) shown OVER the speech while its audio continues. Only
+  cite footage the observations support, never the same shot the beat
+  already uses, and skip cutaways entirely when nothing genuinely
+  illustrates the speech.
 Respond with JSON:
 {{
   "footage_summary": "<2-4 factual sentences about what the footage visibly covers>",
@@ -213,6 +219,15 @@ Respond with JSON:
               "start_seconds": <number>,
               "end_seconds": <number>,
               "observed_content": "<what the evidence says happens here>",
+              "confidence": <0.0-1.0>
+            }}
+          ],
+          "cutaways": [
+            {{
+              "asset_id": "<existing asset id, DIFFERENT footage than the beat's evidence>",
+              "start_seconds": <number>,
+              "end_seconds": <number>,
+              "observed_content": "<what this shot visibly shows>",
               "confidence": <0.0-1.0>
             }}
           ]
@@ -320,12 +335,9 @@ def _sanitize_concepts(
                 if shot.get("priority") not in {"required", "recommended", "optional"}:
                     shot["priority"] = "recommended"
 
-        beats = []
-        for beat in concept.get("structure") or []:
-            if not isinstance(beat, dict):
-                continue
+        def clean_spans(items) -> list[dict]:
             spans = []
-            for item in beat.get("evidence") or []:
+            for item in items or []:
                 asset = assets.get(item.get("asset_id")) if isinstance(item, dict) else None
                 if asset is None:
                     continue
@@ -358,6 +370,17 @@ def _sanitize_concepts(
                         "confidence": confidence,
                     }
                 )
+            return spans
+
+        beats = []
+        for beat in concept.get("structure") or []:
+            if not isinstance(beat, dict):
+                continue
+            spans = clean_spans(beat.get("evidence"))
+            cutaways = clean_spans(beat.get("cutaways"))[:2]
+            # a cutaway that repeats the beat's own footage shows nothing new
+            primary_assets = {span["asset_id"] for span in spans}
+            cutaways = [c for c in cutaways if c["asset_id"] not in primary_assets]
             if spans:
                 beat_id = re.sub(
                     r"[^a-z0-9_]+", "_", str(beat.get("beat_id", "")).lower()
@@ -365,16 +388,17 @@ def _sanitize_concepts(
                 duration = sum(
                     span["end_seconds"] - span["start_seconds"] for span in spans
                 )
-                beats.append(
-                    {
-                        "beat_id": beat_id,
-                        "purpose": str(beat.get("purpose", "")).strip() or "Unlabeled beat.",
-                        "target_duration_seconds": round(
-                            float(beat.get("target_duration_seconds") or duration), 3
-                        ),
-                        "evidence": spans,
-                    }
-                )
+                sanitized_beat = {
+                    "beat_id": beat_id,
+                    "purpose": str(beat.get("purpose", "")).strip() or "Unlabeled beat.",
+                    "target_duration_seconds": round(
+                        float(beat.get("target_duration_seconds") or duration), 3
+                    ),
+                    "evidence": spans,
+                }
+                if cutaways:
+                    sanitized_beat["cutaways"] = cutaways
+                beats.append(sanitized_beat)
         concept["structure"] = beats
         if len(beats) >= 3:
             valid_concepts.append(concept)
@@ -496,15 +520,18 @@ def build_plan(
     fps: int = DEFAULT_FPS,
     revision: int = 1,
     speech_words: dict[str, list[dict]] | None = None,
+    cutaways: list[dict] | None = None,
 ) -> dict:
     """Deterministically assemble edit-plan.v1 from grounded spans with
-    linked video/audio events and a hook title."""
+    linked video/audio events, a hook title, and optional B-roll cutaways
+    laid over their beat's window."""
     if not spans:
         raise PlanningError("No usable evidence ranges to build a plan from")
     if speech_words:
         spans = snap_spans_to_speech(spans, speech_words, project)
     video_events = []
     audio_events = []
+    beat_windows: dict[str, list[float]] = {}
     timeline = 0.0
     for span in spans:
         # Quantize to the frame grid so per-event frame rounding cannot
@@ -552,7 +579,57 @@ def build_plan(
                 "volume_db": 0.0,
             }
         )
+        window = beat_windows.setdefault(
+            span["label"], [round(timeline, 6), round(timeline, 6)]
+        )
+        window[1] = round(timeline + duration, 6)
         timeline = round(timeline + duration, 6)
+
+    broll_events = []
+    if cutaways:
+        cursor_by_beat: dict[str, float] = {}
+        for shot in cutaways:
+            window = beat_windows.get(shot["label"])
+            if window is None:
+                continue  # the beat's own evidence was dropped entirely
+            beat_start, beat_end = window
+            position = cursor_by_beat.get(shot["label"], beat_start + 0.4)
+            available = beat_end - 0.2 - position
+            span_length = shot["source_end_seconds"] - shot["source_start_seconds"]
+            duration = round(min(span_length, 4.0, available), 6)
+            if duration < 0.8:
+                continue  # no honest room left in this beat's window
+            source_start = round(
+                max(0, round(shot["source_start_seconds"] * fps)) / fps, 6
+            )
+            duration = round(max(1, round(duration * fps)) / fps, 6)
+            index = len(broll_events) + 1
+            broll_events.append(
+                {
+                    "event_id": f"bro-{index:02d}_{shot['label']}"[:64],
+                    "asset_id": shot["asset_id"],
+                    "source_start_seconds": source_start,
+                    "source_end_seconds": round(source_start + duration, 6),
+                    "timeline_start_seconds": round(position, 6),
+                    "duration_seconds": duration,
+                    "playback_rate": 1.0,
+                    "intent": shot["intent"],
+                    "observed_content": shot["observed_content"],
+                    "confidence": shot["confidence"],
+                    "reframe": {
+                        "mode": "fit",
+                        "center_x": 0.5,
+                        "center_y": 0.5,
+                        "scale": 1.0,
+                        "rotation_degrees": 0,
+                        "manual_review": False,
+                    },
+                    "transition_out": {"type": "cut", "duration_seconds": 0.0},
+                    "text": None,
+                    "volume_db": None,
+                }
+            )
+            cursor_by_beat[shot["label"]] = round(position + duration + 0.3, 6)
 
     title_events = [
         {
@@ -588,6 +665,11 @@ def build_plan(
             {"track_id": "v1", "kind": "video", "events": video_events},
             {"track_id": "a1", "kind": "audio", "events": audio_events},
             {"track_id": "t1", "kind": "title", "events": title_events},
+            *(
+                [{"track_id": "v2", "kind": "video", "role": "broll",
+                  "events": broll_events}]
+                if broll_events else []
+            ),
         ],
     }
 
@@ -641,6 +723,7 @@ def compile_edit_plan(
         raise PlanningError(f"Unknown concept: {concept_id}")
 
     spans = []
+    cutaways = []
     for beat in concept["structure"]:
         for evidence in beat["evidence"]:
             spans.append(
@@ -654,6 +737,18 @@ def compile_edit_plan(
                     "confidence": evidence["confidence"],
                 }
             )
+        for shot in beat.get("cutaways") or []:
+            cutaways.append(
+                {
+                    "label": beat["beat_id"],
+                    "asset_id": shot["asset_id"],
+                    "source_start_seconds": shot["start_seconds"],
+                    "source_end_seconds": shot["end_seconds"],
+                    "intent": f"b-roll: {beat['purpose']}"[:120],
+                    "observed_content": shot["observed_content"],
+                    "confidence": shot["confidence"],
+                }
+            )
     if approved_ranges is not None:
         supported = [span for span in spans if span_supported(span, approved_ranges)]
         if not supported:
@@ -662,10 +757,13 @@ def compile_edit_plan(
                 "confirm the flagged moments it uses and compile again"
             )
         spans = supported
+        # cutaways are decoration, not story: unsupported ones just drop
+        cutaways = [c for c in cutaways if span_supported(c, approved_ranges)]
     try:
         return build_plan(
             project,
             spans,
+            cutaways=cutaways,
             concept_id=concept_id,
             benchmark_id=f"{project['project_id']}-auto-{PROMPT_VERSION}",
             hook_text=str(concept.get("title") or ""),

@@ -261,3 +261,81 @@ class TestPlanCommandEndpoints:
             assert proposed.json() == {
                 "status": "rejected", "reason": "pide dos cambios a la vez",
             }
+
+
+class TestPlannerCutaways:
+    """P8 step 1: concepts may propose B-roll; the compiler lays it on v2."""
+
+    def _document(self):
+        return {"concepts": [{
+            "concept_id": "c1", "title": "T", "topic": "x",
+            "target_duration_seconds": 10,
+            "structure": [
+                {"beat_id": "talk", "purpose": "hablar del dia",
+                 "target_duration_seconds": 6.0,
+                 "evidence": [{"asset_id": "clip_a", "start_seconds": 0.0,
+                               "end_seconds": 6.0,
+                               "observed_content": "habla", "confidence": 0.9}],
+                 "cutaways": [{"asset_id": "clip_b", "start_seconds": 1.0,
+                               "end_seconds": 3.5,
+                               "observed_content": "comida", "confidence": 0.8}]},
+                {"beat_id": "b2", "purpose": "p",
+                 "target_duration_seconds": 2.0,
+                 "evidence": [{"asset_id": "clip_a", "start_seconds": 6.0,
+                               "end_seconds": 8.0,
+                               "observed_content": "x", "confidence": 0.9}]},
+                {"beat_id": "b3", "purpose": "p",
+                 "target_duration_seconds": 2.0,
+                 "evidence": [{"asset_id": "clip_a", "start_seconds": 8.0,
+                               "end_seconds": 10.0,
+                               "observed_content": "x", "confidence": 0.9}]},
+            ],
+        }]}
+
+    def _project(self):
+        return {"project_id": "p", "inventory": {"assets": [
+            {"asset_id": "clip_a", "media_type": "video",
+             "duration_seconds": 10.0},
+            {"asset_id": "clip_b", "media_type": "video",
+             "duration_seconds": 6.0},
+        ]}}
+
+    def test_cutaway_compiles_onto_v2_inside_its_beat(self) -> None:
+        from video_app.planning import compile_edit_plan
+
+        plan = compile_edit_plan(self._project(), self._document(), "c1")
+        videos = [t for t in plan["tracks"] if t["kind"] == "video"]
+        assert len(videos) == 2 and videos[1]["role"] == "broll"
+        (shot,) = videos[1]["events"]
+        assert shot["asset_id"] == "clip_b"
+        assert shot["intent"].startswith("b-roll")
+        # inside the talk beat's window [0, 6), with edge margins
+        assert 0.4 <= shot["timeline_start_seconds"]
+        end = shot["timeline_start_seconds"] + shot["duration_seconds"]
+        assert end <= 6.0
+        # audio untouched: still exactly the primary events
+        audio = next(t for t in plan["tracks"] if t["kind"] == "audio")
+        assert len(audio["events"]) == 3
+
+    def test_unsupported_cutaway_drops_but_story_survives(self) -> None:
+        from video_app.planning import compile_edit_plan
+
+        approved = {"clip_a": [(0.0, 10.0)]}  # nothing approved on clip_b
+        plan = compile_edit_plan(
+            self._project(), self._document(), "c1", approved_ranges=approved
+        )
+        videos = [t for t in plan["tracks"] if t["kind"] == "video"]
+        assert len(videos) == 1  # no v2 track at all
+
+    def test_sanitizer_keeps_cutaways_and_drops_self_referencing(self) -> None:
+        from video_app.planning import _sanitize_concepts
+
+        document = self._document()
+        beat = document["concepts"][0]["structure"][0]
+        beat["cutaways"].append({
+            "asset_id": "clip_a", "start_seconds": 0.0, "end_seconds": 2.0,
+            "observed_content": "same footage", "confidence": 0.9,
+        })
+        _sanitize_concepts(document, self._project())
+        cutaways = document["concepts"][0]["structure"][0]["cutaways"]
+        assert [c["asset_id"] for c in cutaways] == ["clip_b"]
