@@ -118,6 +118,33 @@ def plan_entries(plan: dict, fps: int) -> list[dict]:
     return entries
 
 
+def write_bridge(plan: dict, entries: list[dict], ref_for: dict[str, str],
+                 readback: dict, path: Path) -> None:
+    """Persist the placement mapping (opentake-bridge.v1) so timeline edits
+    can later be synced back into the plan (see app/video_app/opentake_sync)."""
+    fps = plan["project"]["fps"]
+    clips = sorted((c for t in readback.get("tracks", []) if t.get("type") == "video"
+                    for c in t.get("clips", [])), key=lambda c: c["startFrame"])
+    events = []
+    for e, c in zip(entries, clips):
+        events.append({
+            "event_id": e["event_id"],
+            "clip_id": c["clipId"],
+            "link_group_id": c.get("linkGroupId"),
+            "source_start_frame": e["trimStartFrame"],
+            "source_end_frame": e["trimStartFrame"] + e["durationFrames"],
+            "timeline_start_frame": e["startFrame"],
+        })
+    path.write_text(json.dumps({
+        "schema_version": "opentake-bridge.v1",
+        "project_id": path.parent.name,
+        "plan_revision": plan.get("revision", 1),
+        "fps": fps,
+        "media": ref_for,
+        "events": events,
+    }, indent=1))
+
+
 def verify(client: McpClient, entries: list[dict], ref_for: dict[str, str],
            readback_path: Path) -> list[str]:
     """Verify the trial-emitted geometry, source trims, and A/V pairing,
