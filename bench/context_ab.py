@@ -229,6 +229,8 @@ def main() -> None:
     )
     (judge / "INSTRUCTIONS.md").write_text(
         "Compare SET-1 and SET-2 as story proposals for this footage.\n"
+        "The workbench story list shows one of these sets (last generated) —\n"
+        "do not compare against it before judging.\n"
         "Pick the set you would rather edit into a vlog. Do not open the\n"
         "sealed/ folder. Reveal the mapping only after deciding:\n"
         f"  python3 bench/context_ab.py {args.project_id} --reveal SET-1 "
