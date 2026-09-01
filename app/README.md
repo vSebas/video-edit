@@ -5,6 +5,12 @@ grounded story proposal, a rendered cut, and DaVinci-editable exports out.
 It is an orchestration layer over evidence — every cut traces to verified
 observations with timecodes — not a new timeline engine.
 
+The ratified execution direction is hybrid: OpenTake is the editing surface,
+the owned FFmpeg path renders final pixels, and Resolve remains the editable
+export escape hatch. OpenTake placement and cleanup are currently bounded
+trial scripts, not yet buttons in this workbench; timeline-to-plan sync is the
+next required integration.
+
 Run with Docker:
 
 ```bash
@@ -41,9 +47,13 @@ proposal and editable exports:
    calls). `POST /analysis/speech` — faster-whisper large-v3 on CUDA,
    Spanish/English word timings; transcript-corroborated speech claims
    auto-approve.
+   Optional `POST /analysis/context` builds the dormant, non-citable
+   `source-context.v1` sidecar; `GET /analysis/telemetry` reports per-run VLM
+   calls, retries, bytes, tokens, wall time, and de-overlapped source seconds.
 3. `POST /concepts` — grounded Spanish-first stories by deepseek-v4-pro
    (blind video-screening verdict), intent-first, with missing-shot and
    voiceover recommendations; capture time/GPS metadata informs chronology.
+   `{"use_source_context":true}` opts into the sidecar; default is false.
 4. `POST /selection` + `POST /plan` — deterministic frame-exact compilation
    with word-snapped cut edges; unverified-only ranges are dropped.
 5. `POST /render` and `POST /exports {include_proxies:true}` — review MP4,
@@ -52,14 +62,32 @@ proposal and editable exports:
 6. `POST /plan/revise` — natural-language re-cuts without re-analysis;
    prior revisions kept.
 
+## OpenTake hybrid bridge (trial tooling)
+
+`app/scripts/opentake_adapter.py` places the flat video track of an existing
+`edit-plan.v1` into the currently open scratch OpenTake project and verifies
+the emitted geometry, source trims, media references, and linked audio.
+`app/scripts/opentake_cleanup.py` lists or applies conservative Spanish
+filler/dead-air candidates from the newest local large-v3 transcript.
+
+These are evidence-producing trial tools, not the production adapter. They
+use one MCP session with no retry/reconciliation, identify media by filename
+stem, assume the trial's flat 30 fps/1x timeline, and do not make remove-then-
+add transactional or roll it back. The cleanup candidate numbering is not
+revision-bound. Run them only against a saved project you can recover. The
+productionization item is tracked in `STATUS_AND_ROADMAP.md`.
+
 Project management: clone with shared analysis, reset (keep or wipe
 analysis), delete; per-clip value scores (`GET /clip-scores`); clip removal
 deletes the file from the laptop folder (phone originals unaffected).
 
-Providers live in the ignored root `.env` (`DASHSCOPE_API_KEY`,
-`GEMINI_API_KEY`, optional `OPENAI_API_KEY`/`ANTHROPIC_API_KEY`,
-`TWELVELABS_API_KEY`, `RUNPOD_API_KEY`); rclone's config is mounted from
-the host. Model choices are evidence-based: see `bench/RESULTS.md`.
+Provider credentials live in the ignored root `.env`. The standard Compose
+service passes DashScope, Gemini, and OpenAI keys. The provider layer also
+supports Anthropic, but `compose.yaml` does not yet forward its key; inject it
+explicitly when running that adapter. `TWELVELABS_API_KEY` is benchmark-only,
+and no current code consumes `RUNPOD_API_KEY`. OpenTake trial scripts read
+`OPENTAKE_MCP_TOKEN` directly from `.env`; rclone's config is mounted from the
+host. Model choices are evidence-based: see `bench/RESULTS.md`.
 
 ## Reaching it from other devices
 

@@ -11,6 +11,12 @@ only count as filler with a trailing hesitation gap; pure hesitations
 ("eh", "em", "mmm") always qualify. Dead air is an intra-clip word gap
 >= 1.2 s, tightened to leave 0.4 s of natural pause.
 
+Trial-only constraints: the mapping assumes a flat, forward, 1x, 30 fps
+timeline and filename-stem media identity. Candidate numbers are recomputed on
+each invocation and are not bound to a timeline/transcript revision. The MCP
+client has no retry/reconciliation, and the post-readback is recorded but not
+used as a rollback condition. Use a saved project you can recover.
+
 Usage:
   opentake_cleanup.py <project_id> --list           # show candidates
   opentake_cleanup.py <project_id> --apply all      # apply every candidate

@@ -5,6 +5,12 @@ a grounded story proposal, a rendered cut, and a DaVinci-editable timeline
 come out. It is an orchestration layer over evidence — every cut traces to a
 timestamped observation — not a new timeline engine.
 
+The execution decision is hybrid: OpenTake is the adopted editing surface
+over MCP, the owned FFmpeg renderer produces final pixels, and Resolve remains
+the editable-export escape hatch. The OpenTake bridge is currently proven by
+trial scripts; timeline-to-plan sync is the next keystone required to make
+that loop part of the daily app.
+
 **Repository:** <https://github.com/vSebas/video-edit> (private)
 
 ## Run it
@@ -42,6 +48,7 @@ docker compose run --rm app python pipeline/validate_edit.py \
 |---|---|
 | `app/` | The application: FastAPI service, browser workbench, adapters |
 | `app/pipeline/` | Deterministic render, OTIO/XMEML export, independent edit validation |
+| `app/scripts/` | Editor verification and bounded OpenTake trial tools |
 | `app/schemas/` | Versioned media, evidence, concept, edit-plan, and report schemas |
 | `bench/` | Model bake-offs and their recorded results |
 | `footage/` | Your source clips (never committed) |
@@ -81,8 +88,9 @@ These have held since the project charter and still decide arguments:
 
 Two questions are deliberately still open, not settled:
 
-- **Sidecar impact.** The source-context sidecar lost its first blind A/B
-  (n=1, one footage day) and sleeps behind `use_source_context`. I still
+- **Sidecar impact.** The baseline won the source-context sidecar's first A/B
+  (n=1, one footage day), so the sidecar sleeps behind
+  `use_source_context`. I still
   want to test it on more days of footage — especially rougher,
   longer-dialogue ones — before calling it. Rerun with
   `bench/context_ab.py <project>` after analyzing a new day.
@@ -94,9 +102,11 @@ Two questions are deliberately still open, not settled:
 
 ## Third-party code
 
-No third-party source is vendored here any more. OpenTake's reference
-checkout was removed on 2026-08-20: it exports OTIO/XMEML/FCPXML/EDL but
-still cannot import any of them, so it cannot consume what we produce.
+No third-party source is vendored here. OpenTake's old reference checkout was
+removed on 2026-08-20; the active fork is a separate checkout at
+`~/Documents/OpenTake`. OpenTake still cannot import our OTIO/XMEML artifacts,
+so the hybrid bridge translates the neutral plan into MCP editing commands
+instead. Resolve continues to consume the XMEML escape-path export.
 
 Other candidates evaluated during the July 2026 survey — Crayotter,
 FireRed-OpenStoryline, MediaMolder, NarratoAI, Palmier Pro, Vidi, CutScript,

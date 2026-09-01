@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Reproduce a compiled edit-plan.v1 in a live OpenTake timeline over MCP.
+"""Reproduce the flat video track of edit-plan.v1 in OpenTake over MCP.
 
 Trial step 3 (TRIAL_OPENTAKE.md): deterministic translation, not an LLM —
-import the plan's media, place every video event with add_clips, then read
-the timeline back and verify each clip frame-exactly (the same discipline as
-the 937/937 Resolve import check).
+map the plan's media, place every video event with add_clips, then verify the
+fields this trial emits: placement, duration, source trim, media, and linked
+audio. The title track and richer edit properties are outside this adapter.
 
 Requires: OpenTake running with external MCP paired (token in .env as
 OPENTAKE_MCP_TOKEN) and a saved project open. The open project's existing
-clips are removed first — run this against a scratch project.
+clips are removed first — run this against a scratch project. This is not the
+production MCP adapter: it has one session, no retry/reconciliation, filename-
+stem media identity, and no transaction or rollback across remove-then-add.
 
 Usage: python3 app/scripts/opentake_adapter.py <project_id> [--dry-run]
 """

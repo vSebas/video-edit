@@ -4,19 +4,24 @@
 (OpenTake adopted as the editing surface over MCP; our renderer keeps final
 pixels; Resolve remains the escape hatch — see the Gate section at the
 bottom for the evidence).
-**Owner's decision**, made with `EXECUTION_LAYER_PLAN.md`'s risks in view:
-try OpenTake as the execution layer before committing 14-20 weeks to building
-one. Our pipeline stays the brain; OpenTake's timeline is the hands. If the
-gate below fails, the owned-compiler plan resumes unchanged.
+**Original trial decision**, made with `EXECUTION_LAYER_PLAN.md`'s risks in
+view: try OpenTake as the execution layer before committing 14-20 weeks to
+building one. Our pipeline stays the brain; OpenTake's timeline is the hands.
+The closed gate selected the hybrid rather than either original extreme.
 
-## Architecture under trial
+## Trial hypothesis (superseded by the closed gate)
 
 ```
-our Python service (brain)              OpenTake beta.5 (hands + finishing)
+our Python service (brain)              OpenTake beta.5 (hands + renderer)
 phone ingest, Gemini evidence,   MCP    multi-track timeline, ripple edits,
 large-v3 Spanish ASR, grounded  ─────▶  undo, captions, effects — and the
 story proposal, cut-range maths  :19789  final export (no Resolve, no DNxHR)
 ```
+
+The render half of this hypothesis lost. The ratified architecture is the
+brain → OpenTake editing surface → timeline readback → owned final renderer,
+with Resolve as the export escape hatch. Converting that readback back into a
+plan revision is the remaining implementation gap.
 
 Key design choice: **Palmier Pro behaviours live in our brain, not in a
 port.** We compute filler/silence/false-start ranges from our own word-level
@@ -30,8 +35,9 @@ than ours.
 
 - Fork: <https://github.com/vSebas/OpenTake> (public — never commit personal
   media or transcripts there).
-- Working tree: `~/Documents/OpenTake`, branch `trial` pinned to tag
-  `v1.0.0-beta.5` (commit 7349241); `upstream` remote tracks appergb/OpenTake.
+- Working tree: `~/Documents/OpenTake`, branch `trial`, forked from tag
+  `v1.0.0-beta.5` (commit 7349241) and now five commits ahead;
+  `upstream` tracks appergb/OpenTake.
   Build from tags, never from upstream main (five betas in thirteen days).
 - Source build on Arch: frontend via pnpm (through npx, nothing installed
   globally), then `cargo build` in `src-tauri`. Core crates were already
@@ -72,8 +78,8 @@ than ours.
   Confirmed live: during an export the main thread (tid==pid) was the
   process's top CPU consumer, sleeping inside the frame loop. Upstream
   plausibly never sees this because its packaged platforms thread IPC
-  differently. Fix in progress on the fork (move blocking commands off the
-  main thread); prime upstream-PR candidate. Meanwhile the engine itself is
+  differently. Fixed on the fork in `74a4e3f` by moving blocking renders off
+  the main thread; prime upstream-PR candidate. Meanwhile the engine itself is
   sound on Linux: decode, HLG→BT.709 tonemapping of iPhone footage, 4K
   GPU compositing, and encode all verified working.
 - **2026-08-20 — release builds fail closed on ffmpeg.** By design, release
@@ -83,6 +89,13 @@ than ours.
   executable — the one-line step our future Linux packaging must do.
 - **2026-08-20 — window close leaves the process running** (reproduced
   twice); harmless but goes on the upstream list.
+- **2026-09-01 — export fork queue is five commits.** Besides the
+  whisper stub and GTK fix: `cdcabd3` adds opt-in NVENC; `5458f62` replaces
+  process-per-frame resolver decoding with bounded persistent frame servers;
+  `427ff5c` gates them to positively established CFR, caps the pool at four,
+  adds a per-config circuit breaker, and removes respawn re-probing. The
+  frame-server changes passed their touched-crate tests and the release
+  custom-protocol build.
 
 ## Trial steps and gate
 
@@ -96,22 +109,26 @@ than ours.
        — the UI's "temporarily unavailable" is that resting state.
 3. [x] PASSED (2026-09-01, verification hardened after cross-review):
        deterministic adapter (`app/scripts/opentake_adapter.py`) placed the
-       full 22-cut spring-quarter plan over MCP. The first verdict checked
+       22-cut spring-quarter video track over MCP. The first verdict checked
        only geometry; the Codex cross-review caught that source trims and
        A/V pairing were unverified (and that get_timeline reports trims,
        omitted when zero). Re-verified against the live timeline with the
-       full check: 22/22 clips, 2346/2346 frames, 21/22 nonzero source
-       trims exactly as planned, every audio partner matching on all
-       fields; raw readback persisted to the project dir for audit.
+       hardened check: 22/22 clips, 2346/2346 frames, 21/22 nonzero source
+       trims exactly as planned, and every audio partner matching the emitted
+       media/start/duration/trim/link fields; raw readback persisted to the
+       project dir for audit. The trial adapter does not place the title track.
        Findings: media must enter via the GUI picker once
        (MCP_PATH_AUTHORITY_REQUIRED — agent paths refused by design; folder
        import works, and the picker's type filter hides uppercase .MOV, so
        use All-files or folder import); omit trackIndex so tracks
        auto-create; some tool successes return plain text, errors are
        redacted JSON with an errorId.
-4. [ ] Dialogue cleanup driven by our transcript: Spanish filler lexicon
-       (eh, este, o sea, como que), silences, false starts → reviewed ranges
-       → `ripple_delete_ranges`.
+4. [x] Dialogue cleanup driven by our transcript (2026-09-01):
+       `app/scripts/opentake_cleanup.py` derived conservative filler/dead-air
+       candidates from the newest large-v3 word run and applied the reviewed
+       batch in one `ripple_delete_ranges` call. Readback moved 2346→2314
+       frames and 22→23 linked A/V pieces, exactly the expected intra-clip
+       ripple shape; the raw post-cleanup timeline is persisted for audit.
 5. [x] Export + comparison + recovery done (2026-09-01).
        Owner verdict on the side-by-side: content is (correctly) identical —
        same plan, frame-exact both ways — but OpenTake's RENDER looks worse:
@@ -135,13 +152,13 @@ render lost — OpenTake's output looked worse than ours on the same cut
 (flat tonemap, horizontally squeezed 16:9 sources, no title track), and its
 export took ~1 h against our ~5 min.
 
-**Decision: OpenTake is adopted as the EDITING surface — plan placement,
-dialogue cleanup, manual finishing, all over MCP — while final pixels keep
-coming from our renderer (and the Resolve path stays as the editor-handoff
-escape hatch).** Nothing is lost in this split: the daily loop keeps its
-fast, better-looking render, and gains a real timeline for the finishing
-pass. Revisit OpenTake-as-renderer only after its aspect bug and tonemap
-tuning are fixed.
+**Decision: OpenTake is adopted as the EDITING surface — plan placement and
+dialogue cleanup over MCP, then manual finishing in its GUI — while final
+pixels keep coming from our renderer (and the Resolve path stays as the
+editor-handoff escape hatch).** The split becomes an operational daily loop
+only when timeline-to-plan sync lands; until then OpenTake edits do not reach
+the final renderer automatically. Revisit OpenTake-as-renderer only after its
+aspect bug and tonemap tuning are fixed.
 
 The architectural consequence to build next: the edit-plan stays the source
 of truth for rendering, so edits made on the OpenTake timeline (cleanup

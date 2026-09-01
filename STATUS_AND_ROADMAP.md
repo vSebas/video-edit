@@ -1,13 +1,17 @@
 # AI-Assisted Video Editing — Status and Roadmap
 
-**Updated:** 2026-08-19
+**Updated:** 2026-09-01
 **Current phase:** Full daily loop operational and phone-first. Footage
 reaches the tool from the iPhone (browser upload with live progress,
 Tailscale from anywhere, or a Google Drive VlogInbox that carries title and
 nota/prompt); analysis is audiovisual (gemini-3.6-flash) with GPU Spanish
 ASR; stories are written by deepseek-v4-pro (blind video-screening
-verdict); cuts are frame-exact with word-snapped edges, SRT captions, and
-verified DaVinci exports with DNxHR proxies. The morning-routine POC
+verdict, retained blind against gpt-5.6-sol); cuts are frame-exact with
+word-snapped edges, SRT captions, and verified DaVinci exports with DNxHR
+proxies. The ratified execution direction is hybrid: OpenTake edits over MCP,
+the owned renderer produces final pixels, and Resolve remains the escape
+hatch. That direction is not yet integrated into the daily app because
+timeline-to-plan sync is still missing. The morning-routine POC
 fixture and all Phase 2A archive machinery were removed at the user's
 request (2026-08-18), and the POC directory itself on 2026-08-19 — its
 render, export, and validation scripts now live in `app/pipeline/` and its
@@ -46,6 +50,8 @@ fork of one existing editor.
 - Visual, language, speech, and editor integrations are replaceable adapters.
 - External tools may contribute components without becoming the only project
   format or hiding the edit inside an LLM conversation.
+- OpenTake is the adopted editing surface, but `edit-plan.json` remains
+  canonical and the owned renderer remains authoritative for final pixels.
 
 The intended data flow is:
 
@@ -62,10 +68,16 @@ Grounded visual/audio observations with source timecodes
 Concepts, hooks, structures, and missing-shot advice
         |
         v
-Approved neutral edit-plan.json
-       / \
-      v   v
- Review render     Editable exports/projects
+Approved neutral edit-plan.json (canonical)
+       /              |                 \
+      v               v                  v
+ Owned final render   OpenTake over MCP   OTIO/XMEML -> Resolve
+                      editing + cleanup   escape hatch
+                             |
+                             v
+                      timeline readback
+                             |
+                 timeline->plan sync (NEXT; not built)
 ```
 
 ### Best-of component strategy
@@ -82,7 +94,10 @@ bake-offs in `bench/RESULTS.md`:
   that also snap cut edges to word boundaries.
 - **deepseek-v4-pro:** concept and revision writing.
 - **FFmpeg:** deterministic rendering behind the edit plan.
-- **OTIO and FCP7 XMEML:** conventional editor handoff, import-verified in
+- **OpenTake beta.5 fork:** adopted editing surface over external MCP;
+  placement and transcript-driven cleanup are live-trial verified, while app
+  integration and timeline-to-plan sync remain pending.
+- **OTIO and FCP7 XMEML:** Resolve escape-path handoff, import-verified in
   DaVinci Resolve.
 
 Retired after evaluation rather than kept as options: Vidi (not competitive
@@ -125,6 +140,15 @@ sampling), a blocking critic stage, cloud GPU ASR, the memo's P0-P11 order,
 OpenTake as sole canonical editor, and any fixed ~90 s acceptance gate.
 Full review preserved at the top of the memo file.
 
+The source-context pass and telemetry landed on 2026-09-01. Its first live
+run covered 39/39 video assets in 39 calls, producing 110 events and 50
+relationships with 109 events anchored to fine evidence; telemetry recorded
+one retry, 1,778.666 unique source seconds, and 888.348 aggregate call-seconds.
+The owner preferred the baseline concepts in the first A/B, so the sidecar is
+dormant by default. The retained A/B JSON exposes the treatment flag and keeps
+the key beside the sets, so that n=1 result is directional rather than a
+sealed blind result; the next run must use a sanitized judge packet.
+
 ### External editors: capability audit (2026-08-20, supersedes the first pass)
 
 A first pass concluded "adopt neither" on portability and interchange
@@ -161,9 +185,11 @@ reel. The granular tool model should execute the planner, not replace it.
 
 Where we are genuinely behind, in the order it costs daily quality:
 
-1. **We do not edit speech.** Word snapping stops cuts landing mid-word; it
-   removes no filler, false start, repeated take, or dead air. For a spoken
-   Spanish vlog this is the largest single quality defect.
+1. **The production workbench does not edit speech.** Word snapping stops cuts
+   landing mid-word; it removes no filler, false start, repeated take, or dead
+   air. The OpenTake trial proved one transcript-driven dead-air ripple, but
+   the review/app workflow is not built. For a spoken Spanish vlog this is the
+   largest single quality defect.
 2. **The flat timeline forces bad choices.** When the best line has weak
    picture, we must show the weak shot or lose the line — no B-roll over
    held audio, no J/L cuts.
@@ -185,28 +211,26 @@ advanced colour, and even full semantic search.
 Acted on: the owner asked whether OpenTake should become the base, hosting
 our planner and ported Palmier features. That proposal was drafted, reviewed
 adversarially, and recommended against — see `EXECUTION_LAYER_PLAN.md` for
-the analysis, the two factual errors the draft contained, and the six-phase
+the analysis, the two factual errors the draft contained, and the seven-phase
 owned-compiler plan. The owner then chose, risks in view, to trial the
 OpenTake path first (fork vSebas/OpenTake, pinned to v1.0.0-beta.5, five
 Linux patches). The trial ran 2026-08-20 to 2026-09-01 and closed with a
 HYBRID verdict — OpenTake as editing surface, our renderer for final
 pixels; evidence in `TRIAL_OPENTAKE.md`.
-Suggested order with solo-effort estimates: Spanish dialogue cleanup (2-3
+The audit's owned-compiler fallback order was: Spanish dialogue cleanup (2-3
 weeks) → atomic edit-command layer with undo and readback (4-6) →
 multi-track execution with B-roll, J/L cuts, VO and ducking (4-6) → dialogue
 audio treatment (2-3) → styled captions in the render (1-2) → learn from the
 finished Resolve timeline (2-4) → rotation and static framing (3-7 days) →
-beat detection (4-7 days). Roughly 12-18 weeks for the transformation; a
-useful first release is the dialogue cleanup alone.
+beat detection (4-7 days). It is no longer the active ordering; the hybrid
+roadmap below supersedes it, while `EXECUTION_LAYER_PLAN.md` retains the
+canonical fallback estimates and gates.
 
-Integration was costed and initially recommended against (superseded by the
-owner's trial decision — see `TRIAL_OPENTAKE.md`): driving OpenTake over MCP
-was estimated at ~7-13
-weeks to productionise plus permanent maintenance of two canonical
-timelines, and most of what makes it attractive does not survive OTIO/XMEML
-into Resolve anyway. Both projects are GPLv3 — reimplement behaviour, do not
-copy source. A bounded 3-5 day OpenTake smoke test on one real vlog is worth
-doing as a *quality target*, not an architectural commitment.
+Integration was initially costed at ~7-13 weeks and recommended against; the
+owner knowingly superseded that recommendation with the bounded trial in
+`TRIAL_OPENTAKE.md`. The estimate remains a warning about productionizing the
+bridge, not an open decision. Both projects are GPLv3 — reimplement behaviour,
+do not copy source.
 
 ### Dual review and hardening (2026-08-19)
 
@@ -250,7 +274,7 @@ where the app actually uses them.
 - **Writer verdict (blind video screening)**: the user watched four
   rendered cuts of identical evidence; deepseek-v4-pro and claude-fable-5
   beat both Qwens; **deepseek-v4-pro is the default writer**
-  (gpt-5.6-sol awaits OpenAI credits for the sealed rematch).
+  and retained the seat in a sealed 2026-09-01 rematch against gpt-5.6-sol.
 - **Output polish**: frame-exact plan quantization, timeline-aligned SRT
   captions generated with every export, transcript-corroborated speech
   claims skip review, project clone (shared analysis, 0.15 s) / reset /
@@ -271,11 +295,10 @@ Every model choice is now empirical (full data in `bench/RESULTS.md`):
   Spanish dialogue that the old 0.75 auto-approve gate discarded; gates are
   now per-evidence-type (speech 0.55 + no-speech check), and visual speech
   mentions corroborated by the transcript auto-approve (corroborate-v1).
-- **Writing: `qwen3.7-plus`, holder by blind verdict** — the user blindly
-  chose its stories over gemini-pro-latest (round 1). Round 2 in progress:
-  qwen3.7-plus vs qwen3.7-max vs deepseek-v4-pro vs claude-fable-5, judged
-  from RENDERED videos, not proposals (gpt-5.6-sol pending OpenAI billing;
-  glm-5.2/kimi-k2.5/gemini-3.6-flash eliminated on output validity).
+- **Writing: `deepseek-v4-pro`, current holder by blind rendered-cut
+  screening.** It and claude-fable-5 beat both Qwen tiers in the August
+  bracket; on 2026-09-01 deepseek retained the seat against gpt-5.6-sol in a
+  sealed two-video rematch. Details are in `bench/RESULTS.md`.
 - **Language-aware narrative**: dominant speech language (detected by ASR)
   drives titles/hooks/on-screen text (Spanish-first for this user); quotes
   stay verbatim. Editorial preferences encoded: intent-first concepts,
@@ -283,8 +306,8 @@ Every model choice is now empirical (full data in `bench/RESULTS.md`):
   content quality, missing-material recommendations may include voiceovers.
 - **Flow improvements**: analysis parallelized (6 concurrent calls, 2h→~20min
   for 40 clips), just-in-time claim confirmation at story-pick time,
-  evidence uses only the newest run per adapter, providers now include
-  openai/anthropic via native clients.
+  evidence uses only the newest run per adapter, and provider adapters now
+  cover OpenAI and Anthropic as well as DashScope and Gemini.
 
 ### Daily-vlog walking skeleton (2026-08-04)
 
@@ -312,7 +335,7 @@ Verified end to end on the seven benchmark clips as a fresh project:
   tool covers this loop (closest: Eddie AI at pro pricing; Novacut/Threadline
   speech-centric).
 
-### Deliberately incomplete (reviewed 2026-08-19)
+### Deliberately incomplete (reviewed 2026-09-01)
 
 The bullets that used to sit here — no live visual provider, no live speech,
 no automatic planning, no generic render, unverified Resolve import — were all
@@ -337,7 +360,11 @@ closed between 2026-08-05 and 2026-08-19. What is genuinely still open:
 - **Voiceover placement.** Audio assets are barred from the video track, but
   the planned feature — drop a recording in and have it placed at the beat it
   belongs to, with ducking — is not built.
-- A dialogue-heavy comparison benchmark remains an open acceptance check.
+- **Hybrid round trip.** OpenTake placement and cleanup work as trial scripts,
+  but its timeline cannot yet update the canonical plan; therefore its edits
+  do not yet reach the owned final renderer automatically.
+- A multi-day, dialogue-heavy comparison corpus remains an open acceptance
+  check.
 
 ## Immediate Next Actions
 
@@ -345,28 +372,30 @@ The trial gate closed 2026-09-01: **hybrid** (see `TRIAL_OPENTAKE.md`).
 OpenTake is the editing surface over MCP; our renderer produces final
 pixels; Resolve remains the editor-handoff escape hatch.
 
-1. **Timeline→plan sync (the new keystone).** Read the OpenTake timeline
-   back and update `edit-plan.json` so cleanup ripples and manual edits
-   flow into our render. Deterministic mapping already exists in the
-   adapter; this is its inverse, with the same readback verification.
+1. **Timeline→plan sync (the new keystone).** First build a read-only inverse
+   translator: saved OpenTake readback + an explicit media/event bridge map →
+   candidate plan revision + deterministic diff. Prove it on the 2346→2314
+   frame cleanup readback before allowing it to replace `edit-plan.json`.
 2. **Productionize the adapter** per the cross-review hardening list:
-   retries, idempotent re-placement, structured verification reports, and
-   app integration (a "Send to OpenTake" step in the daily loop) instead of
-   a trial script.
+   revision-bound asset identity, fps/track/rate validation, safe reconnect
+   and read-after-timeout reconciliation, idempotent replacement or rollback,
+   structured verification reports, and app integration (a "Send to
+   OpenTake" step) instead of trial scripts.
 3. **Dialogue-cleanup review UI**: surface the candidate ranges (fillers,
    dead air) in our workbench for approval before the atomic apply — the
    trial applied them from the terminal.
-4. **Fork/upstream queue**, in value order: wide-source aspect squeeze in
-   the compositor (blocks OpenTake-as-renderer), project lifecycle +
-   export tools on external MCP (unlocks unattended runs; upstream PR
-   preferred), tonemap tuning knob, GTK main-thread fix PR (ready),
-   progress-event staleness, window-close lingering process, thumbnail
-   cache loss after crash (cosmetic).
+4. **Fork/upstream queue**, in hybrid-value order: project lifecycle tools on
+   external MCP (unlocks unattended editing; upstream PR preferred), GTK
+   main-thread fix PR (already proven in the fork), progress-event staleness,
+   and window-close lingering process. Wide-source aspect and tonemap tuning
+   are deferred until OpenTake-as-renderer is reconsidered; thumbnail cache
+   loss after crash is cosmetic.
 5. Standing items, unchanged: voiceover placement with ducking;
    trending-audio matching; reference-vlog style learning; sideways-clip
    rotation; durability redesign behind its trigger; writer seat stays
    deepseek-v4-pro (rematch 2026-09-01: retained blind over gpt-5.6-sol);
-   sidecar dormant with its harness one command away.
+   sidecar dormant with its harness one command away, but its next judge packet
+   must remove treatment metadata and keep the blind key separate.
 
 ## Durable Sources of Truth
 

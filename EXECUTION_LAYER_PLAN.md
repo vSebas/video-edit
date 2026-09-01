@@ -14,13 +14,15 @@
 > proved itself as the editing surface (stability, frame-exact automation)
 > but not as the renderer (color, aspect bug, export speed), so this
 > document's owned render/export path remains in production for final
-> pixels, and its phase list stays the reference for the render-side work.
+> pixels. The phase list below is now a render-side reference and fallback;
+> timeline-to-plan sync is the active keystone in `STATUS_AND_ROADMAP.md`.
 
 **Decided:** 2026-08-20
 **Question:** should OpenTake become the base, hosting our planner and ported
 Palmier Pro features, replacing DaVinci Resolve as the finishing tool?
-**Answer: no.** Build the missing capabilities in our own compiler. Keep
-Resolve. Use OpenTake and Palmier as behavioural references and test oracles.
+**Answer: no, not as the base or renderer.** Keep the owned plan and renderer
+and retain Resolve. The later trial did adopt OpenTake as a replaceable editing
+surface over MCP; Palmier remains a behavioural reference only.
 
 ## How this was decided
 
@@ -57,7 +59,7 @@ cross-project writes. And `denoise_audio`, listed as a Palmier port, already
 exists in OpenTake (`crates/opentake-domain/src/audio.rs`); only an MCP
 wrapper is missing.
 
-## Why we still do not adopt it
+## Why we still do not adopt it as the base
 
 With both errors corrected the case for adopting got *weaker*, not stronger,
 because the honest reasons to fork evaporated while the costs stayed:
@@ -85,7 +87,7 @@ Verified locally in favour of OpenTake, for the record: `opentake-domain`,
 (`cargo check`, Rust 1.97.1), and every Tauri system dependency is present.
 The blocker is not buildability.
 
-## What we build instead
+## Owned-compiler fallback and render-side plan
 
 Roughly 14-20 solo engineer-weeks, with the first useful release at Phase 2.
 Each phase has a gate that must pass before the next begins.
@@ -100,10 +102,9 @@ lost approved state; the 937/937 Resolve check stays green.
 **Phase 1 — edit-plan v2 and command kernel (1-2 weeks).**
 The plan's vocabulary is the real constraint, not the schema: the schema
 already permits multiple tracks (`app/schemas/edit-plan.schema.json:26`), but
-planning hardcodes `v1`/`a1`/`t1` (`planning.py:541`), the renderer takes the
-first track of each kind (`render_edit.py:23`), and the exporter pairs one
-video and one audio track with `zip(..., strict=True)`
-(`export_timelines.py:234`). Add stable event ids, track roles, link groups,
+`build_plan` hardcodes `v1`/`a1`/`t1`, the renderer takes the first track of
+each kind, and the exporter pairs one video and one audio track with
+`zip(..., strict=True)`. Add stable event ids, track roles, link groups,
 z-order, explicit source and record spans, gain envelopes, caption tracks.
 Add localised commands — split, delete range, move, set gain, add overlay —
 each requiring an expected revision so stale operations are rejected. Keep a
@@ -161,7 +162,7 @@ both projects are GPL-3.0:
   timeline, so what remains after cuts is always what is audible.
 - Palmier's layout anchors, for framing that is not fit/pad.
 
-## Reopen this decision if
+## Reopen the base/renderer decision if
 
 OpenTake ships a tested Linux package, adds project lifecycle and export tools
 to its external MCP surface, and reaches a stable (non-beta) release — or if
