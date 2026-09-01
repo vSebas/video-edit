@@ -82,12 +82,14 @@ analysis), delete; per-clip value scores (`GET /clip-scores`); clip removal
 deletes the file from the laptop folder (phone originals unaffected).
 
 Provider credentials live in the ignored root `.env`. The standard Compose
-service passes DashScope, Gemini, and OpenAI keys. The provider layer also
-supports Anthropic, but `compose.yaml` does not yet forward its key; inject it
-explicitly when running that adapter. `TWELVELABS_API_KEY` is benchmark-only,
-and no current code consumes `RUNPOD_API_KEY`. OpenTake trial scripts read
-`OPENTAKE_MCP_TOKEN` directly from `.env`; rclone's config is mounted from the
-host. Model choices are evidence-based: see `bench/RESULTS.md`.
+service passes DashScope, Gemini, and OpenAI keys. `providers.py` contains a
+native Anthropic client, but concept generation and plan revision bypass its
+client factory, and `compose.yaml` does not forward its key; Anthropic is
+therefore incomplete as an app provider. `TWELVELABS_API_KEY` is
+benchmark-only, and no current code consumes `RUNPOD_API_KEY`. OpenTake trial
+scripts read `OPENTAKE_MCP_TOKEN` directly from `.env`; rclone's config is
+mounted from the host. Model choices are evidence-based: see
+`bench/RESULTS.md`.
 
 ## Reaching it from other devices
 

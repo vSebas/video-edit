@@ -288,6 +288,10 @@ on 2026-08-19. It now reports what it actually produces.
   verdict; the next judge packet must strip provenance and separate the key.
 - VLM telemetry is persisted in visual/context run manifests and exposed by
   `GET /api/projects/{id}/analysis/telemetry`.
+- Known provenance wording bug: normalized visual runs always warn that
+  captions came from deterministic keyframes, including records whose raw
+  `input_mode` is native video with audio. Raw records remain authoritative;
+  the warning must be made mode-aware in a behavior-change patch.
 
 ## OpenTake hybrid trial (2026-09-01)
 
@@ -309,6 +313,10 @@ on 2026-08-19. It now reports what it actually produces.
   MCP transport, and they have no retry/reconciliation, revision binding, or
   rollback across destructive operations. Productionization is a roadmap
   item, not a completed validation claim.
+- Provider wiring caveat: `providers.py` includes a native Anthropic client,
+  but the concept and revision service paths still construct the
+  OpenAI-compatible client directly, and Compose does not forward the key.
+  Anthropic has not been validated as an app planning provider.
 
 Current automated result in `video-editing-app:local`: **48 passed**. The only
 warning is Starlette's deprecation notice for its current `httpx` TestClient

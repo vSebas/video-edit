@@ -307,7 +307,10 @@ Every model choice is now empirical (full data in `bench/RESULTS.md`):
 - **Flow improvements**: analysis parallelized (6 concurrent calls, 2h→~20min
   for 40 clips), just-in-time claim confirmation at story-pick time,
   evidence uses only the newest run per adapter, and provider adapters now
-  cover OpenAI and Anthropic as well as DashScope and Gemini.
+  cover OpenAI as well as DashScope and Gemini. `providers.py` contains a
+  native Anthropic client, but concept generation and plan revision still
+  instantiate the OpenAI-compatible client directly, so Anthropic is not an
+  app-ready provider yet.
 
 ### Daily-vlog walking skeleton (2026-08-04)
 
