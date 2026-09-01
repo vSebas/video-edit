@@ -389,7 +389,15 @@ UI) all shipped 2026-09-01 — see the P0-P6 log above.
 2. **Act on the P1-P6 Codex cross-review** (auto-fires 16:54 2026-09-01).
 3. **Rotation detection** — the highest-value small item left: probe/visual
    evidence → `rotation_degrees` set automatically; execution already works.
-4. **Fork-only patch policy (owner decision 2026-09-01): no PRs or issues
+4. **Fork batch 2 queued (owner: "do it", 2026-09-01):** OpenTake learns to
+   REPRESENT render-side polish so placement stops refusing it — add_track
+   + existing-index placement on external MCP (also removes the manual V2
+   step for B-roll), then explicit link-divergence semantics for J/L cuts
+   (replacing the silent linked-partner mutation, issue 5). Runs chained
+   after the batch-1 Codex tasks; app-side placement/sync learn the new
+   vocabulary once the fork commits land and are reviewed. Ducking stays
+   render-side.
+5. **Fork-only patch policy (owner decision 2026-09-01): no PRs or issues
    to the upstream OpenTake repo.** All fixes live in the vSebas/OpenTake
    fork; `UPSTREAM_ISSUES.md` stays as internal documentation of the bugs.
    Consequence: rebasing onto future upstream releases is our own cost —
