@@ -98,6 +98,33 @@ core.
 
 ## Standing Today
 
+### Third-party handoff memo, reviewed (2026-08-31)
+
+`video_edit_consolidated_engineering_handoff.md` (a ChatGPT-written
+assessment) was fact-checked by Codex at max reasoning against the code and
+decision records. Verdict: a useful hypothesis memo, not a handoff — its
+central diagnosis (planning stronger than execution) is right and already
+ours; it is materially behind the repository (proposes as new what is
+already decided or fixed, misses the grounding gates, the blind writer
+bench, the live OpenTake trial and its fork patches, and the Aug-19
+hardening), and overstates the planner's blindness — the planner sees the
+full evidence set plus the complete transcript in one context, so the real
+gap is lossy relationship *extraction* at chunk boundaries, not lost
+chronology.
+
+Adopted from it: (1) a `source-context.v1` experiment — a derived
+source/event/relationship evidence sidecar anchored to existing evidence
+ids, benchmarked as *current + sidecar* against current-only before any
+retrieval-gated redesign; (2) VLM telemetry (unique-seconds and token
+accounting); (3) relationship-annotated long-dialogue footage in the
+acceptance corpus; (4) range/model/prompt identity folded into the planned
+content-addressed artifact design. Rejected: replacing the short-window
+path unmeasured, whole-source Gemini timestamps as edit boundaries (bench:
+coarse containment good at ≤63 s, editing precision variable; 1 FPS
+sampling), a blocking critic stage, cloud GPU ASR, the memo's P0-P11 order,
+OpenTake as sole canonical editor, and any fixed ~90 s acceptance gate.
+Full review preserved at the top of the memo file.
+
 ### External editors: capability audit (2026-08-20, supersedes the first pass)
 
 A first pass concluded "adopt neither" on portability and interchange
@@ -173,7 +200,9 @@ finished Resolve timeline (2-4) → rotation and static framing (3-7 days) →
 beat detection (4-7 days). Roughly 12-18 weeks for the transformation; a
 useful first release is the dialogue cleanup alone.
 
-Integration was costed and rejected: driving OpenTake over MCP is ~7-13
+Integration was costed and initially recommended against (superseded by the
+owner's trial decision — see `TRIAL_OPENTAKE.md`): driving OpenTake over MCP
+was estimated at ~7-13
 weeks to productionise plus permanent maintenance of two canonical
 timelines, and most of what makes it attractive does not survive OTIO/XMEML
 into Resolve anyway. Both projects are GPLv3 — reimplement behaviour, do not
