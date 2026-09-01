@@ -1,12 +1,11 @@
-# Private or machine-local footage and experiment state
+# Private or machine-local footage and retired experiment checkouts
 /Crayotter/
 /FireRed-OpenStoryline/
 /.tmp/
 /runtime/
 
-# Third-party source is pinned in repos/README.md, not vendored
-/repos/*
-!/repos/README.md
+# Third-party source checkouts are never vendored
+/repos/
 
 # Papers and model/runtime payloads
 /*.pdf
@@ -14,12 +13,6 @@
 *.safetensors
 *.pth
 *.pt
-
-# Generated proof-of-concept artifacts. Keep only the small canonical examples.
-/poc-morning-routine/artifacts/*
-!/poc-morning-routine/artifacts/creative-concepts.json
-!/poc-morning-routine/artifacts/edit-plan.json
-!/poc-morning-routine/artifacts/media-inventory.json
 
 # Generated media and editor bundles
 *.mp4
