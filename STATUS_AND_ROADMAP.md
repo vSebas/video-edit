@@ -342,43 +342,51 @@ closed between 2026-08-05 and 2026-08-19. What is genuinely still open:
 
 ## Immediate Next Actions
 
-0. Live the loop: user uploads a real day via Drive VlogInbox, generates
-   the v2 comparison cut, records the recommended voiceovers, and does the
-   manual DaVinci pass; friction found becomes the next fix list.
-0b. User-requested growth features:
-   - Trending-audio matching: recommend IG/TikTok trending sounds that fit a
-     cut (vibe/tempo from our evidence vs public trend lists) and beat-align
-     the cut to the chosen track; audio itself is added in-app at post time.
-   - Reference-vlog style learning: run our perception pipeline over
-     user-provided links to admired/trending vlogs and distill an editing
-     "style profile" (hook grammar, cut rhythm, overlay density, beats) that
-     the planner and compiler apply to the user's footage.
+The active thread is the OpenTake trial; everything else queues behind its
+gate.
 
-1. DONE 2026-08-05 — DaVinci Resolve 21.0.3 installed; XMEML import verified
-   frame-accurate (6/6 clips, 937/937 frames, 1080x1920@30). Exporter now
-   emits DNxHR proxies + a proxy XMEML because the free Linux edition does
-   not decode H.264.
-2. Run the walking skeleton on a fresh, real day of vlog footage and review
-   output quality, latency, and provider cost.
-3. DONE — prompt-driven revision rebuilds concepts/plan/render with media
-   analysis cached; guided three-phase UI controls ship in the workbench.
-4. Voiceover placement: drop a recording in and have it placed at the beat it
-   belongs to with ducking, without re-cutting the video.
-5. Add sideways-clip detection (no rotation metadata) so the compiler can set
-   `rotation_degrees` instead of leaving manual review.
-6. **Open decision — durability redesign.** Both reviews independently
-   recommended persisting jobs and keying artifacts by media hash, with
-   `project.json` demoted to a UI projection. It is a redesign, not a patch,
-   and it competes directly with items 0b and 4 for the same time. Trigger to
-   revisit: the daily loop actually loses work to a restart, a double-submit
-   pays twice, or stale evidence survives a re-analysis. Until one of those
-   bites, features win — but this is a decision, not an oversight.
-7. Later: CapCut draft export via the OSS CapCutAPI ecosystem, Resolve
-   scripting auto-import (mazsola2k pattern), dialogue-heavy footage benchmark.
+1. **Finish the frame-server fix** sitting uncommitted in the fork (resume
+   the 08-27 Codex session): review, test, commit, rebuild. It removes the
+   ~1 fps export penalty on effect-bearing clips.
+2. **Run the trial gate** (`TRIAL_OPENTAKE.md`, steps 2-5): pair our service
+   with the external MCP endpoint; reproduce a real `edit-plan.v1` in the
+   OpenTake timeline with frame-exact readback; apply one reviewed batch of
+   Spanish filler/silence removals from our transcript via a single
+   `ripple_delete_ranges`; export; test restart/recovery under 30 minutes.
+   The owner judges the result against the current pipeline's cut.
+3. **Branch on the gate.** Pass → build the plan→timeline adapter and make
+   OpenTake the execution backend (Resolve and the owned renderer stay as
+   escape paths). Fail → resume `EXECUTION_LAYER_PLAN.md` phases 0-2
+   (reliability floor, plan v2 + command kernel, Spanish dialogue cleanup in
+   the owned compiler).
+4. **Dialogue cleanup ships either way** — it is executor-independent up to
+   the last step: compute filler/false-start/silence ranges from our own
+   word-level transcript, review them in our UI, then apply via
+   `ripple_delete_ranges` (pass) or the owned command kernel (fail).
 
-Closed rather than pending: the Vidi retrieval spike, the MediaMolder-to-Vidi
-bridge, and the Crayotter comparison were all evaluated and retired (see
-"Best-of component strategy"). OpenTake GUI/MCP testing remains optional.
+Adopted from the 2026-08-31 handoff-memo review, run as sidecars that never
+block the gate:
+
+5. `source-context.v1` experiment: one derived source/event/relationship
+   summary layer anchored to existing evidence ids; benchmark current vs
+   current+sidecar on relationship-annotated long-dialogue footage before
+   any perception redesign. Add VLM telemetry (unique seconds, tokens,
+   retries) while instrumenting it.
+6. Fold range/model/prompt/sampling identity into the content-addressed
+   artifact design when the durability trigger fires.
+
+Standing items, unchanged: voiceover placement with ducking; trending-audio
+matching and reference-vlog style learning (owner-requested); sideways-clip
+rotation; the durability redesign behind its trigger (restart loses work,
+double-submit pays twice, or stale evidence survives re-analysis); NVENC in
+the owned renderer if the trial fails. Later: CapCut draft export, Resolve
+scripting auto-import.
+
+Closed rather than pending: Vidi retrieval spike, MediaMolder-to-Vidi
+bridge, Crayotter comparison (all evaluated and retired); the memo's P0-P11
+sequence, blocking critic stage, cloud GPU ASR, and any fixed duration
+acceptance gate (duration is earned by content — owner's standing editorial
+rule).
 
 ## Durable Sources of Truth
 
