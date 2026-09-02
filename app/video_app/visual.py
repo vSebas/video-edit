@@ -309,6 +309,7 @@ def analyze_assets(
     media_root: Path,
     project_id: str,
     run_id: str,
+    progress=None,
 ) -> tuple[dict, list[dict], dict]:
     """Run live VLM analysis over video/image assets and return a
     schema-valid semantic-evidence.v1 document plus raw exchanges."""
@@ -349,6 +350,8 @@ def analyze_assets(
         }
         for future in as_completed(futures):
             index, asset, start, end = futures[future]
+            if progress is not None:
+                progress(len(results) + len(failures) + 1, len(tasks))
             try:
                 results[index] = future.result()
             except (ProviderError, VisualAnalysisError, json.JSONDecodeError) as exc:

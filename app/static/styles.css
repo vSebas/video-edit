@@ -786,3 +786,10 @@ input[type="file"] {
   #drive-inbox { flex-direction: column; align-items: stretch; gap: 10px; }
   .inbox-folder { justify-content: space-between; width: 100%; }
 }
+
+/* Busy-card telemetry */
+.busy-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.busy-clock { color: var(--accent); font-variant-numeric: tabular-nums; font-weight: 600; }
+.step-progress { display: inline-flex; align-items: center; gap: 8px; margin-left: 10px; color: var(--muted, #a89e8c); font-size: 13px; }
+.step-progress .bar { width: 120px; height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; display: inline-block; }
+.step-progress .bar > span { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width .5s ease; }

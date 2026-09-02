@@ -659,6 +659,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Unknown job")
         return job
 
+    @application.get("/api/projects/{project_id}/analysis-progress")
+    def analysis_progress(project_id: str):
+        from .projects import ANALYSIS_PROGRESS
+
+        return ANALYSIS_PROGRESS.get(project_id) or {}
+
     @application.get("/api/projects/{project_id}/media/{asset_id}")
     def media(project_id: str, asset_id: str):
         path = project_call(lambda: projects.media_path(project_id, asset_id))

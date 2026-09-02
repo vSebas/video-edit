@@ -178,14 +178,25 @@ function renderOverflow() {
 /* Busy card                                                           */
 
 function busyCard() {
-  const { title, steps, current } = state.busy;
+  const { title, steps, current, startedAt } = state.busy;
+  const elapsed = startedAt ? Math.floor((Date.now() - startedAt) / 1000) : 0;
+  const clock = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`;
+  const progress = state.busy.progress;
   return `
     <section class="card busy-card">
-      <h2>${escapeHtml(title)}</h2>
+      <div class="busy-head">
+        <h2>${escapeHtml(title)}</h2>
+        <span class="busy-clock" id="busy-clock">⏱ ${clock}</span>
+      </div>
       <ol class="step-list">
         ${steps.map((step, index) => `
           <li class="${index < current ? 'done' : index === current ? 'active' : ''}">
             <i></i>${escapeHtml(step)}
+            ${index === current && progress ? `
+              <span class="step-progress">
+                <span class="bar"><span style="width:${Math.round(progress.done / progress.total * 100)}%"></span></span>
+                ${progress.done}/${progress.total}
+              </span>` : ''}
           </li>
         `).join('')}
       </ol>
@@ -193,6 +204,32 @@ function busyCard() {
       unos minutos la primera vez; después queda cacheado.</p>
     </section>
   `;
+}
+
+// live busy-card telemetry: chronometer every second, real analysis
+// progress (shots/clips completed) every 3s while a project is busy
+let busyTicker = null;
+function startBusyTicker() {
+  clearInterval(busyTicker);
+  let tick = 0;
+  busyTicker = setInterval(async () => {
+    if (!state.busy) { clearInterval(busyTicker); busyTicker = null; return; }
+    tick += 1;
+    const clock = $('#busy-clock');
+    if (clock && state.busy.startedAt) {
+      const s = Math.floor((Date.now() - state.busy.startedAt) / 1000);
+      clock.textContent = `⏱ ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+    }
+    if (tick % 3 === 0 && state.activeProjectId) {
+      try {
+        const progress = await api(`/api/projects/${state.activeProjectId}/analysis-progress`);
+        const changed = JSON.stringify(progress || {}) !==
+          JSON.stringify(state.busy.progress || {});
+        state.busy.progress = progress?.total ? progress : null;
+        if (changed) renderProject();
+      } catch { /* transient */ }
+    }
+  }, 1000);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1369,8 +1406,11 @@ async function browseTo(path) {
 /* Pipeline actions                                                    */
 
 function setBusy(title, steps, current) {
-  state.busy = { title, steps, current };
+  const startedAt = state.busy?.title === title ? state.busy.startedAt : Date.now();
+  state.busy = { title, steps, current, startedAt,
+                 progress: state.busy?.progress || null };
   renderProject();
+  startBusyTicker();
 }
 
 async function pollJob(jobId) {

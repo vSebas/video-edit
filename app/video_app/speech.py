@@ -87,6 +87,7 @@ def analyze_speech(
     project_id: str,
     run_id: str,
     model_size: str | None = None,
+    progress=None,
 ) -> tuple[dict, list[dict]]:
     """Transcribe every asset with an audio stream into schema-valid
     semantic-evidence.v1 speech observations plus raw transcript records."""
@@ -97,10 +98,13 @@ def analyze_speech(
     sequence = 0
     eligible = 0
 
+    audible = sum(1 for a in assets if a.get("audio"))
     for asset in assets:
         if not asset.get("audio"):
             continue
         eligible += 1
+        if progress is not None:
+            progress(eligible, audible)
         path = (media_root / asset["source_path"]).resolve()
         if not path.is_file():
             warnings.append(f"Missing media file skipped: {asset['filename']}")

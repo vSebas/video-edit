@@ -39,6 +39,18 @@ from .visual import (
 
 LOGGER = logging.getLogger(__name__)
 
+# Live analysis progress by project, for the UI's busy card. Best-effort
+# in-memory state — restarts simply reset it.
+ANALYSIS_PROGRESS: dict[str, dict] = {}
+
+
+def _progress_setter(project_id: str, phase: str):
+    def update(done: int, total: int) -> None:
+        ANALYSIS_PROGRESS[project_id] = {
+            "phase": phase, "done": done, "total": total,
+        }
+    return update
+
 def concepts_doc_concepts(document: dict) -> list[dict]:
     return document.get("concepts") or []
 
@@ -357,9 +369,14 @@ class ProjectService:
                     # runs — a cache hit must not skip unchecked assets
                     self._detect_rotations(project_id, client)
                     return cached
-            normalized, raw_records, telemetry = analyze_assets(
-                client, assets, media_root, project_id, run_id
-            )
+            ANALYSIS_PROGRESS.pop(project_id, None)
+            try:
+                normalized, raw_records, telemetry = analyze_assets(
+                    client, assets, media_root, project_id, run_id,
+                    progress=_progress_setter(project_id, "visual"),
+                )
+            finally:
+                ANALYSIS_PROGRESS.pop(project_id, None)
             validate_semantic_evidence(
                 normalized,
                 SCHEMA_DIR / "semantic-evidence.schema.json",
@@ -585,9 +602,13 @@ class ProjectService:
         run_id = uuid.uuid4().hex[:12]
         run_key = f"asr-live-{run_id}"
         try:
-            normalized, raw_records = analyze_speech(
-                assets, media_root, project_id, run_id, model_size
-            )
+            try:
+                normalized, raw_records = analyze_speech(
+                    assets, media_root, project_id, run_id, model_size,
+                    progress=_progress_setter(project_id, "speech"),
+                )
+            finally:
+                ANALYSIS_PROGRESS.pop(project_id, None)
             validate_semantic_evidence(
                 normalized,
                 SCHEMA_DIR / "semantic-evidence.schema.json",
