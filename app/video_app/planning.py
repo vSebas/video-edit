@@ -1426,6 +1426,7 @@ events. Every range must stay at least {MIN_EVENT_SECONDS}s long."""
         for event in track.get("events", [])
         if event.get("evidence_ids")
     ]
+    envelopes = (review_sets or {}).get("envelopes") or {}
     for span in spans:
         inherited: list[str] = []
         for event in plan_events:
@@ -1435,8 +1436,17 @@ events. Every range must stay at least {MIN_EVENT_SECONDS}s long."""
                 and event["source_end_seconds"] > span["source_start_seconds"]
             ):
                 inherited.extend(event["evidence_ids"])
-        if inherited:
-            span["evidence_ids"] = sorted(set(inherited))
+        # an id transfers only if ITS OWN observed envelope covers the new
+        # range — overlap with the old event is not identity for the new one
+        validated = [
+            eid for eid in sorted(set(inherited))
+            if (env := envelopes.get(eid)) is not None
+            and env[0] == span["asset_id"]
+            and env[1] < span["source_end_seconds"]
+            and env[2] > span["source_start_seconds"]
+        ] if envelopes else sorted(set(inherited))
+        if validated:
+            span["evidence_ids"] = validated
     if plan.get("lineage_contract"):
         # a cut moved to footage the current plan never covered has no
         # inheritable identity — under the contract that fails closed

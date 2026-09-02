@@ -816,3 +816,17 @@ now implemented end-to-end (suite 214→218):
   compilation blocks the scene with its id named; a pending one asks for
   targeted confirmation. Legacy (unstamped) artifacts alone use the
   risk-gated lexical fallback, exactly as the verdict prescribed.
+
+## Trust-system round five (2026-09-02): the final invariant
+
+Codex's answer remained NO with one invariant: every non-user-authored
+video event in a contract plan must carry ≥1 CURRENTLY APPROVED id whose
+own asset/time envelope covers that event. Implemented (suite 218→220):
+
+- review sets carry per-id ENVELOPES; `_verify_plan_lineage` (render AND
+  restore) requires a supporting approved id per event — an id-less
+  contract event no longer passes vacuously, and a mis-attributed id
+  (wrong asset or range) does not count
+- revision inheritance validates each inherited id's envelope against
+  the NEW range — a sliver of overlap with an old event cannot launder
+  all its ids onto a mostly-different cut

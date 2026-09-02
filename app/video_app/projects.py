@@ -805,10 +805,12 @@ class ProjectService:
         sets = self._evidence_review_sets(project_id)
         approved = sets["approved"]
         rejected = sets["rejected"]
+        envelopes = sets.get("envelopes") or {}
         for track in plan.get("tracks", []):
             if track.get("kind") != "video":
                 continue
             for event in track.get("events", []):
+                supporting = 0
                 for eid in event.get("evidence_ids") or []:
                     if eid in rejected:
                         raise ProjectError(
@@ -824,6 +826,24 @@ class ProjectService:
                             "confírmala en «Afirmaciones sin verificar» y "
                             "vuelve a intentarlo"
                         )
+                    envelope = envelopes.get(eid)
+                    if (
+                        envelope is not None
+                        and envelope[0] == event.get("asset_id")
+                        and envelope[1] < event["source_end_seconds"]
+                        and envelope[2] > event["source_start_seconds"]
+                    ):
+                        supporting += 1
+                if supporting == 0:
+                    # the invariant: a contract event must be supported by
+                    # at least one currently approved id whose OWN
+                    # envelope covers it — an id-less or mis-attributed
+                    # event never passes vacuously
+                    raise ProjectError(
+                        f"La escena {event.get('event_id')} no tiene "
+                        "ninguna afirmación aprobada que cubra su rango — "
+                        "regenera las ideas o quita esa escena"
+                    )
 
     def _evidence_review_sets(self, project_id: str) -> dict:
         """The trust primitive: per-evidence-id review state. Approval
@@ -831,6 +851,7 @@ class ProjectService:
         approved: dict[str, str] = {}
         pending: set[str] = set()
         rejected: set[str] = set()
+        envelopes: dict[str, tuple] = {}
         for manifest in self._current_run_manifests(project_id):
             run = self.semantic_run(project_id, manifest["run_key"])
             for observation in run["observations"]:
@@ -847,7 +868,13 @@ class ProjectService:
                     rejected.add(eid)
                 else:
                     pending.add(eid)
-        return {"approved": approved, "pending": pending, "rejected": rejected}
+                envelopes[eid] = (
+                    observation["asset_id"],
+                    observation["start_seconds"],
+                    observation["end_seconds"],
+                )
+        return {"approved": approved, "pending": pending,
+                "rejected": rejected, "envelopes": envelopes}
 
     def _approved_captions(
         self, project_id: str

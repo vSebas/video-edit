@@ -752,9 +752,9 @@ class TestServerOwnedContract:
 
 
 class TestLiveLineageAtExits:
-    def test_revoked_or_pending_ids_block_the_plan(self, tmp_path) -> None:
+    def _service(self, tmp_path):
         from video_app.config import Settings
-        from video_app.projects import ProjectError, ProjectService
+        from video_app.projects import ProjectService
 
         service = ProjectService(
             Settings(root=tmp_path, runtime=tmp_path / "runtime")
@@ -762,20 +762,55 @@ class TestLiveLineageAtExits:
         service._evidence_review_sets = lambda pid: {
             "approved": {"ev-ok": "camina"}, "pending": {"ev-pend"},
             "rejected": {"ev-bad"},
+            "envelopes": {"ev-ok": ("clip_0", 0.0, 10.0),
+                          "ev-pend": ("clip_0", 0.0, 10.0),
+                          "ev-bad": ("clip_0", 0.0, 10.0)},
         }
-        def plan_with(eids):
-            return {"lineage_contract": True, "tracks": [{
-                "kind": "video", "events": [{
-                    "event_id": "v01", "evidence_ids": eids,
-                }]}]}
-        service._verify_plan_lineage("p", plan_with(["ev-ok"]))  # passes
+        return service
+
+    @staticmethod
+    def _plan_with(eids, asset="clip_0", start=2.0, end=6.0):
+        return {"lineage_contract": True, "tracks": [{
+            "kind": "video", "events": [{
+                "event_id": "v01", "asset_id": asset,
+                "source_start_seconds": start, "source_end_seconds": end,
+                "evidence_ids": eids,
+            }]}]}
+
+    def test_revoked_or_pending_ids_block_the_plan(self, tmp_path) -> None:
+        from video_app.projects import ProjectError
+
+        service = self._service(tmp_path)
+        service._verify_plan_lineage("p", self._plan_with(["ev-ok"]))
         with pytest.raises(ProjectError, match="RECHAZADA"):
-            service._verify_plan_lineage("p", plan_with(["ev-bad"]))
+            service._verify_plan_lineage("p", self._plan_with(["ev-bad"]))
         with pytest.raises(ProjectError, match="sin confirmar"):
-            service._verify_plan_lineage("p", plan_with(["ev-pend"]))
-        # legacy plans (no contract) are untouched by this check
-        legacy = plan_with(["ev-bad"]); legacy.pop("lineage_contract")
+            service._verify_plan_lineage("p", self._plan_with(["ev-pend"]))
+        legacy = self._plan_with(["ev-bad"]); legacy.pop("lineage_contract")
         service._verify_plan_lineage("p", legacy)
+
+    def test_idless_contract_event_never_passes_vacuously(self, tmp_path) -> None:
+        from video_app.projects import ProjectError
+
+        service = self._service(tmp_path)
+        with pytest.raises(ProjectError, match="ninguna afirmación aprobada"):
+            service._verify_plan_lineage("p", self._plan_with([]))
+
+    def test_id_must_cover_the_events_own_range(self, tmp_path) -> None:
+        from video_app.projects import ProjectError
+
+        service = self._service(tmp_path)
+        # approved id, but its envelope (0-10s of clip_0) does not cover
+        # an event on ANOTHER asset — mis-attribution fails
+        with pytest.raises(ProjectError, match="ninguna afirmación aprobada"):
+            service._verify_plan_lineage(
+                "p", self._plan_with(["ev-ok"], asset="clip_9")
+            )
+        # nor an event outside the envelope's time range
+        with pytest.raises(ProjectError, match="ninguna afirmación aprobada"):
+            service._verify_plan_lineage(
+                "p", self._plan_with(["ev-ok"], start=20.0, end=25.0)
+            )
 
 
 class TestTitleGate:
