@@ -662,3 +662,14 @@ implemented (suite 195→197):
   pruned to the newest 4): a job's recorded output URL always resolves
   to its own pixels even after a concurrent captioned/plain render
   replaces review.mp4 (which remains the stable "latest" via hardlink)
+
+## Final verdict (2026-09-02): APPROVED
+
+After six adversarial rounds (implementation ×2, design, verification
+×3 — ~450k Codex tokens total), the closing check discharged the last
+two items with no new defects. Codex's verdict verbatim: "APPROVED.
+Remaining style-intelligence reservations are now ONLY run-#1-gated:
+real-choice weight calibration, the blind A/B execution, and
+multi-reference validation using genuinely independent videos."
+The subsystem is engineering-complete until real footage arrives.
+Suite: 198 passed.

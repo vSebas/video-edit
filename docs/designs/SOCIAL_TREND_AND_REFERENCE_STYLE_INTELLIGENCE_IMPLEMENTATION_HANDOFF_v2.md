@@ -1,3 +1,9 @@
+> **Final verdict (Codex, 2026-09-02, after six review rounds): APPROVED.**
+> All code-level reservations were implemented and verified discharged.
+> Remaining reservations are ONLY run-#1-gated: real-choice weight
+> calibration, the blind A/B execution, and multi-reference validation
+> with genuinely independent videos.
+
 > **Design review (Codex, 2026-09-02): APPROVE WITH RESERVATIONS.**
 > (concept, style) is the correct ranking unit; measurement-first
 > extraction, deterministic MVP matching, and the social/trend gate are

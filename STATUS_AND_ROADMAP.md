@@ -424,7 +424,8 @@ docs consolidation.
    provenance, styled titles (bundled fonts, font/size/position), and
    live VlogInbox status. First real reference analyzed: 0.72s median
    shot, 55 cuts/min, 68 BPM with cuts off-beat (voiceover-led). Suite
-   183. Codex design review 2026-09-02: APPROVE WITH RESERVATIONS
+   198. FINAL Codex verdict 2026-09-02 after six rounds: APPROVED —
+   everything remaining is run-#1-gated. Earlier design review
    (verdict filed in the v2 doc header). Experiment protocol per the
    reservations: run #1's style test splits in two — MATCHING validity
    (baseline concepts held fixed, judge the ranking) and APPLICATION
