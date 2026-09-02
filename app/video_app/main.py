@@ -305,6 +305,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def drive_inbox():
         return {"folders": project_call(projects.drive_inbox)}
 
+    @application.post("/api/drive/import/cancel")
+    def drive_import_cancel(request: DriveImportRequest):
+        return project_call(lambda: projects.cancel_drive_import(request.folder))
+
     @application.get("/api/drive/local-progress")
     def drive_local_progress(folder: str):
         return project_call(lambda: projects.drive_local_progress(folder))

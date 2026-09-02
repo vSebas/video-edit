@@ -1696,6 +1696,9 @@ async function refreshProjects() {
 }
 
 let inboxPollTimer = null;
+// in-flight Drive imports: folder -> {expected} — rendered inside the
+// banner so an import never hijacks whatever project view is open
+const activeImports = new Map();
 
 async function refreshDriveInbox() {
   let banner = $('#drive-inbox');
@@ -1725,20 +1728,34 @@ async function refreshDriveInbox() {
         const status = folder.receiving
           ? '<span class="inbox-receiving">⬆ recibiendo…</span>'
           : '<span class="inbox-ready">listo</span>';
+        const importing = activeImports.has(folder.name);
         return `
         <span class="inbox-folder">
           <strong>${escapeHtml(folder.name)}</strong>
           <span class="muted">${folder.file_count} clip${folder.file_count === 1 ? '' : 's'} · ${size}</span>
-          ${status}
-          <button class="primary compact" data-drive-import="${escapeHtml(folder.name)}"
-            ${folder.receiving ? 'disabled title="Espera a que Drive termine de recibir"' : ''}>
-            Importar
-          </button>
+          ${importing
+            ? `<span class="inbox-receiving" data-import-progress="${escapeHtml(folder.name)}">⬇ importando…</span>
+               <button class="secondary compact" data-drive-cancel="${escapeHtml(folder.name)}">Cancelar</button>`
+            : `${status}
+               <button class="primary compact" data-drive-import="${escapeHtml(folder.name)}"
+                 ${folder.receiving ? 'disabled title="Espera a que Drive termine de recibir"' : ''}>
+                 Importar
+               </button>`}
         </span>`;
       }).join('')}
     `;
     banner.querySelectorAll('[data-drive-import]').forEach((button) => {
       button.addEventListener('click', () => importFromDrive(button.dataset.driveImport));
+    });
+    banner.querySelectorAll('[data-drive-cancel]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        button.disabled = true;
+        try {
+          await api('/api/drive/import/cancel', {
+            method: 'POST', body: JSON.stringify({ folder: button.dataset.driveCancel }),
+          });
+        } catch (error) { notice(error.message, true); }
+      });
     });
   } catch { banner?.remove(); /* rclone no configurado u offline */ }
 }
@@ -1749,19 +1766,26 @@ document.addEventListener('visibilitychange', () => {
 });
 
 async function importFromDrive(folder) {
+  // progress lives in the Drive banner — the import belongs to its own
+  // (future) project, never to whatever project happens to be open
   let progressTimer = null;
   try {
-    setBusy(`Importando «${folder}» desde Drive`, ['Descargando clips', 'Indexando'], 0);
     const inbox = await api('/api/drive/inbox').catch(() => null);
     const expected = inbox?.folders?.find((f) => f.name === folder)?.total_bytes || 0;
+    activeImports.set(folder, { expected });
+    refreshDriveInbox();
+    notice(`Importando «${folder}» como proyecto nuevo — puedes seguir trabajando.`);
     progressTimer = setInterval(async () => {
       try {
         const local = await api(`/api/drive/local-progress?folder=${encodeURIComponent(folder)}`);
         const copied = Math.round(local.copied_bytes / 1e6);
         const label = expected
-          ? `Descargando clips — ${copied} / ${Math.round(expected / 1e6)} MB`
-          : `Descargando clips — ${copied} MB`;
-        if (state.busy) { state.busy.steps[0] = label; renderProject(); }
+          ? `⬇ ${copied} / ${Math.round(expected / 1e6)} MB`
+          : `⬇ ${copied} MB`;
+        const el = document.querySelector(
+          `[data-import-progress="${CSS.escape(folder)}"]`
+        );
+        if (el) el.textContent = label;
       } catch { /* transient */ }
     }, 3000);
     const job = await api('/api/drive/import', {
@@ -1769,16 +1793,16 @@ async function importFromDrive(folder) {
       body: JSON.stringify({ folder }),
     });
     const done = await pollJob(job.job_id);
-    clearInterval(progressTimer);
-    state.busy = null;
-    notice(`«${folder}» importado.`);
+    notice(`«${folder}» importado — abriendo el proyecto.`);
     await refreshProjects();
     if (done.result?.project_id) await loadProject(done.result.project_id);
   } catch (error) {
-    clearInterval(progressTimer);
-    state.busy = null;
     notice(error.message, true);
     await refreshProjects();
+  } finally {
+    clearInterval(progressTimer);
+    activeImports.delete(folder);
+    refreshDriveInbox();
   }
 }
 

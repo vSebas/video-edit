@@ -94,6 +94,8 @@ class ProjectService:
     def __init__(self, settings: Settings) -> None:
         self._render_locks: dict[str, threading.Lock] = {}
         self._render_locks_guard = threading.Lock()
+        self._drive_imports: dict[str, subprocess.Popen] = {}
+        self._drive_imports_guard = threading.Lock()
         self.settings = settings
         self.settings.runtime.mkdir(parents=True, exist_ok=True)
         self._semantic_review_lock = threading.Lock()
@@ -2060,6 +2062,15 @@ class ProjectService:
             )
         return sorted(folders, key=lambda item: item["modified"] or "", reverse=True)
 
+    def cancel_drive_import(self, folder: str) -> dict:
+        slug = slugify(folder)
+        with self._drive_imports_guard:
+            process = self._drive_imports.get(slug)
+        if process is None:
+            raise ProjectError("No hay ninguna importación activa de esa carpeta")
+        process.terminate()
+        return {"cancelled": slug}
+
     def drive_local_progress(self, folder: str) -> dict:
         """Bytes already copied to the laptop for an in-flight import —
         the UI polls this to show real progress instead of a spinner."""
@@ -2083,15 +2094,29 @@ class ProjectService:
         slug = slugify(folder)
         target = self.settings.root / "footage" / slug
         target.mkdir(parents=True, exist_ok=True)
-        result = subprocess.run(
+        process = subprocess.Popen(
             [
                 "rclone", "copy", f"{self.DRIVE_INBOX}/{folder}", str(target),
                 "--drive-export-formats", "txt", "--transfers", "4",
             ],
-            capture_output=True, text=True, timeout=7200,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
-        if result.returncode:
-            raise ProjectError(f"Drive sync failed: {result.stderr.strip()[-300:]}")
+        with self._drive_imports_guard:
+            self._drive_imports[slug] = process
+        try:
+            _, stderr = process.communicate(timeout=7200)
+        finally:
+            with self._drive_imports_guard:
+                self._drive_imports.pop(slug, None)
+        if process.returncode:
+            # rclone resumes cleanly: completed clips are kept and skipped
+            # on the next Importar
+            if process.returncode in (-15, -9):
+                raise ProjectError(
+                    "Importación cancelada — los clips ya copiados se "
+                    "conservan; vuelve a pulsar Importar para reanudar"
+                )
+            raise ProjectError(f"Drive sync failed: {(stderr or '').strip()[-300:]}")
         prompt = ""
         for note in sorted(target.glob("*.txt")):
             if note.stem.lower().startswith(("nota", "note")):
