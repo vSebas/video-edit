@@ -387,7 +387,22 @@ UI) all shipped 2026-09-01 — see the P0-P6 log above.
    session (create a V2 track in the OpenTake GUI, drop clips, sync); and
    the sidecar's second sealed-blind A/B on that same day.
 2. **Act on the P1-P6 Codex cross-review** (auto-fires 16:54 2026-09-01).
-3. **Fork batch 2 queued (owner: "do it", 2026-09-01):** OpenTake learns to
+3. **Fork tasks A-E LANDED (2026-09-01 evening; supersedes the queue note
+   below):** Codex did A before hitting its usage limit; Claude implemented
+   B-E directly. A d66b6f6 state-divergence root cause (external MCP binds
+   the authoritative core); B 80bad10 project lifecycle tools (list/open/
+   save over MCP — unattended editing unlocked, scoped to the open bundle's
+   folder); C 0676d06 window close exits the process on Linux; D 9bb7248
+   add_track (+ discovery: core prunes empty tracks on the next edit
+   command, so add_clips must immediately follow); E 4aa0a26 explicit
+   link-divergence (silent partner mutation replaced by refuse-or-flag;
+   divergent pairs survive save/load; playback has no link assumptions).
+   840 fork tests pass. Build note: release binaries need
+   `--features custom-protocol` or the webview shows "Could not connect to
+   localhost". NEXT: app-side integration — placement creates V2/A2 via
+   add_track, places voiceovers, authors J/L via allowLinkDivergence, the
+   two placement refusals lift, and sync learns the new readback shapes.
+   Original (superseded) note: OpenTake learns to
    REPRESENT render-side polish so placement stops refusing it — add_track
    + existing-index placement on external MCP (also removes the manual V2
    step for B-roll), then explicit link-divergence semantics for J/L cuts
