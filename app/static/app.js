@@ -341,6 +341,7 @@ function storyWorkspace(project) {
       </div>
       ${project.footage_summary ? `
         <p class="footage-summary">🎬 ${escapeHtml(project.footage_summary)}</p>` : ''}
+      <div id="step-times"></div>
       <p class="muted">Cada escena cita momentos reales de tus clips. «Hacer esta» corta el
       video, renderiza la vista previa y prepara los archivos de editor. ¿No convence?
       Marca lo que valga (★), di qué quieres y pide ideas nuevas.</p>
@@ -902,6 +903,25 @@ async function quickCaptions() {
 /* ------------------------------------------------------------------ */
 /* METRAJE                                                             */
 
+function formatDuration(seconds) {
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  const m = Math.floor(seconds / 60);
+  return `${m}m ${String(Math.round(seconds % 60)).padStart(2, '0')}s`;
+}
+
+async function loadStepTimes() {
+  const box = $('#step-times');
+  if (!box) return;
+  try {
+    const costs = await api(`/api/projects/${state.activeProjectId}/costs`);
+    const times = (costs.step_times || []).filter((t) => t.seconds > 0.5);
+    if (!times.length) { box.innerHTML = ''; return; }
+    box.innerHTML = `<p class="step-times">⏱ ${times.map((t) =>
+      `${escapeHtml(JOB_LABELS[t.kind] || t.kind)}: <strong>${formatDuration(t.seconds)}</strong>`
+    ).join(' · ')}</p>`;
+  } catch { box.innerHTML = ''; }
+}
+
 function assetObservations(assetId) {
   const moments = [];
   for (const run of state.runs || []) {
@@ -1142,7 +1162,10 @@ async function loadCostsPanel() {
       <p class="muted">${costs.total_est_usd !== null
         ? `Total estimado: $${costs.total_est_usd.toFixed(3)}${costs.all_priced ? '' : ' (parcial — hay modelos sin precio)'}`
         : 'Para ver dólares, pon tus tarifas reales en app/pricing.json (USD por millón de tokens).'}
-      Aún sin registrar: ${costs.unmetered.map(escapeHtml).join('; ')}.</p>`;
+      Aún sin registrar: ${costs.unmetered.map(escapeHtml).join('; ')}.</p>
+      ${(costs.step_times || []).length ? `<p class="step-times">⏱ ${costs.step_times.map((t) =>
+        `${escapeHtml(JOB_LABELS[t.kind] || t.kind)}: <strong>${formatDuration(t.seconds)}</strong>`
+      ).join(' · ')}</p>` : ''}`;
   } catch (error) { box.textContent = error.message; }
 }
 
@@ -1303,6 +1326,7 @@ function wireHandlers() {
     catch { notice('No se pudo copiar — selecciónala manualmente.', true); }
   });
   if ($('#style-section')) loadStyleSection();
+  if ($('#step-times')) loadStepTimes();
 
   // Edición
   $('#ai-edit-form')?.addEventListener('submit', submitAiEdit);

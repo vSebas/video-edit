@@ -2037,8 +2037,51 @@ class ProjectService:
                     ),
                 })
         priced = [r["est_usd"] for r in rows if r["est_usd"] is not None]
+        # visible completion marks: how long each finished stage took,
+        # from the durable jobs store (latest completed job per kind)
+        step_times: list[dict] = []
+        jobs_path = self.settings.runtime / "jobs.json"
+        if jobs_path.is_file():
+            try:
+                stored = load_json(jobs_path)
+                jobs = stored.get("jobs") or stored if isinstance(stored, dict) else stored
+                if isinstance(jobs, dict):
+                    jobs = list(jobs.values())
+                latest: dict[str, dict] = {}
+                for job in jobs:
+                    if not isinstance(job, dict):
+                        continue
+                    if job.get("project_id") != project_id:
+                        continue
+                    if job.get("status") != "completed":
+                        continue
+                    if not (job.get("started_at") and job.get("finished_at")):
+                        continue
+                    kind = job.get("kind") or "?"
+                    if (
+                        kind not in latest
+                        or job["finished_at"] > latest[kind]["finished_at"]
+                    ):
+                        latest[kind] = job
+                for kind, job in sorted(
+                    latest.items(), key=lambda kv: kv[1]["finished_at"]
+                ):
+                    start = dt.datetime.fromisoformat(
+                        job["started_at"].replace("Z", "+00:00")
+                    )
+                    finish = dt.datetime.fromisoformat(
+                        job["finished_at"].replace("Z", "+00:00")
+                    )
+                    step_times.append({
+                        "kind": kind,
+                        "seconds": round((finish - start).total_seconds(), 1),
+                        "finished_at": job["finished_at"],
+                    })
+            except (OSError, ValueError, KeyError, TypeError):
+                pass
         return {
             "rows": rows,
+            "step_times": step_times,
             "total_est_usd": round(sum(priced), 4) if priced else None,
             "all_priced": all(r["est_usd"] is not None for r in rows),
             "unmetered": [

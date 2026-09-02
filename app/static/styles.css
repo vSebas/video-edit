@@ -806,3 +806,7 @@ input[type="file"] {
 .clip-observations { margin-top: 6px; font-size: 12.5px; }
 .clip-observations summary { cursor: pointer; color: var(--accent); }
 .clip-observations ul { margin: 6px 0 0; padding-left: 14px; display: grid; gap: 4px; }
+
+/* Step completion times */
+.step-times { color: var(--muted, #a89e8c); font-size: 13px; line-height: 1.7; }
+.step-times strong { color: var(--accent); font-variant-numeric: tabular-nums; }
