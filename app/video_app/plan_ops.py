@@ -303,6 +303,9 @@ def _apply_title(plan: dict, op: dict, assets: dict) -> str:
     if not 1 <= len(text) <= 120:
         raise PlanOpError("Title text must be 1-120 characters")
     events[index]["text"] = text
+    # a user-typed title is the USER's claim, not the model's — the
+    # rendered-language gates exempt it, and provenance records why
+    events[index]["user_authored"] = True
     notes = []
     style = dict(events[index].get("text_style") or {})
     if op.get("font") is not None:

@@ -724,7 +724,10 @@ class ProjectService:
             if re.search(
                 r"(dice(?:n)? que|explica(?:n)? que|comenta(?:n)? que|"
                 r"cuenta(?:n)? que|pregunta(?:n)? (?:si|por)|responde(?:n)? que|"
-                r"says? that|explains? that|tells? .* that|"
+                r"afirma(?:n)? que|anuncia(?:n)?|menciona(?:n)?|"
+                r"habla(?:n)? (?:sobre|de)|contando|relata(?:n)?|"
+                r"says? that|explains? that|tells? .* that|mentions?|"
+                r"announc(?:es?|ing)|talks? about|"
                 "[\"\u00ab\u00bb\u201c\u201d])",
                 caption,
             ):
@@ -792,6 +795,30 @@ class ProjectService:
                 (item["start_seconds"], item["end_seconds"])
             )
         return ranges
+
+    def _evidence_review_sets(self, project_id: str) -> dict:
+        """The trust primitive: per-evidence-id review state. Approval
+        rides on identity, not on time overlap or text similarity."""
+        approved: dict[str, str] = {}
+        pending: set[str] = set()
+        rejected: set[str] = set()
+        for manifest in self._current_run_manifests(project_id):
+            run = self.semantic_run(project_id, manifest["run_key"])
+            for observation in run["observations"]:
+                if observation["normalization_status"] != "accepted":
+                    continue
+                status = observation.get("review_status")
+                eid = observation["evidence_id"]
+                if status == "reviewed":
+                    approved[eid] = (
+                        observation.get("reviewed_caption")
+                        or observation["caption"]
+                    )
+                elif status == "rejected":
+                    rejected.add(eid)
+                else:
+                    pending.add(eid)
+        return {"approved": approved, "pending": pending, "rejected": rejected}
 
     def _approved_captions(
         self, project_id: str
@@ -872,6 +899,7 @@ class ProjectService:
                     continue
                 items.append(
                     {
+                        "evidence_id": observation["evidence_id"],
                         "asset_id": observation["asset_id"],
                         "start_seconds": observation["start_seconds"],
                         "end_seconds": observation["end_seconds"],
@@ -898,6 +926,7 @@ class ProjectService:
                     continue
                 items.append(
                     {
+                        "evidence_id": observation["evidence_id"],
                         "asset_id": observation["asset_id"],
                         "start_seconds": observation["start_seconds"],
                         "end_seconds": observation["end_seconds"],
@@ -1099,6 +1128,7 @@ class ProjectService:
                 approved_ranges=approved_ranges,
                 style_application=compile_application,
                 approved_captions=self._approved_captions(project_id),
+                review_sets=self._evidence_review_sets(project_id),
             )
             validate_edit_plan(
                 plan,
@@ -1187,6 +1217,7 @@ class ProjectService:
                 footage_language=self._footage_language(project_id),
                 approved_ranges=self._approved_ranges(project_id),
                 approved_captions=self._approved_captions(project_id),
+                review_sets=self._evidence_review_sets(project_id),
             )
             validate_edit_plan(
                 new_plan,
@@ -1595,6 +1626,31 @@ class ProjectService:
                 raise ProjectError("That is already the current cut")
             restored = load_json(archived_path)
             restored["revision"] = current + 1
+            # rendered-language gate applies to RESTORED plans too — a
+            # pre-gate revision must not smuggle a risky model title back
+            # (review finding 4); user-typed titles stay exempt
+            from .planning import title_blocked
+
+            captions_map = self._approved_captions(project_id)
+            supporting = " ".join(
+                caption
+                for items in captions_map.values()
+                for _s, _e, caption in items
+            )
+            for track in restored.get("tracks", []):
+                if track.get("kind") != "title":
+                    continue
+                for event in track.get("events", []):
+                    if title_blocked(
+                        str(event.get("text") or ""), supporting,
+                        user_authored=bool(event.get("user_authored")),
+                    ):
+                        raise ProjectError(
+                            f"La revisión archivada tiene el título "
+                            f"«{event.get('text')}», que afirma algo sin "
+                            "respaldo aprobado — confirma la evidencia o "
+                            "elige otra revisión"
+                        )
             try:
                 validate_edit_plan(
                     restored, SCHEMA_DIR / "edit-plan.schema.json",
@@ -1701,10 +1757,25 @@ class ProjectService:
         return directory
 
     def list_style_references(self) -> list[dict]:
-        """Reference videos the user dropped into references/ (gitignored)."""
+        """Reference videos the user dropped into references/ (gitignored),
+        with analyzed-state resolved from stored observation SOURCE LABELS
+        — style names are truncated/renamed, so name matching lies."""
         supported = {".mp4", ".mov", ".webm", ".mkv", ".m4v"}
+        analyzed_labels: set[str] = set()
+        for style_path in self._styles_dir().glob("style-*.json"):
+            try:
+                for obs in load_json(style_path).get("observations") or []:
+                    label = (obs.get("source") or {}).get("label")
+                    if label:
+                        analyzed_labels.add(label)
+            except (OSError, ValueError):
+                continue
         return [
-            {"filename": path.name, "size_bytes": path.stat().st_size}
+            {
+                "filename": path.name,
+                "size_bytes": path.stat().st_size,
+                "analyzed": path.name in analyzed_labels,
+            }
             for path in sorted(self._references_dir().iterdir())
             if path.is_file() and path.suffix.lower() in supported
         ]

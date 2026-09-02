@@ -1153,7 +1153,6 @@ async function loadReferencePanel() {
     const [{ references }, { styles }] = await Promise.all([
       api('/api/styles/references'), api('/api/styles'),
     ]);
-    const analyzed = new Set(styles.map((s) => s.name));
     box.innerHTML = `
       <p class="muted">Deja videos de referencia en <code>references/</code> y analízalos aquí (una llamada al modelo visual por video).</p>
       ${references.length ? references.map((ref) => `
@@ -1161,7 +1160,7 @@ async function loadReferencePanel() {
           <strong>${escapeHtml(ref.filename)}</strong>
           <span>${(ref.size_bytes / 1e6).toFixed(0)} MB</span>
           <button class="secondary compact" data-analyze-ref="${escapeHtml(ref.filename)}">
-            ${analyzed.has(ref.filename.replace(/\.[^.]+$/, '')) ? 'Re-analizar' : 'Analizar estilo'}
+            ${ref.analyzed ? 'Re-analizar' : 'Analizar estilo'}
           </button>
         </div>`).join('') : '<p class="muted">La carpeta references/ está vacía.</p>'}
       ${styles.length ? `<p class="muted">${styles.length} estilo(s) en la biblioteca.</p>` : ''}

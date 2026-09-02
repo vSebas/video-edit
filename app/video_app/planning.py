@@ -216,6 +216,7 @@ Respond with JSON:
           "evidence": [
             {{
               "asset_id": "<existing asset id>",
+              "evidence_ids": ["<the (id ...) values of the evidence lines this range draws on — REQUIRED>"],
               "start_seconds": <number>,
               "end_seconds": <number>,
               "observed_content": "<what the evidence says happens here>",
@@ -225,6 +226,7 @@ Respond with JSON:
           "cutaways": [
             {{
               "asset_id": "<existing asset id, DIFFERENT footage than the beat's evidence>",
+              "evidence_ids": ["<the (id ...) values this cutaway draws on — REQUIRED>"],
               "start_seconds": <number>,
               "end_seconds": <number>,
               "observed_content": "<what this shot visibly shows>",
@@ -350,6 +352,7 @@ def _sanitize_concepts(
         for asset in project.get("inventory", {}).get("assets", [])
     }
     observed: dict[str, list[tuple[float, float, str]]] | None = None
+    id_index: dict[str, tuple[str, float, float]] = {}
     if evidence is not None:
         observed = {}
         for item in evidence:
@@ -360,6 +363,11 @@ def _sanitize_concepts(
                     str(item.get("caption") or ""),
                 )
             )
+            if item.get("evidence_id"):
+                id_index[item["evidence_id"]] = (
+                    item["asset_id"], item["start_seconds"],
+                    item["end_seconds"],
+                )
     valid_concepts = []
     used_ids: set[str] = set()
     for concept in document["concepts"]:
@@ -460,12 +468,32 @@ def _sanitize_concepts(
                     str(item.get("observed_content", "")).strip()
                     or "Unlabeled evidence range."
                 )
+                cited = [
+                    str(eid) for eid in (item.get("evidence_ids") or [])
+                    if isinstance(eid, str)
+                ] if isinstance(item, dict) else []
+                valid_ids = [
+                    eid for eid in cited
+                    if id_index.get(eid)
+                    and id_index[eid][0] == asset["asset_id"]
+                    and id_index[eid][1] < end and id_index[eid][2] > start
+                ]
+                if not valid_ids and id_index:
+                    # writer omitted or fabricated ids — attach the real
+                    # observations this range overlaps (identity recovered
+                    # deterministically, never trusted from the model)
+                    valid_ids = [
+                        eid for eid, (aid, ostart, oend) in id_index.items()
+                        if aid == asset["asset_id"]
+                        and ostart < end and oend > start
+                    ][:6]
                 span = {
                     "asset_id": asset["asset_id"],
                     "start_seconds": round(start, 3),
                     "end_seconds": round(end, 3),
                     "observed_content": claim,
                     "confidence": confidence,
+                    **({"evidence_ids": sorted(valid_ids)} if valid_ids else {}),
                 }
                 # A citation can overlap a real observation yet DESCRIBE
                 # something else — the last place a plausible hallucination
@@ -1032,23 +1060,75 @@ def refresh_style_application(plan: dict) -> None:
         )
 
 
+def _claim_is_risky(text: str) -> bool:
+    from .semantic import RISK_PATTERNS
+
+    return any(pattern.search(text) for _, pattern in RISK_PATTERNS)
+
+
 def claim_supported(
     span: dict,
     approved_captions: dict[str, list[tuple[float, float, str]]],
+    review_sets: dict | None = None,
 ) -> bool:
-    """Semantic half of grounding: the citation's stated content must be
-    supported by APPROVED captions overlapping its range, and a citation
-    the sanitizer flagged needs_review never compiles unconfirmed."""
+    """Semantic half of grounding. AUTHORIZATION IS BY EVIDENCE IDENTITY:
+    a citation whose evidence_ids are all approved compiles; any rejected
+    or pending id fails it closed. The lexical overlap check remains only
+    as (a) defense-in-depth against embellishment beyond the approved
+    captions and (b) the legacy fallback for citations without lineage —
+    where a short claim that trips a RISK pattern no longer gets the
+    benefit of the doubt (review blocker 2: 'Ganó la carrera' must not
+    pass by being brief)."""
     if span.get("needs_review"):
         return False
+    claim = str(span.get("observed_content") or "")
+    ids = span.get("evidence_ids") or []
+    if review_sets is not None and ids:
+        approved_ids = review_sets.get("approved") or {}
+        rejected = review_sets.get("rejected") or set()
+        if any(eid in rejected for eid in ids):
+            return False
+        if not all(eid in approved_ids for eid in ids):
+            return False  # pending lineage: confirm it, then compile
+        supporting = " ".join(approved_ids[eid] for eid in ids)
+        if _claim_is_risky(claim) and _claim_unsupported(claim, supporting):
+            return False  # approved footage, embellished claim
+        return True
     supporting = " ".join(
         caption
         for start, end, caption in approved_captions.get(span["asset_id"], [])
         if start < span["source_end_seconds"]
         and end > span["source_start_seconds"]
     )
-    claim = str(span.get("observed_content") or "")
+    if _claim_is_risky(claim):
+        # risky claims never pass on brevity or empty support
+        content = [w for w in re.findall(r"[\wáéíóúñü]+", claim.lower()) if len(w) > 3]
+        support_words = set(re.findall(r"[\wáéíóúñü]+", supporting.lower()))
+        return bool(content) and bool(
+            support_words.intersection(content)
+        ) and not _claim_unsupported(claim, supporting)
     return not _claim_unsupported(claim, supporting)
+
+
+def title_blocked(
+    title: str,
+    supporting_text: str,
+    user_authored: bool = False,
+) -> bool:
+    """Rendered language gate (review blockers 1+5, finding 5): a title is
+    blocked only when it ASSERTS something risky (outcome, speech content,
+    identity, emotion, brand) that no approved caption supports. Poetic or
+    descriptive titles pass regardless of vocabulary overlap; user-typed
+    titles are the user's own speech and are exempt."""
+    if user_authored or not title:
+        return False
+    if not _claim_is_risky(title):
+        return False
+    support_words = set(re.findall(r"[\wáéíóúñü]+", supporting_text.lower()))
+    content = [w for w in re.findall(r"[\wáéíóúñü]+", title.lower()) if len(w) > 3]
+    if not content:
+        return True
+    return not support_words.intersection(content)
 
 
 def span_supported(span: dict, approved_ranges: dict[str, list[tuple[float, float]]]) -> bool:
@@ -1088,6 +1168,7 @@ def compile_edit_plan(
     approved_ranges: dict[str, list[tuple[float, float]]] | None = None,
     style_application: dict | None = None,
     approved_captions: dict[str, list[tuple[float, float, str]]] | None = None,
+    review_sets: dict | None = None,
 ) -> dict:
     """Deterministically compile a sanitized concept into edit-plan.v1.
 
@@ -1121,6 +1202,10 @@ def compile_edit_plan(
                     "intent": beat["purpose"],
                     "observed_content": evidence["observed_content"],
                     "confidence": evidence["confidence"],
+                    # trust lineage rides the span into the gates — losing
+                    # these here was review finding 3
+                    "evidence_ids": evidence.get("evidence_ids") or [],
+                    "needs_review": bool(evidence.get("needs_review")),
                 }
             )
         for shot in beat.get("cutaways") or []:
@@ -1133,6 +1218,8 @@ def compile_edit_plan(
                     "intent": f"b-roll: {beat['purpose']}"[:120],
                     "observed_content": shot["observed_content"],
                     "confidence": shot["confidence"],
+                    "evidence_ids": shot.get("evidence_ids") or [],
+                    "needs_review": bool(shot.get("needs_review")),
                 }
             )
     if approved_ranges is not None:
@@ -1146,16 +1233,21 @@ def compile_edit_plan(
         # cutaways are decoration, not story: unsupported ones just drop
         cutaways = [c for c in cutaways if span_supported(c, approved_ranges)]
     if approved_captions is not None:
-        spans = [s for s in spans if claim_supported(s, approved_captions)]
+        spans = [
+            s for s in spans
+            if claim_supported(s, approved_captions, review_sets)
+        ]
         if not spans:
             raise PlanningError(
                 "Ninguna escena de esta historia tiene su AFIRMACIÓN "
                 "confirmada por observaciones aprobadas — confirma las "
                 "afirmaciones marcadas y vuelve a compilar"
             )
-        cutaways = [c for c in cutaways if claim_supported(c, approved_captions)]
-        # the TITLE is rendered language: it must not assert what no
-        # approved observation supports
+        cutaways = [
+            c for c in cutaways
+            if claim_supported(c, approved_captions, review_sets)
+        ]
+        # the TITLE is rendered language: risky assertions need support
         title_support = " ".join(
             caption
             for span in spans
@@ -1164,11 +1256,11 @@ def compile_edit_plan(
             and end > span["source_start_seconds"]
         )
         title = str(concept.get("title") or "")
-        if title and _claim_unsupported(title, title_support):
+        if title_blocked(title, title_support):
             raise PlanningError(
-                f"El título «{title}» afirma algo que ninguna observación "
-                "aprobada respalda — confirma la evidencia correspondiente "
-                "o cambia el título antes de compilar"
+                f"El título «{title}» afirma algo (desenlace, dicho, "
+                "identidad) que ninguna observación aprobada respalda — "
+                "confirma la evidencia correspondiente o cambia el título"
             )
     try:
         return build_plan(
@@ -1210,6 +1302,7 @@ def revise_plan(
     footage_language: str | None = None,
     approved_ranges: dict[str, list[tuple[float, float]]] | None = None,
     approved_captions: dict[str, list[tuple[float, float, str]]] | None = None,
+    review_sets: dict | None = None,
 ) -> tuple[dict, str]:
     """Revise the current plan per a natural-language instruction, keeping
     media analysis untouched. Returns (new plan, revision note)."""
@@ -1289,11 +1382,28 @@ events. Every range must stay at least {MIN_EVENT_SECONDS}s long."""
             )
         spans = supported
     if approved_captions is not None:
-        spans = [s for s in spans if claim_supported(s, approved_captions)]
+        spans = [
+            s for s in spans
+            if claim_supported(s, approved_captions, review_sets)
+        ]
         if not spans:
             raise PlanningError(
                 "La revisión introdujo afirmaciones que ninguna observación "
                 "aprobada respalda; el plan quedó sin cambios"
+            )
+        revised_title = str(parsed.get("title_text") or current_title)
+        title_support = " ".join(
+            caption
+            for span in spans
+            for start, end, caption in approved_captions.get(span["asset_id"], [])
+            if start < span["source_end_seconds"]
+            and end > span["source_start_seconds"]
+        )
+        if title_blocked(revised_title, title_support):
+            raise PlanningError(
+                f"La revisión propuso el título «{revised_title}», que "
+                "afirma algo sin respaldo en observaciones aprobadas; el "
+                "plan quedó sin cambios"
             )
     new_plan = build_plan(
         project,

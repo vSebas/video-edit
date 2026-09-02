@@ -379,6 +379,12 @@
               ]
             }
           }
+        },
+        "user_authored": {
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       }
     }

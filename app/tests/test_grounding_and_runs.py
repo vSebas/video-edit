@@ -578,6 +578,80 @@ class TestClaimLevelGrounding:
             )
 
 
+class TestClaimIdLineage:
+    """Authorization by evidence identity — the design-review architecture."""
+
+    CAPTIONS = {"clip_0": [(0.0, 10.0, "una persona camina por el campus")]}
+    SETS = {
+        "approved": {"ev-1": "una persona camina por el campus con mochila"},
+        "pending": {"ev-2"},
+        "rejected": {"ev-3"},
+    }
+
+    def _span(self, content, ids):
+        return {"asset_id": "clip_0", "source_start_seconds": 2.0,
+                "source_end_seconds": 6.0, "observed_content": content,
+                "evidence_ids": ids}
+
+    def test_approved_lineage_authorizes_paraphrase(self) -> None:
+        from video_app.planning import claim_supported
+
+        # honest paraphrase with different vocabulary: identity, not
+        # word overlap, is what authorizes
+        span = self._span("estudiante pasea por la universidad con bolso",
+                          ["ev-1"])
+        assert claim_supported(span, self.CAPTIONS, self.SETS) is True
+
+    def test_pending_or_rejected_lineage_fails_closed(self) -> None:
+        from video_app.planning import claim_supported
+
+        assert claim_supported(
+            self._span("una persona camina", ["ev-2"]), self.CAPTIONS, self.SETS
+        ) is False
+        assert claim_supported(
+            self._span("una persona camina", ["ev-1", "ev-3"]),
+            self.CAPTIONS, self.SETS,
+        ) is False
+
+    def test_approved_lineage_still_blocks_risky_embellishment(self) -> None:
+        from video_app.planning import claim_supported
+
+        span = self._span("celebra que ganó la carrera nacional", ["ev-1"])
+        assert claim_supported(span, self.CAPTIONS, self.SETS) is False
+
+    def test_short_risky_claim_no_longer_passes_on_brevity(self) -> None:
+        from video_app.planning import claim_supported
+
+        span = {"asset_id": "clip_0", "source_start_seconds": 2.0,
+                "source_end_seconds": 6.0,
+                "observed_content": "ganó la carrera"}
+        assert claim_supported(span, self.CAPTIONS, None) is False
+
+
+class TestTitleGate:
+    SUPPORT = "una persona camina por el campus y saluda a sus amigos"
+
+    def test_poetic_title_passes_without_vocabulary_overlap(self) -> None:
+        from video_app.planning import title_blocked
+
+        assert title_blocked("Un día cualquiera", self.SUPPORT) is False
+        assert title_blocked("Momentos de primavera", self.SUPPORT) is False
+
+    def test_risky_unsupported_title_is_blocked(self) -> None:
+        from video_app.planning import title_blocked
+
+        assert title_blocked("Ganó la carrera", self.SUPPORT) is True
+        assert title_blocked(
+            "El día que renunció a su trabajo", self.SUPPORT
+        ) is True
+
+    def test_user_authored_titles_are_exempt(self) -> None:
+        from video_app.planning import title_blocked
+
+        assert title_blocked("Ganó la carrera", self.SUPPORT,
+                             user_authored=True) is False
+
+
 class TestScopedCorroboration:
     """ASR overlap proves speech HAPPENS — reported content stays human."""
 

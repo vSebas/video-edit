@@ -730,3 +730,41 @@ dropping scenes; shared-noun false-passes remain possible until claim-ID
 lineage from writer citations exists); auto-approval still keys on
 self-reported confidence — a user-ratified product policy (post-Phase-2A)
 whose blast radius the new claim/title gates now bound.
+
+## Trust-system round two (2026-09-02): claim-ID lineage
+
+The user directed: "if this is a design fault revise it and do anything
+necessary to fix it." The architecture Codex prescribed is now built
+(suite 203→210):
+
+- **Authorization is by EVIDENCE IDENTITY.** Evidence lines in the
+  planner prompt carry their observation ids; citations must return
+  `evidence_ids` (schema-enforced); the sanitizer validates them against
+  real observations (same asset + overlap) and RE-ATTACHES them
+  deterministically when the writer omits or fabricates them. At
+  compile/revise, a citation with any rejected or pending id fails
+  closed; all-approved ids authorize — proven by the key test: an honest
+  PARAPHRASE with zero vocabulary overlap now compiles on approved
+  lineage (the false-drop Codex predicted), while an approved-footage
+  citation with a risky embellishment still drops.
+- **Both new blockers closed**: risky claims ("ganó la carrera") no
+  longer pass on brevity — a RISK-pattern claim requires actual support
+  in every path, lineage or legacy; and REVISED titles pass the same
+  rendered-language gate as compiled ones.
+- **Title gate is risk-scoped**: poetic/descriptive titles pass without
+  vocabulary overlap; only titles asserting outcomes, speech content,
+  identity, emotion, or brands need approved support. User-typed titles
+  (set_title) are the user's own speech — marked `user_authored` and
+  exempt.
+- **needs_review and evidence_ids now ride the span into the compile
+  gates** (they were dropped when spans were rebuilt).
+- **Restored revisions pass the title gate too** (pre-gate plans can't
+  smuggle a risky model title back).
+- **Corroboration guard broadened**: afirma/anuncia/menciona/habla
+  sobre/contando/relata + English forms.
+- Reference panel now resolves analyzed-state from stored source labels
+  (truncated names lied for long filenames).
+
+Remaining honest limits: legacy concepts without lineage use the
+risk-gated lexical fallback; auto-approve confidence policy unchanged
+(ratified routing policy).
