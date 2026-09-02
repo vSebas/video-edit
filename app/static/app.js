@@ -349,6 +349,8 @@ function storyWorkspace(project) {
       <form id="more-ideas-form" class="revision-form">
         <textarea name="guidance" rows="2"
           placeholder="¿Qué quieres en su lugar? p. ej. enfócate en la demo del proyecto, más energía, menos de 40 segundos…"></textarea>
+        <p class="muted stateless-hint">Cada petición es independiente (no es un chat):
+        describe la idea completa en un solo mensaje.</p>
         <button type="submit" class="secondary">Ideas nuevas${keptCount ? ` (conservando ${keptCount} ★)` : ''}</button>
       </form>
       <div id="style-section"></div>
@@ -638,6 +640,9 @@ function editWorkspace(project) {
         <form id="ai-edit-form" class="revision-form vertical">
           <textarea name="instruction" rows="3" required minlength="3" maxlength="2000"
             placeholder="quita la escena del refri… acorta el inicio… pon la comida mientras hablo… haz un J-cut en la escena 4…"></textarea>
+          <p class="muted stateless-hint">Cada instrucción es independiente (no es un chat):
+          pide UN cambio concreto por mensaje. Para rehacer la historia completa,
+          usa «Ideas nuevas» en Historia.</p>
           <button type="submit" class="primary">Cambiarlo</button>
         </form>
         <div id="ai-edit-result"></div>

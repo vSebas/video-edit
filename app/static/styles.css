@@ -810,3 +810,4 @@ input[type="file"] {
 /* Step completion times */
 .step-times { color: var(--muted, #a89e8c); font-size: 13px; line-height: 1.7; }
 .step-times strong { color: var(--accent); font-variant-numeric: tabular-nums; }
+.stateless-hint { font-size: 12px; margin-top: 4px; }
