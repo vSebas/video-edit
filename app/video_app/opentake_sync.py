@@ -666,7 +666,10 @@ def timeline_to_candidate_plan(
         partner = partners[0]
         if _geometry(clip) != _geometry(partner):
             raise SyncError(
-                f"linked audio geometry mismatch for video clip {clip['clip_id']}"
+                f"linked audio geometry mismatch for video clip "
+                f"{clip['clip_id']} — J/L-placed timelines cannot round-trip "
+                "through sync yet; re-place the mirrored revision to edit in "
+                "OpenTake, or keep editing the J/L cut render-side"
             )
         paired[clip["clip_id"]] = partner
         paired_audio_ids.add(partner["clip_id"])

@@ -702,8 +702,8 @@ class TestVolumeSync:
             timeline_to_candidate_plan(plan, bridge, readback)
 
 
-class TestJLPlacementRefusal:
-    def test_jl_plan_is_refused_before_touching_opentake(self) -> None:
+class TestJLPreflight:
+    def test_unrepresentable_layout_refused_before_touching_opentake(self) -> None:
         import json
 
         import pytest
@@ -713,7 +713,7 @@ class TestJLPlacementRefusal:
         plan = json.loads((fx / "plan.json").read_text())
         inventory = json.loads((fx / "inventory.json").read_text())
         audio = next(t for t in plan["tracks"] if t["kind"] == "audio")
-        audio["events"][0]["duration_seconds"] += 0.4
+        # a GAP in the audio tiling cannot ride on linked pairs
         audio["events"][1]["timeline_start_seconds"] += 0.4
         audio["events"][1]["duration_seconds"] -= 0.4
         audio["events"][1]["source_start_seconds"] += 0.4
@@ -722,7 +722,7 @@ class TestJLPlacementRefusal:
             def __getattr__(self, name):  # any client call is a failure
                 raise AssertionError(f"client.{name} was called")
 
-        with pytest.raises(BridgeError, match="J/L cuts"):
+        with pytest.raises(BridgeError, match="gaps"):
             place_plan(plan, inventory, "p", client=Untouchable())
 
 
@@ -808,10 +808,7 @@ class FakeOpenTake:
                     group = self._next("lg")
                     clip["linkGroupId"] = group
                     self.tracks[0]["clips"].append(clip)
-                    audio_track = next(
-                        t for t in self.tracks if t["type"] == "audio"
-                    )
-                    audio_track["clips"].append({
+                    self._free_audio_track(clip).append({
                         **clip, "clipId": self._next("c"),
                         "mediaType": "audio",
                     })
@@ -819,24 +816,81 @@ class FakeOpenTake:
                     target = self.tracks[index]
                     if target["type"] == "video":
                         clip["linkGroupId"] = self._next("lg")
-                        # broll pair: linked audio lands on first audio track
-                        audio_track = next(
-                            t for t in self.tracks if t["type"] == "audio"
-                        )
-                        audio_track["clips"].append({
+                        # linked audio lands on the first FREE audio track
+                        # over the span (real available_audio_track_index)
+                        self._free_audio_track(clip).append({
                             **clip, "clipId": self._next("c"),
                             "mediaType": "audio",
                         })
                     target["clips"].append(clip)
             return {}
         if name == "set_clip_properties":
-            volume = arguments.get("volume")
+            timing = {"durationFrames", "trimStartFrame", "trimEndFrame", "speed"}
+            changes_timing = bool(timing & set(arguments))
             for track in self.tracks:
                 for clip in track["clips"]:
-                    if clip["clipId"] in arguments["clipIds"]:
-                        clip["volume"] = volume
+                    if clip["clipId"] not in arguments["clipIds"]:
+                        continue
+                    if changes_timing and clip.get("linkGroupId"):
+                        partner_ids = {
+                            c["clipId"] for t in self.tracks
+                            for c in t["clips"]
+                            if c.get("linkGroupId") == clip["linkGroupId"]
+                        } - {clip["clipId"]}
+                        if partner_ids - set(arguments["clipIds"]) and \
+                                not arguments.get("allowLinkDivergence"):
+                            raise AssertionError(
+                                "fork refuses linked timing change without "
+                                "allowLinkDivergence"
+                            )
+                    if "volume" in arguments:
+                        clip["volume"] = arguments["volume"]
+                    if "durationFrames" in arguments:
+                        clip["durationFrames"] = arguments["durationFrames"]
+                    if "trimStartFrame" in arguments:
+                        clip["trimStartFrame"] = arguments["trimStartFrame"]
+            self._assert_no_overlap()
+            return {}
+        if name == "move_clips":
+            for m in arguments["moves"]:
+                for track in self.tracks:
+                    for clip in track["clips"]:
+                        if clip["clipId"] == m["clipId"]:
+                            clip["startFrame"] = m["toFrame"]
+            self._assert_no_overlap()
             return {}
         raise AssertionError(f"unexpected tool {name}")
+
+    def _free_audio_track(self, clip):
+        span = (clip["startFrame"],
+                clip["startFrame"] + clip["durationFrames"])
+        for track in self.tracks:
+            if track["type"] != "audio":
+                continue
+            busy = any(
+                c["startFrame"] < span[1]
+                and span[0] < c["startFrame"] + c["durationFrames"]
+                for c in track["clips"]
+            )
+            if not busy:
+                return track["clips"]
+        index = len(self.tracks)
+        self.tracks.append({
+            "track": f"A{index}", "trackIndex": index, "type": "audio",
+            "clips": [],
+        })
+        return self.tracks[-1]["clips"]
+
+    def _assert_no_overlap(self):
+        # Stricter than real OpenTake (which overwrites): the retiler
+        # promises NO transient overlap, so any overlap is a bug.
+        for track in self.tracks:
+            ordered = sorted(track["clips"], key=lambda c: c["startFrame"])
+            for a, b in zip(ordered, ordered[1:]):
+                if b["startFrame"] < a["startFrame"] + a["durationFrames"]:
+                    raise AssertionError(
+                        f"overlap on {track['track']}: {a['clipId']}/{b['clipId']}"
+                    )
 
 
 def _mini_plan_with_voiceover():
@@ -976,3 +1030,121 @@ class TestVoiceoverSync:
         })
         with pytest.raises(SyncError, match="past the primary"):
             timeline_to_candidate_plan(plan, bridge, client.get_timeline())
+
+
+class TestJLPlacement:
+    """J/L plans place onto linked pairs via the no-overlap retiler."""
+
+    def _mirrored_plan(self):
+        def event(eid, asset, src, start, dur):
+            return {
+                "event_id": eid, "asset_id": asset,
+                "source_start_seconds": src,
+                "source_end_seconds": round(src + dur, 6),
+                "timeline_start_seconds": start, "duration_seconds": dur,
+                "playback_rate": 1.0, "intent": "base",
+                "observed_content": None, "confidence": 0.9, "reframe": None,
+                "transition_out": None, "text": None, "volume_db": None,
+            }
+        return {
+            "schema_version": "edit-plan.v1",
+            "generated_at": "2026-09-01T00:00:00Z",
+            "benchmark_id": "t", "concept_id": "t", "revision": 1,
+            "project": {"width": 320, "height": 240, "fps": 30,
+                        "duration_seconds": 6.0,
+                        "background_color": "black"},
+            "tracks": [
+                {"track_id": "v1", "kind": "video", "events": [
+                    event("v01", "red", 0.0, 0.0, 2.0),
+                    event("v02", "blue", 1.0, 2.0, 2.0),
+                    event("v03", "red", 3.0, 4.0, 2.0)]},
+                {"track_id": "a1", "kind": "audio", "events": [
+                    event("a01", "red", 0.0, 0.0, 2.0),
+                    event("a02", "blue", 1.0, 2.0, 2.0),
+                    event("a03", "red", 3.0, 4.0, 2.0)]},
+                {"track_id": "t1", "kind": "title", "events": []},
+            ],
+        }
+
+    def _client(self):
+        return FakeOpenTake({
+            "red": {"id": "ref-red", "kind": "video"},
+            "blue": {"id": "ref-blue", "kind": "video"},
+        })
+
+    def _place_and_check(self, plan):
+        from video_app.opentake_bridge import place_plan
+
+        client = self._client()
+        summary, bridge = place_plan(plan, MINI_INVENTORY, "p", client=client)
+        fps = plan["project"]["fps"]
+        audio_events = next(
+            t for t in plan["tracks"] if t["kind"] == "audio"
+        )["events"]
+        audio_clips = sorted(
+            (c for t in client.tracks if t["type"] == "audio"
+             for c in t["clips"]),
+            key=lambda c: c["startFrame"],
+        )
+        for event, clip in zip(audio_events, audio_clips):
+            assert clip["startFrame"] == round(
+                event["timeline_start_seconds"] * fps), event["event_id"]
+            assert clip["durationFrames"] == round(
+                event["duration_seconds"] * fps), event["event_id"]
+            assert clip["trimStartFrame"] == round(
+                event["source_start_seconds"] * fps), event["event_id"]
+            assert clip.get("linkGroupId"), "pair must stay linked"
+        # video untouched
+        video_clips = sorted(
+            client.tracks[0]["clips"], key=lambda c: c["startFrame"])
+        video_events = plan["tracks"][0]["events"]
+        for event, clip in zip(video_events, video_clips):
+            assert clip["startFrame"] == round(
+                event["timeline_start_seconds"] * fps)
+        return summary
+
+    def test_j_cut_places(self) -> None:
+        from video_app.plan_ops import apply_op
+
+        plan, _ = apply_op(self._mirrored_plan(), {
+            "op": "jl_cut", "event_id": "v02", "lead_seconds": 0.4,
+        }, MINI_INVENTORY)
+        self._place_and_check(plan)
+
+    def test_l_cut_places(self) -> None:
+        from video_app.plan_ops import apply_op
+
+        plan, _ = apply_op(self._mirrored_plan(), {
+            "op": "jl_cut", "event_id": "v03", "lead_seconds": -0.4,
+        }, MINI_INVENTORY)
+        self._place_and_check(plan)
+
+    def test_mixed_j_and_l_places(self) -> None:
+        # J-cut at boundary 1 (audio of v02 leads 0.5s) AND L-cut at
+        # boundary 2 (audio of v02 trails 0.3s into v03) — built by hand
+        # since the op enforces one J/L per revision.
+        plan = self._mirrored_plan()
+        audio = next(t for t in plan["tracks"] if t["kind"] == "audio")
+        a01, a02, a03 = audio["events"]
+        a01["duration_seconds"] = 1.5
+        a01["source_end_seconds"] = 1.5
+        a02["timeline_start_seconds"] = 1.5
+        a02["source_start_seconds"] = 0.5
+        a02["duration_seconds"] = 2.8
+        a02["source_end_seconds"] = 3.3
+        a03["timeline_start_seconds"] = 4.3
+        a03["source_start_seconds"] = 3.3
+        a03["duration_seconds"] = 1.7
+        a03["source_end_seconds"] = 5.0
+        self._place_and_check(plan)
+
+    def test_unrepresentable_audio_layout_refused(self) -> None:
+        import pytest
+        from video_app.opentake_bridge import BridgeError, place_plan
+
+        plan = self._mirrored_plan()
+        audio = next(t for t in plan["tracks"] if t["kind"] == "audio")
+        audio["events"][1]["asset_id"] = "red"  # asset differs from video slot
+        audio["events"][1]["timeline_start_seconds"] += 0.1  # break mirror
+        with pytest.raises(BridgeError, match="different asset"):
+            place_plan(plan, MINI_INVENTORY, "p", client=self._client())

@@ -195,6 +195,164 @@ def _broll_bridge_events(entries: list[dict], readback: dict) -> list[dict]:
     ]
 
 
+def _validate_jl_representable(plan, video_events, audio_events) -> None:
+    """A J/L audio layout is representable when it is a contiguous re-tiling
+    of the same per-clip media the video track uses: equal counts, same asset
+    per index, tiles covering exactly the primary span. Anything else cannot
+    ride on linked pairs and stays render-side."""
+    fps = plan["project"]["fps"]
+    if len(audio_events) != len(video_events):
+        raise BridgeError(
+            "This plan's audio track has a different clip count than the "
+            "video track — that audio layout cannot ride on OpenTake's "
+            "linked pairs. Render directly."
+        )
+    for video, audio in zip(video_events, audio_events):
+        if video["asset_id"] != audio["asset_id"]:
+            raise BridgeError(
+                f"Audio event {audio['event_id']} uses a different asset than "
+                "its video slot — not representable on linked pairs. Render "
+                "directly."
+            )
+    cursor = 0
+    for audio in audio_events:
+        start = round(audio["timeline_start_seconds"] * fps)
+        if start != cursor:
+            raise BridgeError(
+                "This plan's audio track has gaps — not representable on "
+                "linked pairs. Render directly."
+            )
+        cursor = start + round(audio["duration_seconds"] * fps)
+    video_end = max(
+        round((v["timeline_start_seconds"] + v["duration_seconds"]) * fps)
+        for v in video_events
+    )
+    if cursor != video_end:
+        raise BridgeError(
+            "This plan's audio track does not cover the video span exactly — "
+            "not representable on linked pairs. Render directly."
+        )
+
+
+def _retile_audio_for_jl(client, plan: dict, readback: dict) -> None:
+    """Transform the auto-created (video-mirrored) audio tiling into the
+    plan's J/L tiling. Per boundary: shrink one side (opens a gap), move the
+    neighbor into the gap, restore its duration and slip its trim from the
+    plan — no step ever overlaps, so OpenTake's overwrite-move semantics
+    never destroy a neighbor."""
+    fps = plan["project"]["fps"]
+    audio_events = next(t for t in plan["tracks"] if t["kind"] == "audio")["events"]
+    video_tracks = _video_tracks(readback)
+    primary = sorted(
+        (video_tracks[0].get("clips", []) if video_tracks else []),
+        key=lambda c: c["startFrame"],
+    )
+    group_of = {c["clipId"]: c.get("linkGroupId") for c in primary}
+    partners = {
+        c.get("linkGroupId"): c
+        for t in readback.get("tracks", []) if t.get("type") == "audio"
+        for c in t.get("clips", []) if c.get("linkGroupId")
+    }
+    # Local mirror of the audio lane, index-aligned with plan events.
+    clips = []
+    for video_clip in primary:
+        partner = partners.get(group_of[video_clip["clipId"]])
+        if partner is None:
+            raise BridgeError(
+                f"no linked audio for clip {video_clip['clipId']} — cannot "
+                "author J/L"
+            )
+        clips.append({
+            "id": partner["clipId"],
+            "start": partner["startFrame"],
+            "duration": partner["durationFrames"],
+            "trim": partner.get("trimStartFrame", 0),
+        })
+
+    def set_props(clip, **fields):
+        arguments = {"clipIds": [clip["id"]], "allowLinkDivergence": True}
+        if "duration" in fields:
+            arguments["durationFrames"] = fields["duration"]
+            clip["duration"] = fields["duration"]
+        if "trim" in fields:
+            arguments["trimStartFrame"] = fields["trim"]
+            clip["trim"] = fields["trim"]
+        client.tool("set_clip_properties", arguments)
+
+    def move(clip, to_frame):
+        client.tool("move_clips", {"moves": [
+            {"clipId": clip["id"], "toFrame": to_frame}
+        ]})
+        clip["start"] = to_frame
+
+    targets = [
+        {
+            "start": round(e["timeline_start_seconds"] * fps),
+            "duration": round(e["duration_seconds"] * fps),
+            "trim": round(e["source_start_seconds"] * fps),
+        }
+        for e in audio_events
+    ]
+    for j in range(len(clips) - 1):
+        left, right = clips[j], clips[j + 1]
+        boundary = targets[j + 1]["start"]
+        delta = boundary - right["start"]
+        if delta < 0:  # J-cut: audio of the next scene starts early
+            set_props(left, duration=left["duration"] + delta)
+            move(right, boundary)
+            set_props(
+                right,
+                duration=right["duration"] - delta,
+                trim=targets[j + 1]["trim"],
+            )
+        elif delta > 0:  # L-cut: the previous scene's audio continues
+            set_props(
+                right,
+                duration=right["duration"] - delta,
+                trim=targets[j + 1]["trim"],
+            )
+            move(right, boundary)
+            set_props(left, duration=left["duration"] + delta)
+    # Final slip pass: trims the boundary walk did not need to touch.
+    for clip, target in zip(clips, targets):
+        if clip["trim"] != target["trim"]:
+            set_props(clip, trim=target["trim"])
+
+
+def verify_jl_audio(plan: dict, readback: dict) -> list[str]:
+    """After retiling: every linked audio clip must match its plan event."""
+    fps = plan["project"]["fps"]
+    audio_events = next(t for t in plan["tracks"] if t["kind"] == "audio")["events"]
+    broll_groups = {
+        c.get("linkGroupId")
+        for t in _video_tracks(readback)[1:] for c in t.get("clips", [])
+        if c.get("linkGroupId")
+    }
+    clips = sorted(
+        (c for t in readback.get("tracks", []) if t.get("type") == "audio"
+         for c in t.get("clips", [])
+         if c.get("linkGroupId") and c.get("linkGroupId") not in broll_groups),
+        key=lambda c: c["startFrame"],
+    )
+    failures = []
+    if len(clips) != len(audio_events):
+        return [f"audio clip count {len(clips)} != {len(audio_events)}"]
+    for event, got in zip(
+        sorted(audio_events, key=lambda e: e["timeline_start_seconds"]), clips
+    ):
+        want = {
+            "startFrame": round(event["timeline_start_seconds"] * fps),
+            "durationFrames": round(event["duration_seconds"] * fps),
+            "trimStartFrame": round(event["source_start_seconds"] * fps),
+        }
+        for field, expected in want.items():
+            if got.get(field, 0) != expected:
+                failures.append(
+                    f"{event['event_id']}: {field} {got.get(field, 0)} != {expected}"
+                )
+    return failures
+
+
 def _unlinked_audio_clips(readback: dict) -> list[dict]:
     """Audio clips with no link partner — the voiceover lane's population."""
     return sorted(
@@ -293,13 +451,7 @@ def place_plan(
         for v, a in zip(video_events, audio_events)
     )
     if not mirrored:
-        raise BridgeError(
-            "This plan has J/L cuts (audio boundaries differ from video). "
-            "Representing them in OpenTake still needs a divergent-move "
-            "primitive in the fork (link divergence covers trims, not "
-            "position). Render directly, or keep J/L as the final "
-            "render-side polish."
-        )
+        _validate_jl_representable(plan, video_events, audio_events)
     voiceover_plan_events = next(
         (t["events"] for t in plan["tracks"]
          if t["kind"] == "audio" and t.get("role") == "voiceover"),
@@ -351,6 +503,10 @@ def place_plan(
             }
             for e in entries
         ]})
+        if not mirrored:
+            # J/L: re-tile the auto-created audio lane into the plan's
+            # divergent boundaries before any overlay work.
+            _retile_audio_for_jl(client, plan, client.get_timeline())
         if broll:
             # Fork add_track (task D): create the overlay lane ourselves.
             # The core prunes empty tracks on the NEXT edit command, so the
@@ -459,6 +615,8 @@ def place_plan(
         raise BridgeError(f"{exc}{restore_note}") from exc
 
     failures = verify_placement(entries, ref_for, readback)
+    if not mirrored:
+        failures += verify_jl_audio(plan, readback)
     if broll:
         failures += verify_broll_placement(broll, ref_for, readback)
     if voiceover:
