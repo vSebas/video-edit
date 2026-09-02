@@ -370,19 +370,6 @@ def _sanitize_concepts(
                     item["asset_id"], item["start_seconds"],
                     item["end_seconds"],
                 )
-    # a document where ANY citation carries ids was written under the
-    # lineage contract — for those, missing ids on a citation fail closed
-    document_has_lineage = any(
-        isinstance(evidence_item, dict) and evidence_item.get("evidence_ids")
-        for concept_item in document.get("concepts") or []
-        if isinstance(concept_item, dict)
-        for beat_item in concept_item.get("structure") or []
-        if isinstance(beat_item, dict)
-        for evidence_item in (
-            list(beat_item.get("evidence") or [])
-            + list(beat_item.get("cutaways") or [])
-        )
-    )
     valid_concepts = []
     used_ids: set[str] = set()
     for concept in document["concepts"]:
@@ -395,6 +382,18 @@ def _sanitize_concepts(
             concept_id = f"concept_{len(valid_concepts) + 1}"
         used_ids.add(concept_id)
         concept["concept_id"] = concept_id
+        # lineage contract is per CONCEPT: kept concepts from before the
+        # contract stay on the legacy overlap path; concepts written with
+        # ids fail closed on citations that lack them
+        concept_has_lineage = any(
+            isinstance(evidence_item, dict) and evidence_item.get("evidence_ids")
+            for beat_item in concept.get("structure") or []
+            if isinstance(beat_item, dict)
+            for evidence_item in (
+                list(beat_item.get("evidence") or [])
+                + list(beat_item.get("cutaways") or [])
+            )
+        )
         concept.setdefault("platforms", ["instagram_reel", "tiktok"])
         editorial = concept.get("editorial")
         if isinstance(editorial, dict):
@@ -494,7 +493,7 @@ def _sanitize_concepts(
                     and id_index[eid][1] < end and id_index[eid][2] > start
                 ]
                 if not valid_ids and id_index:
-                    if document_has_lineage:
+                    if concept_has_lineage:
                         # a FRESH document whose writer omitted or invented
                         # ids for this citation: fail closed — attach-all
                         # over/under-authorizes (review 'decisive gap')
