@@ -530,3 +530,19 @@ confidence informs the planner and UI but does not scale match scores
   waiting in the user's Drive inbox.
 
 Suite: **183 passed**.
+
+## Design-level review of Reference Style Intelligence (2026-09-02)
+
+Codex (same session, asked explicitly to be willing to disapprove):
+**APPROVE WITH RESERVATIONS.** Approved: concept×style as the ranking
+unit, measurement-first extraction, deterministic matching for the MVP,
+the social/trend gate. Reservations adopted the same day: the match
+score is presented as "Compatibilidad estimada" (heuristic, not a
+probability); the roadmap's run-#1 protocol now splits matching validity
+from application validity with a fixed-concept styled arm; success is
+defined as measurable change in the RENDERED cut (compiler-level
+style-application + re-measured grammar), not as prompt provenance.
+The identified architectural risk — a self-confirming label loop where
+model-written labels agree with model-written labels while the pixels
+barely change — is recorded in the v2 doc header as the thing run #1
+must disprove.

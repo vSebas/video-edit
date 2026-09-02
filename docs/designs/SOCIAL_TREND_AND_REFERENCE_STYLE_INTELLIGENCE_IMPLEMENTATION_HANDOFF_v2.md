@@ -1,3 +1,21 @@
+> **Design review (Codex, 2026-09-02): APPROVE WITH RESERVATIONS.**
+> (concept, style) is the correct ranking unit; measurement-first
+> extraction, deterministic MVP matching, and the social/trend gate are
+> sound. Binding reservations: (1) the heuristic score is scaffolding —
+> never present it as a calibrated "likely to work" number, and surface
+> which dimensions were actually known; (2) style-conditioned concept
+> sets are NOT unbiased matching evidence — rank baseline concepts;
+> (3) success requires style-application.v1 to become structured COMPILER
+> input (planner prompt alone leaves measurable style non-binding) and a
+> fixed-concept blind A/B showing measurable change in the rendered cut;
+> (4) split the §49 experiment: matching validity (concepts fixed) vs
+> application validity (concept fixed, baseline vs styled plan) —
+> a styled arm that regenerates the story confounds the A/B; (5) biggest
+> risk is the self-confirming label loop (model labels reference → model
+> labels concept → heuristic agrees → prompt echoes labels) — antidote is
+> closing the loop at the pixels: re-measure the rendered cut's grammar.
+> Aggregate 3-5 references before treating a grammar as reusable.
+
 > **Review (Claude, 2026-09-02):** Accepted; supersedes v1 where they
 > differ. Its central correction — measurement-first reference analysis
 > ("measure geometry and timing; infer semantics") — was independently

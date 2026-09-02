@@ -424,9 +424,20 @@ docs consolidation.
    provenance, styled titles (bundled fonts, font/size/position), and
    live VlogInbox status. First real reference analyzed: 0.72s median
    shot, 55 cuts/min, 68 BPM with cuts off-beat (voiceover-led). Suite
-   183. Remaining before run #1: 2-4 more reference videos for a
-   multi-reference style. Everything else in the design (Trend Scout,
-   clustering, providers, music, preference-ML) stays gated behind run #1.
+   183. Codex design review 2026-09-02: APPROVE WITH RESERVATIONS
+   (verdict filed in the v2 doc header). Experiment protocol per the
+   reservations: run #1's style test splits in two — MATCHING validity
+   (baseline concepts held fixed, judge the ranking) and APPLICATION
+   validity (one concept held fixed, baseline vs styled PLAN — the styled
+   arm must NOT regenerate the story or the A/B is confounded); success
+   claims cover only the executable subset (structure, pacing, B-roll,
+   beats, titles). Remaining before run #1: 2-4 more reference videos for
+   a multi-reference style. Before DECLARING the subsystem successful
+   (not before running): style-application.v1 must become structured
+   compiler input, and the rendered cut's grammar must be re-measured
+   (close the loop at the pixels). Everything else in the design (Trend
+   Scout, clustering, providers, music, preference-ML) stays gated behind
+   run #1.
 3. **Standing items:** full content-addressed state redesign; periodic
    check that the fork still rebases onto newer OpenTake releases
    (fork-only policy — no upstream PRs; rebase cost is ours);

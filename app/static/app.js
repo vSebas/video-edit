@@ -362,7 +362,7 @@ async function loadStyleSection() {
               ${Number.isFinite(confidence) && confidence < 0.5
                 ? '<span class="muted">⚠ confianza baja (pocas referencias)</span>' : ''}
               ${best ? `
-                <span class="style-score">Mejor historia: ${(best.score * 100).toFixed(0)}%</span>
+                <span class="style-score" title="Puntaje heurístico de compatibilidad — no una probabilidad">Compatibilidad estimada: ${(best.score * 100).toFixed(0)}%</span>
                 ${best.reasons.slice(0, 2).map((r) => `<span class="muted">✓ ${escapeHtml(r)}</span>`).join('')}
                 ${best.missing.slice(0, 1).map((m) => `<span class="muted">⚠ ${escapeHtml(m)}</span>`).join('')}` : ''}
               <div class="style-actions">
