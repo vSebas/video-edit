@@ -268,6 +268,7 @@ duration and at least {MIN_EVENT_SECONDS}s long."""
         # writing; a tight cap silently truncates their answer to nothing.
         max_tokens=24000,
     )
+    generation_telemetry = response.get("telemetry") or {}
     try:
         parsed = parse_json_content(response["content"])
     except json.JSONDecodeError as exc:
@@ -296,6 +297,11 @@ duration and at least {MIN_EVENT_SECONDS}s long."""
             "Fewer than two valid concepts survived grounding checks; "
             "rerun concept generation"
         )
+    document["generation_usage"] = {
+        "model": client.config.model,
+        "prompt_tokens": generation_telemetry.get("prompt_tokens"),
+        "completion_tokens": generation_telemetry.get("completion_tokens"),
+    }
     return document
 
 

@@ -659,6 +659,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Unknown job")
         return job
 
+    @application.get("/api/projects/{project_id}/costs")
+    def project_costs(project_id: str):
+        return project_call(lambda: projects.project_costs(project_id))
+
     @application.get("/api/projects/{project_id}/analysis-progress")
     def analysis_progress(project_id: str):
         from .projects import ANALYSIS_PROGRESS

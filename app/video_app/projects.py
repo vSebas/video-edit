@@ -950,6 +950,9 @@ class ProjectService:
         except (ProviderError, PlanningError) as exc:
             raise ProjectError(f"Concept generation failed: {exc}") from exc
 
+        usage = document.pop("generation_usage", None)
+        if usage:
+            self._log_cost(project_id, "concepts", usage)
         kept_ids = {c["concept_id"] for c in keep_concepts}
         for concept in document.get("concepts") or []:
             if concept["concept_id"] in kept_ids:
@@ -1834,6 +1837,104 @@ class ProjectService:
         if not path.is_file():
             raise ProjectError(f"No existe el estilo {style_id}")
         path.unlink()
+
+    def _log_cost(self, project_id: str, kind: str, usage: dict) -> None:
+        """Append one metered model call to the project's cost ledger."""
+        path = self.settings.runtime / project_id / "costs.jsonl"
+        try:
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps({
+                    "at": utc_now(), "kind": kind,
+                    "model": usage.get("model"),
+                    "prompt_tokens": usage.get("prompt_tokens"),
+                    "completion_tokens": usage.get("completion_tokens"),
+                }) + "\n")
+        except OSError as exc:
+            LOGGER.warning("cost log failed: %s", exc)
+
+    def project_costs(self, project_id: str) -> dict:
+        """Per-project token spend, aggregated from run manifests (visual)
+        and the cost ledger (planner calls). Dollar estimates appear only
+        for models priced in app/pricing.json — no invented prices."""
+        self.get_project(project_id)
+        pricing = {}
+        pricing_path = APP_DIR / "pricing.json"
+        if pricing_path.is_file():
+            try:
+                pricing = {
+                    k: v for k, v in load_json(pricing_path).items()
+                    if isinstance(v, dict)
+                }
+            except ValueError:
+                pass
+
+        def estimate(model, prompt, completion):
+            rates = pricing.get(model or "")
+            if not rates or rates.get("input_per_m") is None:
+                return None
+            return round(
+                (prompt or 0) / 1e6 * rates["input_per_m"]
+                + (completion or 0) / 1e6 * (rates.get("output_per_m") or 0),
+                4,
+            )
+
+        rows = []
+        runs_dir = self.settings.runtime / project_id / "analysis" / "runs"
+        for manifest_path in sorted(runs_dir.glob("*/manifest.json")):
+            try:
+                manifest = load_json(manifest_path)
+            except (OSError, ValueError):
+                continue
+            telemetry = manifest.get("telemetry") or {}
+            provider = manifest.get("provider") or {}
+            model = provider.get("model") if isinstance(provider, dict) else None
+            if manifest.get("run_key", "").startswith("asr-"):
+                rows.append({
+                    "kind": "transcripción (local)", "model": model or "faster-whisper",
+                    "calls": None, "prompt_tokens": 0, "completion_tokens": 0,
+                    "est_usd": 0.0,
+                })
+                continue
+            rows.append({
+                "kind": "análisis visual", "model": model,
+                "calls": telemetry.get("calls"),
+                "prompt_tokens": telemetry.get("prompt_tokens") or 0,
+                "completion_tokens": telemetry.get("completion_tokens") or 0,
+                "est_usd": estimate(
+                    model, telemetry.get("prompt_tokens"),
+                    telemetry.get("completion_tokens"),
+                ),
+            })
+        ledger = self.settings.runtime / project_id / "costs.jsonl"
+        if ledger.is_file():
+            for line in ledger.read_text(encoding="utf-8").splitlines():
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    continue
+                rows.append({
+                    "kind": {"concepts": "historias"}.get(
+                        entry.get("kind"), entry.get("kind")
+                    ),
+                    "model": entry.get("model"),
+                    "calls": 1,
+                    "prompt_tokens": entry.get("prompt_tokens") or 0,
+                    "completion_tokens": entry.get("completion_tokens") or 0,
+                    "est_usd": estimate(
+                        entry.get("model"), entry.get("prompt_tokens"),
+                        entry.get("completion_tokens"),
+                    ),
+                })
+        priced = [r["est_usd"] for r in rows if r["est_usd"] is not None]
+        return {
+            "rows": rows,
+            "total_est_usd": round(sum(priced), 4) if priced else None,
+            "all_priced": all(r["est_usd"] is not None for r in rows),
+            "unmetered": [
+                "revisiones y comandos de edición (aún sin registrar)",
+                "análisis de estilos (biblioteca global, no por proyecto)",
+            ],
+        }
 
     def concept_inputs_token(self, project_id: str) -> str:
         """Fingerprint of the PROJECT STATE a concept generation would read

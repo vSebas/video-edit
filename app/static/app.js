@@ -1070,6 +1070,8 @@ function diagnosticsWorkspace() {
             <strong>${escapeHtml(step.label)}</strong>
           </button>`).join('')}
       </div>
+      <div class="section-header" style="margin-top:1.4rem"><div><span class="eyebrow">Costos (estimados)</span></div></div>
+      <div id="costs-panel" class="sync-diff">Cargando costos…</div>
       <div class="section-header" style="margin-top:1.4rem"><div><span class="eyebrow">Estilos de referencia</span></div></div>
       <div id="reference-panel" class="sync-diff">Cargando referencias…</div>
       <div id="jobs-panel" class="sync-diff" style="margin-top:1rem">Cargando trabajos…</div>
@@ -1079,6 +1081,32 @@ function diagnosticsWorkspace() {
       </details>
     </section>
   `;
+}
+
+async function loadCostsPanel() {
+  const box = $('#costs-panel');
+  if (!box) return;
+  try {
+    const costs = await api(`/api/projects/${state.activeProjectId}/costs`);
+    if (!costs.rows.length) { box.innerHTML = '<p class="muted">Sin llamadas medidas todavía.</p>'; return; }
+    const fmt = (n) => (n || 0).toLocaleString('es-MX');
+    box.innerHTML = `
+      <table class="costs-table">
+        <tr><th>Paso</th><th>Modelo</th><th>Tokens in</th><th>Tokens out</th><th>USD</th></tr>
+        ${costs.rows.map((row) => `
+          <tr>
+            <td>${escapeHtml(row.kind || '')}</td>
+            <td>${escapeHtml(row.model || '—')}</td>
+            <td>${fmt(row.prompt_tokens)}</td>
+            <td>${fmt(row.completion_tokens)}</td>
+            <td>${row.est_usd === null ? '<span class="muted">sin precio</span>' : `$${row.est_usd.toFixed(3)}`}</td>
+          </tr>`).join('')}
+      </table>
+      <p class="muted">${costs.total_est_usd !== null
+        ? `Total estimado: $${costs.total_est_usd.toFixed(3)}${costs.all_priced ? '' : ' (parcial — hay modelos sin precio)'}`
+        : 'Para ver dólares, pon tus tarifas reales en app/pricing.json (USD por millón de tokens).'}
+      Aún sin registrar: ${costs.unmetered.map(escapeHtml).join('; ')}.</p>`;
+  } catch (error) { box.textContent = error.message; }
 }
 
 async function loadReferencePanel() {
@@ -1271,6 +1299,7 @@ function wireHandlers() {
   });
   if ($('#jobs-panel')) loadJobsPanel();
   if ($('#reference-panel')) loadReferencePanel();
+  if ($('#costs-panel')) loadCostsPanel();
   document.querySelector('#raw-panel')?.closest('details')
     ?.addEventListener('toggle', (e) => { if (e.currentTarget.open) loadRawPanel(); }, { once: true });
 }
