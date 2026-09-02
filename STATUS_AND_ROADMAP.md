@@ -374,6 +374,16 @@ closed between 2026-08-05 and 2026-08-19. What is genuinely still open:
 - A multi-day, dialogue-heavy comparison corpus remains an open acceptance
   check.
 
+### Second external assessment, reviewed (2026-09-01 night)
+
+`CHATGPT_CURRENT_PROJECT_ASSESSMENT_2026-09-01.md` — reviewed same night;
+verdict in its header. Net adoptions: §14 is the acceptance-run rubric
+(top-level metric: "would the owner actually post this video?");
+conversational B-roll ops (add/remove/replace/move_broll) queued after
+acceptance run #1; periodically verify the trial fork still rebases onto
+newer OpenTake releases; reconcile docs/UI text after each acceptance run.
+Its doc-drift findings were exact and are fixed.
+
 ## Immediate Next Actions
 
 The trial gate closed 2026-09-01: **hybrid** (see `TRIAL_OPENTAKE.md`).

@@ -287,8 +287,8 @@ def _apply_jl(plan: dict, op: dict, assets: dict) -> str:
         kind = "L-cut"
     return (
         f"{kind} de {abs(lead):.1f}s en la transición hacia "
-        f"{video_events[index]['event_id']} (solo en el render final; "
-        "OpenTake mostrará la revisión anterior)"
+        f"{video_events[index]['event_id']} — se aplica en el render y "
+        "también al enviar a OpenTake"
     )
 
 
@@ -358,7 +358,7 @@ def _apply_add_voiceover(plan: dict, op: dict, assets: dict) -> str:
     return (
         f"Voz en off {event_id} ({op['asset_id']}) desde "
         f"{start:.1f}s, {duration:.1f}s; el audio original baja -9dB "
-        "debajo (solo en el render final)"
+        "debajo en el render (OpenTake muestra el clip sin el ducking)"
     )
 
 

@@ -7,9 +7,10 @@ timestamped observation — not a new timeline engine.
 
 The execution decision is hybrid: OpenTake is the adopted editing surface
 over MCP, the owned FFmpeg renderer produces final pixels, and Resolve remains
-the editable-export escape hatch. The OpenTake bridge is currently proven by
-trial scripts; timeline-to-plan sync is the next keystone required to make
-that loop part of the daily app.
+the editable-export escape hatch. The full loop is integrated into the
+daily app (2026-09-01): placement (with track creation, B-roll, voiceover,
+and J/L re-tiling), revision-guarded timeline-to-plan sync, dialogue
+cleanup, and atomic instruction edits are all workbench features.
 
 **Repository:** <https://github.com/vSebas/video-edit> (private)
 
