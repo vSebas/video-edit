@@ -1,3 +1,19 @@
+> **Review (Claude, 2026-09-02):** Accepted; supersedes v1 where they
+> differ. Its central correction — measurement-first reference analysis
+> ("measure geometry and timing; infer semantics") — was independently
+> confirmed the same day: an adversarial review flagged our VLM-window
+> segmenter as a fabricated pacing source, and re-measuring the first real
+> reference moved it from 2.07s/23.5 cpm to 0.72s/55 cpm. The shipped MVP
+> slice now complies for shot structure and audio activity. Adopted from
+> v2 so far: raw shot measurement, closed-set classifications, fail-closed
+> numerics, schema enforcement, tiered trust in matching. Not yet built
+> (in v2's own recommended order): per-field evidence-tier tags, audio
+> beat grid/cut-to-beat offsets, caption/motion extraction,
+> style-application.v1, expected-style-gain on missing shots. Everything
+> social/trend stays gated behind the §49-51 experiment, which is the
+> same gate as roadmap item 1 (fresh-footage runs) — run it with 3-5
+> references, not 1.
+
 # Social Trend + Reference Video Style Intelligence — Implementation Handoff v2
 
 **Project:** `video-edit` + `OpenTake`  

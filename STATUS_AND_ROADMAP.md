@@ -406,9 +406,9 @@ docs consolidation.
    metric: would you post it? The same day covers: the first REAL B-roll
    and J-cut session, and the sealed P7 sidecar A/B (the judge packet is
    already waiting at `bench/results-context/last-spring-quarter-class/judge/`).
-2. **Reference-style intelligence** — design accepted (see
-   `docs/designs/SOCIAL_TREND_AND_REFERENCE_STYLE_INTELLIGENCE_IMPLEMENTATION_HANDOFF.md`
-   and its review header). MVP #1 slice is BUILT (2026-09-01): schemas
+2. **Reference-style intelligence** — design accepted (v2 handoff is
+   current: `docs/designs/SOCIAL_TREND_AND_REFERENCE_STYLE_INTELLIGENCE_IMPLEMENTATION_HANDOFF_v2.md`,
+   measurement-first; v1 kept for history). MVP #1 slice is BUILT (2026-09-01): schemas
    (`style-observation/template/match.v1`), `video_app/style_intelligence.py`
    (deterministic shot/pacing/speech extraction + one-call semantic grammar
    read + template aggregation + deterministic concept×style matching),
