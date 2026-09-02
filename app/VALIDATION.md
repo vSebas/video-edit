@@ -391,4 +391,4 @@ back out of exports — not by asserting that code ran.
 - **Access control**: verified live — 401 without the token, 200 with it,
   host rclone config read-only from inside the container.
 
-Current automated result in `video-editing-app:local`: **125 passed**.
+Current automated result in `video-editing-app:local`: **126 passed**, plus a same-day adversarial cross-review whose 2 blockers and 20 majors were fixed and re-tested.

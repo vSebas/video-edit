@@ -63,7 +63,7 @@ proposal and editable exports:
    prior revisions kept.
 7. `POST /plan/command` + `/plan/command/apply` — atomic natural-language
    edits: one instruction → one operation from a closed set (delete, trim,
-   volume, J/L cut, title), computed and bounds-checked deterministically;
+   volume, J/L cut, title, voiceover add/remove), computed and bounds-checked deterministically;
    the LLM only picks the op. Revision-guarded propose/apply.
 8. `POST /render?burn_captions=true` — review render with timeline-aligned
    Spanish captions burned in. Renders are cached per plan content: an

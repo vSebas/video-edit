@@ -182,12 +182,19 @@ def main() -> None:
         ):
             raise RuntimeError("Run source-context analysis before this A/B harness")
 
-        baseline = generate(
-            client, args.project_id, args.provider, args.model, False, args.timeout
+        # Randomize call order too — a fixed baseline-first order would
+        # confound treatment with provider drift between the two calls.
+        first_is_baseline = secrets.choice([True, False])
+        first = generate(
+            client, args.project_id, args.provider, args.model,
+            not first_is_baseline, args.timeout,
         )
-        sidecar = generate(
-            client, args.project_id, args.provider, args.model, True, args.timeout
+        second = generate(
+            client, args.project_id, args.provider, args.model,
+            first_is_baseline, args.timeout,
         )
+        baseline = first if first_is_baseline else second
+        sidecar = second if first_is_baseline else first
         telemetry_response = client.get(
             f"/api/projects/{args.project_id}/analysis/telemetry"
         )

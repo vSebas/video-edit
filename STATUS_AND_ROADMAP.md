@@ -387,9 +387,7 @@ UI) all shipped 2026-09-01 — see the P0-P6 log above.
    session (create a V2 track in the OpenTake GUI, drop clips, sync); and
    the sidecar's second sealed-blind A/B on that same day.
 2. **Act on the P1-P6 Codex cross-review** (auto-fires 16:54 2026-09-01).
-3. **Rotation detection** — the highest-value small item left: probe/visual
-   evidence → `rotation_degrees` set automatically; execution already works.
-4. **Fork batch 2 queued (owner: "do it", 2026-09-01):** OpenTake learns to
+3. **Fork batch 2 queued (owner: "do it", 2026-09-01):** OpenTake learns to
    REPRESENT render-side polish so placement stops refusing it — add_track
    + existing-index placement on external MCP (also removes the manual V2
    step for B-roll), then explicit link-divergence semantics for J/L cuts
@@ -405,9 +403,8 @@ UI) all shipped 2026-09-01 — see the P0-P6 log above.
    worth the rebase. Remaining fork-queue items in value order: project
    lifecycle tools on external MCP (unlocks unattended editing),
    progress-event staleness, window-close lingering process.
-5. Standing items, unchanged: voiceover placement with ducking;
-   trending-audio matching; reference-vlog style learning; sideways-clip
-   rotation; durability redesign behind its trigger; writer seat stays
+4. Standing items: trending-audio matching; reference-vlog style learning;
+   the full content-addressed state redesign; writer seat stays
    deepseek-v4-pro (rematch 2026-09-01: retained blind over gpt-5.6-sol);
    sidecar dormant with its harness one command away, but its next judge packet
    must remove treatment metadata and keep the blind key separate.

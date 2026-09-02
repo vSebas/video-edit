@@ -462,7 +462,7 @@ class TestCleanupEndpoints:
         pid = "cleanup-test"
         root = tmp_path / "runtime" / pid
         (root / "plan").mkdir(parents=True)
-        runs = root / "analysis" / "runs" / "asr-live-abc" 
+        runs = root / "analysis" / "runs" / "asr-live-abc"
         (runs / "raw").mkdir(parents=True)
         (runs / "manifest.json").write_text(_json.dumps(
             {"run_key": "asr-live-abc", "imported_at": "2026-09-01T00:00:00Z",
