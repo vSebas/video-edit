@@ -1913,19 +1913,7 @@ async function importFromDrive(folder) {
     activeImports.set(folder, { expected });
     refreshDriveInbox();
     notice(`Importando «${folder}» como proyecto nuevo — puedes seguir trabajando.`);
-    progressTimer = setInterval(async () => {
-      try {
-        const local = await api(`/api/drive/local-progress?folder=${encodeURIComponent(folder)}`);
-        const copied = Math.round(local.copied_bytes / 1e6);
-        const label = expected
-          ? `⬇ ${copied} / ${Math.round(expected / 1e6)} MB`
-          : `⬇ ${copied} MB`;
-        const el = document.querySelector(
-          `[data-import-progress="${CSS.escape(folder)}"]`
-        );
-        if (el) el.textContent = label;
-      } catch { /* transient */ }
-    }, 3000);
+    progressTimer = startImportProgressTimer(folder, expected);
     const job = await api('/api/drive/import', {
       method: 'POST',
       body: JSON.stringify({ folder }),
@@ -1944,7 +1932,26 @@ async function importFromDrive(folder) {
   }
 }
 
+function startImportProgressTimer(folder, expected) {
+  return setInterval(async () => {
+    try {
+      const local = await api(`/api/drive/local-progress?folder=${encodeURIComponent(folder)}`);
+      const copied = Math.round(local.copied_bytes / 1e6);
+      const label = expected
+        ? `⬇ ${copied} / ${Math.round(expected / 1e6)} MB`
+        : `⬇ ${copied} MB`;
+      const el = document.querySelector(
+        `[data-import-progress="${CSS.escape(folder)}"]`
+      );
+      if (el) el.textContent = label;
+    } catch { /* transient */ }
+  }, 3000);
+}
+
 async function watchImportJob(folder, jobId) {
+  // a refresh must restore the LIVE progress too, not just the label
+  const expected = activeImports.get(folder)?.expected || 0;
+  const progressTimer = startImportProgressTimer(folder, expected);
   try {
     const done = await pollJob(jobId);
     notice(`«${folder}» importado — abriendo el proyecto.`);
@@ -1954,6 +1961,7 @@ async function watchImportJob(folder, jobId) {
     notice(error.message, true);
     await refreshProjects();
   } finally {
+    clearInterval(progressTimer);
     activeImports.delete(folder);
     refreshDriveInbox();
   }
