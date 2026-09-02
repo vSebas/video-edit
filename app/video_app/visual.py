@@ -348,10 +348,12 @@ def analyze_assets(
             ): (index, asset, start, end)
             for index, asset, path, start, end in tasks
         }
+        completed = 0
         for future in as_completed(futures):
             index, asset, start, end = futures[future]
+            completed += 1
             if progress is not None:
-                progress(len(results) + len(failures) + 1, len(tasks))
+                progress(completed, len(tasks))
             try:
                 results[index] = future.result()
             except (ProviderError, VisualAnalysisError, json.JSONDecodeError) as exc:

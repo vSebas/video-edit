@@ -663,7 +663,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def analysis_progress(project_id: str):
         from .projects import ANALYSIS_PROGRESS
 
-        return ANALYSIS_PROGRESS.get(project_id) or {}
+        project_call(lambda: projects.get_project(project_id))
+        entry = dict(ANALYSIS_PROGRESS.get(project_id) or {})
+        entry.pop("token", None)  # ownership detail, not API surface
+        return entry
 
     @application.get("/api/projects/{project_id}/media/{asset_id}")
     def media(project_id: str, asset_id: str):

@@ -103,8 +103,10 @@ def analyze_speech(
         if not asset.get("audio"):
             continue
         eligible += 1
+        # report BEFORE transcribing as work-in-progress (n-1 done), so
+        # the bar never claims N/N while the last clip still runs
         if progress is not None:
-            progress(eligible, audible)
+            progress(eligible - 1, audible)
         path = (media_root / asset["source_path"]).resolve()
         if not path.is_file():
             warnings.append(f"Missing media file skipped: {asset['filename']}")

@@ -45,10 +45,19 @@ ANALYSIS_PROGRESS: dict[str, dict] = {}
 
 
 def _progress_setter(project_id: str, phase: str):
+    token = uuid.uuid4().hex[:8]
+
     def update(done: int, total: int) -> None:
         ANALYSIS_PROGRESS[project_id] = {
-            "phase": phase, "done": done, "total": total,
+            "phase": phase, "done": done, "total": total, "token": token,
         }
+
+    def clear() -> None:
+        # concurrent jobs must not erase each other's progress
+        if ANALYSIS_PROGRESS.get(project_id, {}).get("token") == token:
+            ANALYSIS_PROGRESS.pop(project_id, None)
+
+    update.clear = clear
     return update
 
 def concepts_doc_concepts(document: dict) -> list[dict]:
@@ -107,6 +116,7 @@ class ProjectService:
         self._render_locks: dict[str, threading.Lock] = {}
         self._render_locks_guard = threading.Lock()
         self._drive_imports: dict[str, subprocess.Popen] = {}
+        self._drive_cancelled: set[str] = set()
         self._drive_imports_guard = threading.Lock()
         self.settings = settings
         self.settings.runtime.mkdir(parents=True, exist_ok=True)
@@ -370,13 +380,14 @@ class ProjectService:
                     self._detect_rotations(project_id, client)
                     return cached
             ANALYSIS_PROGRESS.pop(project_id, None)
+            visual_progress = _progress_setter(project_id, "visual")
             try:
                 normalized, raw_records, telemetry = analyze_assets(
                     client, assets, media_root, project_id, run_id,
-                    progress=_progress_setter(project_id, "visual"),
+                    progress=visual_progress,
                 )
             finally:
-                ANALYSIS_PROGRESS.pop(project_id, None)
+                visual_progress.clear()
             validate_semantic_evidence(
                 normalized,
                 SCHEMA_DIR / "semantic-evidence.schema.json",
@@ -602,13 +613,14 @@ class ProjectService:
         run_id = uuid.uuid4().hex[:12]
         run_key = f"asr-live-{run_id}"
         try:
+            speech_progress = _progress_setter(project_id, "speech")
             try:
                 normalized, raw_records = analyze_speech(
                     assets, media_root, project_id, run_id, model_size,
-                    progress=_progress_setter(project_id, "speech"),
+                    progress=speech_progress,
                 )
             finally:
-                ANALYSIS_PROGRESS.pop(project_id, None)
+                speech_progress.clear()
             validate_semantic_evidence(
                 normalized,
                 SCHEMA_DIR / "semantic-evidence.schema.json",
@@ -2071,16 +2083,29 @@ class ProjectService:
                     receiving = (now - last).total_seconds() < 120
                 except ValueError:
                     pass
+            imported = slugify(name) in existing
             local = self.settings.root / "footage" / slugify(name)
-            local_bytes = (
-                sum(p.stat().st_size for p in local.rglob("*") if p.is_file())
-                if local.is_dir() else 0
-            )
+            local_bytes = 0
+            if not imported and local.is_dir():
+                for p in local.rglob("*"):
+                    # exclude rclone temps and our generated JPGs so the
+                    # percentage compares like bytes with the remote total
+                    if p.suffix in (".partial",) or (
+                        p.suffix.lower() == ".jpg"
+                        and p.with_suffix(".HEIC").exists()
+                    ):
+                        continue
+                    try:
+                        if p.is_file():
+                            local_bytes += p.stat().st_size
+                    except OSError:
+                        continue  # racing an in-flight rclone rename
             folders.append(
                 {
                     "name": name,
+                    "slug": slugify(name),
                     "modified": info["modified"] or None,
-                    "imported": slugify(name) in existing,
+                    "imported": imported,
                     "file_count": info["files"],
                     "total_bytes": info["bytes"],
                     "local_bytes": local_bytes,
@@ -2099,9 +2124,11 @@ class ProjectService:
             from pillow_heif import register_heif_opener
 
             register_heif_opener()
+            partial = jpg.with_suffix(".jpg.tmp")
             with Image.open(heic) as image:
                 upright = ImageOps.exif_transpose(image)
-                upright.convert("RGB").save(jpg, "JPEG", quality=92)
+                upright.convert("RGB").save(partial, "JPEG", quality=92)
+            partial.replace(jpg)  # atomic: no truncated JPEG survives
             return True
         except Exception as exc:  # noqa: BLE001
             LOGGER.warning("HEIC conversion failed for %s: %s", heic.name, exc)
@@ -2111,10 +2138,18 @@ class ProjectService:
         slug = slugify(folder)
         with self._drive_imports_guard:
             process = self._drive_imports.get(slug)
-        if process is None:
-            raise ProjectError("No hay ninguna importación activa de esa carpeta")
+            if process is None:
+                raise ProjectError(
+                    "No hay ninguna importación activa de esa carpeta"
+                )
+            # the flag covers the gaps between subprocess phases
+            self._drive_cancelled.add(slug)
         process.terminate()
         return {"cancelled": slug}
+
+    def _import_cancelled(self, slug: str) -> bool:
+        with self._drive_imports_guard:
+            return slug in self._drive_cancelled
 
     def drive_local_progress(self, folder: str) -> dict:
         """Bytes already copied to the laptop for an in-flight import —
@@ -2139,6 +2174,8 @@ class ProjectService:
         slug = slugify(folder)
         target = self.settings.root / "footage" / slug
         target.mkdir(parents=True, exist_ok=True)
+        with self._drive_imports_guard:
+            self._drive_cancelled.discard(slug)
         process = subprocess.Popen(
             [
                 "rclone", "copy", f"{self.DRIVE_INBOX}/{folder}", str(target),
@@ -2150,9 +2187,14 @@ class ProjectService:
             self._drive_imports[slug] = process
         try:
             _, stderr = process.communicate(timeout=7200)
-        finally:
-            with self._drive_imports_guard:
-                self._drive_imports.pop(slug, None)
+        except subprocess.TimeoutExpired:
+            # never leak the child: kill, reap, then report
+            process.kill()
+            process.communicate()
+            raise ProjectError(
+                "La importación superó el tiempo máximo (2h) — reanuda con "
+                "Importar"
+            ) from None
         if process.returncode:
             # rclone resumes cleanly: completed clips are kept and skipped
             # on the next Importar
@@ -2165,28 +2207,51 @@ class ProjectService:
         # Integrity: verify every local file against Drive's checksums —
         # a silent partial/corrupt copy must fail the import, not become
         # a project missing footage
-        check = subprocess.run(
+        check = subprocess.Popen(
             ["rclone", "check", "--one-way",
              f"{self.DRIVE_INBOX}/{folder}", str(target)],
-            capture_output=True, text=True, timeout=600,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
+        with self._drive_imports_guard:
+            self._drive_imports[slug] = check
+        try:
+            _, check_err = check.communicate(timeout=600)
+        except subprocess.TimeoutExpired:
+            check.kill()
+            check.communicate()
+            raise ProjectError(
+                "La verificación de integridad tardó demasiado — reintenta"
+            ) from None
+        if self._import_cancelled(slug):
+            raise ProjectError(
+                "Importación cancelada — los clips ya copiados se conservan"
+            )
         if check.returncode:
             raise ProjectError(
                 "La verificación de integridad falló — algunos archivos no "
                 "coinciden con Drive. Vuelve a pulsar Importar para "
-                f"reintentar: {check.stderr.strip()[-300:]}"
+                f"reintentar: {(check_err or '').strip()[-300:]}"
             )
         # iPhone HEIC photos: ffmpeg cannot decode them, so convert to JPG
         # at ingest (originals kept) — otherwise photos silently never
         # become B-roll assets
-        for heic in sorted(target.rglob("*")):
-            if heic.suffix.lower() != ".heic" or not heic.is_file():
-                continue
-            jpg = heic.with_suffix(".jpg")
-            if jpg.exists():
-                continue
-            if not self._convert_heic(heic, jpg):
-                jpg.unlink(missing_ok=True)
+        try:
+            for heic in sorted(target.rglob("*")):
+                if self._import_cancelled(slug):
+                    raise ProjectError(
+                        "Importación cancelada — los clips ya copiados se "
+                        "conservan"
+                    )
+                if heic.suffix.lower() != ".heic" or not heic.is_file():
+                    continue
+                jpg = heic.with_suffix(".jpg")
+                if jpg.exists():
+                    continue
+                self._convert_heic(heic, jpg)
+        finally:
+            with self._drive_imports_guard:
+                self._drive_imports.pop(slug, None)
+                self._drive_cancelled.discard(slug)
         prompt = ""
         for note in sorted(target.glob("*.txt")):
             if note.stem.lower().startswith(("nota", "note")):

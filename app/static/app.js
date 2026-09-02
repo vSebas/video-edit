@@ -1714,13 +1714,19 @@ async function loadProject(projectId) {
           0,
         );
         // the chronometer survives a refresh: the job knows when it began
-        if (jobs[0]?.started_at) {
-          state.busy.startedAt = Date.parse(jobs[0].started_at);
+        const runningJob = jobs.find((job) => job.status === 'running' && job.started_at);
+        if (runningJob) {
+          state.busy.startedAt = Date.parse(runningJob.started_at);
         }
-        Promise.allSettled(jobs.map((job) => pollJob(job.job_id))).then(async () => {
+        Promise.allSettled(jobs.map((job) => pollJob(job.job_id))).then(async (settled) => {
           if (!current()) return;
           state.busy = null;
-          notice('Listo.');
+          const failed = settled.filter((item) => item.status === 'rejected');
+          if (failed.length) {
+            notice(failed[0].reason?.message || 'Un trabajo falló — revisa Diagnóstico.', true);
+          } else {
+            notice('Listo.');
+          }
           await loadProject(projectId);
         });
         return;
@@ -1749,6 +1755,21 @@ async function refreshDriveInbox() {
   try {
     const payload = await api('/api/drive/inbox');
     const waiting = (payload.folders || []).filter((folder) => !folder.imported);
+    // a refresh must not forget an in-flight import: rebuild from the
+    // server's running jobs (matched via the folder's slug)
+    try {
+      const running = (await api('/api/jobs')).jobs.filter(
+        (job) => job.kind === 'drive_import'
+          && ['queued', 'running'].includes(job.status)
+      );
+      for (const folder of waiting) {
+        const job = running.find((j) => j.project_id === folder.slug);
+        if (job && !activeImports.has(folder.name)) {
+          activeImports.set(folder.name, { expected: folder.total_bytes });
+          watchImportJob(folder.name, job.job_id);
+        }
+      }
+    } catch { /* jobs endpoint transient */ }
     const receiving = waiting.some((folder) => folder.receiving);
     // while something is arriving, keep watching so the phone can see its
     // own Drive upload land without reloading
@@ -1784,7 +1805,7 @@ async function refreshDriveInbox() {
                <button class="primary compact" data-drive-import="${escapeHtml(folder.name)}"
                  ${folder.receiving ? 'disabled title="Espera a que Drive termine de recibir"' : ''}>
                  ${folder.local_bytes > 0 && folder.local_bytes < folder.total_bytes
-                   ? `Reanudar (${Math.round(folder.local_bytes / folder.total_bytes * 100)}%)`
+                   ? `Reanudar (~${Math.min(99, Math.round(folder.local_bytes / folder.total_bytes * 100))}%)`
                    : 'Importar'}
                </button>`}
         </span>`;
@@ -1847,6 +1868,21 @@ async function importFromDrive(folder) {
     await refreshProjects();
   } finally {
     clearInterval(progressTimer);
+    activeImports.delete(folder);
+    refreshDriveInbox();
+  }
+}
+
+async function watchImportJob(folder, jobId) {
+  try {
+    const done = await pollJob(jobId);
+    notice(`«${folder}» importado — abriendo el proyecto.`);
+    await refreshProjects();
+    if (done.result?.project_id) await loadProject(done.result.project_id);
+  } catch (error) {
+    notice(error.message, true);
+    await refreshProjects();
+  } finally {
     activeImports.delete(folder);
     refreshDriveInbox();
   }
