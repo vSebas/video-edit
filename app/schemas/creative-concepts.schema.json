@@ -430,6 +430,12 @@
             "null"
           ],
           "maxLength": 64
+        },
+        "lineage_contract": {
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       }
     }

@@ -795,3 +795,24 @@ Known cost, accepted: legacy concepts (pre-lineage) compile via the
 risk-gated fallback and shrink conservatively (23-29-abril's current
 stories drop 8→3 / 6→2 scenes) — regenerating ideas restores full
 coverage WITH lineage.
+
+## Trust-system round four (2026-09-02): server-owned lineage contract
+
+Codex's final-verification answer was NO with one remaining requirement,
+now implemented end-to-end (suite 214→218):
+
+- **The contract is server-owned.** Fresh concepts are under the lineage
+  contract because the SERVER supplied id-bearing evidence — a writer
+  returning zero ids can no longer demote itself to the lenient path
+  (proven by test). Concepts are stamped `lineage_contract` at
+  generation; kept concepts keep their own marker; plans compiled from
+  contract concepts carry the stamp; revisions preserve it.
+- **B-roll events carry evidence_ids** (both allocation passes).
+- **Moved cuts fail closed under contract**: a revision cut over footage
+  the current plan never covered has no inheritable identity and is
+  dropped, not laundered through the lexical fallback.
+- **Approvals are live, not compile-time**: at render AND restore, every
+  lineage-bearing event's ids are re-checked — a claim rejected after
+  compilation blocks the scene with its id named; a pending one asks for
+  targeted confirmation. Legacy (unstamped) artifacts alone use the
+  risk-gated lexical fallback, exactly as the verdict prescribed.

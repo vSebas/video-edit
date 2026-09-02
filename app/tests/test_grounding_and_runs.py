@@ -659,7 +659,9 @@ class TestFreshVsLegacyLineage:
         # citations without valid ids were dropped -> <3 beats -> concept out
         assert document["concepts"] == []
 
-    def test_legacy_document_recovers_identity_by_overlap(self) -> None:
+    def test_kept_legacy_concept_recovers_identity_by_overlap(self) -> None:
+        # legacy = a KEPT concept without the server stamp; fresh concepts
+        # can never demote themselves (see TestServerOwnedContract)
         from video_app.planning import _sanitize_concepts
 
         evidence = [
@@ -682,7 +684,7 @@ class TestFreshVsLegacyLineage:
             {"asset_id": "clip_0", "media_type": "video",
              "duration_seconds": 30},
         ]}}
-        _sanitize_concepts(document, project, evidence)
+        _sanitize_concepts(document, project, evidence, kept_ids={"c1"})
         concept = document["concepts"][0]
         assert len(concept["structure"]) == 3
         assert concept["structure"][0]["evidence"][0]["evidence_ids"] == ["ev-1"]
@@ -697,6 +699,83 @@ class TestFreshVsLegacyLineage:
                 "observed_content": "ganó la carrera",
                 "evidence_ids": ["ev-1"]}
         assert claim_supported(span, {}, sets) is False
+
+
+class TestServerOwnedContract:
+    def _document(self, with_ids):
+        beats = [
+            {"beat_id": f"b{i}", "purpose": "p", "target_duration_seconds": 2,
+             "evidence": [{
+                 "asset_id": "clip_0", "start_seconds": i * 2.0,
+                 "end_seconds": i * 2.0 + 1.0, "observed_content": "camina",
+                 "confidence": 0.9,
+                 **({"evidence_ids": ["ev-1"]} if with_ids else {}),
+             }]}
+            for i in range(3)
+        ]
+        return {"footage_summary": "x", "concepts": [{
+            "concept_id": "c1", "title": "t", "structure": beats,
+        }]}
+
+    PROJECT = {"inventory": {"assets": [
+        {"asset_id": "clip_0", "media_type": "video", "duration_seconds": 30},
+    ]}}
+    EVIDENCE = [{"evidence_id": "ev-1", "asset_id": "clip_0",
+                 "start_seconds": 0.0, "end_seconds": 10.0,
+                 "caption": "camina"}]
+
+    def test_model_omitting_all_ids_cannot_self_demote(self) -> None:
+        from video_app.planning import _sanitize_concepts
+
+        # server supplied ids -> contract applies even when the writer
+        # returned NONE; id-less citations fail closed
+        document = self._document(with_ids=False)
+        _sanitize_concepts(document, self.PROJECT, self.EVIDENCE, kept_ids=set())
+        assert document["concepts"] == []
+
+    def test_fresh_concepts_are_stamped(self) -> None:
+        from video_app.planning import _sanitize_concepts
+
+        document = self._document(with_ids=True)
+        _sanitize_concepts(document, self.PROJECT, self.EVIDENCE, kept_ids=set())
+        assert document["concepts"][0]["lineage_contract"] is True
+
+    def test_kept_legacy_concept_keeps_its_own_marker(self) -> None:
+        from video_app.planning import _sanitize_concepts
+
+        document = self._document(with_ids=False)
+        # kept concept without marker -> legacy path -> survives by overlap
+        _sanitize_concepts(document, self.PROJECT, self.EVIDENCE,
+                           kept_ids={"c1"})
+        assert len(document["concepts"]) == 1
+        assert not document["concepts"][0].get("lineage_contract")
+
+
+class TestLiveLineageAtExits:
+    def test_revoked_or_pending_ids_block_the_plan(self, tmp_path) -> None:
+        from video_app.config import Settings
+        from video_app.projects import ProjectError, ProjectService
+
+        service = ProjectService(
+            Settings(root=tmp_path, runtime=tmp_path / "runtime")
+        )
+        service._evidence_review_sets = lambda pid: {
+            "approved": {"ev-ok": "camina"}, "pending": {"ev-pend"},
+            "rejected": {"ev-bad"},
+        }
+        def plan_with(eids):
+            return {"lineage_contract": True, "tracks": [{
+                "kind": "video", "events": [{
+                    "event_id": "v01", "evidence_ids": eids,
+                }]}]}
+        service._verify_plan_lineage("p", plan_with(["ev-ok"]))  # passes
+        with pytest.raises(ProjectError, match="RECHAZADA"):
+            service._verify_plan_lineage("p", plan_with(["ev-bad"]))
+        with pytest.raises(ProjectError, match="sin confirmar"):
+            service._verify_plan_lineage("p", plan_with(["ev-pend"]))
+        # legacy plans (no contract) are untouched by this check
+        legacy = plan_with(["ev-bad"]); legacy.pop("lineage_contract")
+        service._verify_plan_lineage("p", legacy)
 
 
 class TestTitleGate:

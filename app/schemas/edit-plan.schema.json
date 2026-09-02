@@ -200,6 +200,12 @@
           "minimum": 0
         }
       }
+    },
+    "lineage_contract": {
+      "type": [
+        "boolean",
+        "null"
+      ]
     }
   },
   "$defs": {

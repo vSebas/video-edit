@@ -796,6 +796,35 @@ class ProjectService:
             )
         return ranges
 
+    def _verify_plan_lineage(self, project_id: str, plan: dict) -> None:
+        """For contract plans: every lineage-bearing event's ids must be
+        CURRENTLY approved — an approval revoked after compilation
+        invalidates the scene at the next exit (render/restore)."""
+        if not plan.get("lineage_contract"):
+            return
+        sets = self._evidence_review_sets(project_id)
+        approved = sets["approved"]
+        rejected = sets["rejected"]
+        for track in plan.get("tracks", []):
+            if track.get("kind") != "video":
+                continue
+            for event in track.get("events", []):
+                for eid in event.get("evidence_ids") or []:
+                    if eid in rejected:
+                        raise ProjectError(
+                            f"La escena {event.get('event_id')} usa la "
+                            f"afirmación {eid}, que fue RECHAZADA después "
+                            "de compilar — quita esa escena o revisa la "
+                            "decisión en Diagnóstico"
+                        )
+                    if eid not in approved:
+                        raise ProjectError(
+                            f"La escena {event.get('event_id')} depende de "
+                            f"la afirmación {eid}, aún sin confirmar — "
+                            "confírmala en «Afirmaciones sin verificar» y "
+                            "vuelve a intentarlo"
+                        )
+
     def _evidence_review_sets(self, project_id: str) -> dict:
         """The trust primitive: per-evidence-id review state. Approval
         rides on identity, not on time overlap or text similarity."""
@@ -1669,6 +1698,7 @@ class ProjectService:
                             "respaldo aprobado — confirma la evidencia o "
                             "elige otra revisión"
                         )
+            self._verify_plan_lineage(project_id, restored)
             try:
                 validate_edit_plan(
                     restored, SCHEMA_DIR / "edit-plan.schema.json",
@@ -3025,6 +3055,7 @@ class ProjectService:
                         "el título a …») o confirma la evidencia antes de "
                         "renderizar"
                     )
+        self._verify_plan_lineage(project_id, plan)
         captions_path = None
         if burn_captions:
             captions_path = self.export_captions(project_id)

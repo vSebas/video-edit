@@ -295,7 +295,10 @@ duration and at least {MIN_EVENT_SECONDS}s long."""
             "source_context": bool(source_context),
         },
     }
-    _sanitize_concepts(document, project, evidence)
+    _sanitize_concepts(
+        document, project, evidence,
+        kept_ids={item["concept_id"] for item in keep_concepts or []},
+    )
     if len(document["concepts"]) < 2:
         raise PlanningError(
             "Fewer than two valid concepts survived grounding checks; "
@@ -340,7 +343,8 @@ def _claim_unsupported(claim: str, observed_text: str) -> bool:
 
 
 def _sanitize_concepts(
-    document: dict, project: dict, evidence: list[dict] | None = None
+    document: dict, project: dict, evidence: list[dict] | None = None,
+    kept_ids: set[str] | None = None,
 ) -> None:
     """Deterministically enforce grounding: real assets, clamped ranges,
     minimum beat coverage. Invalid evidence or beats are dropped.
@@ -382,18 +386,17 @@ def _sanitize_concepts(
             concept_id = f"concept_{len(valid_concepts) + 1}"
         used_ids.add(concept_id)
         concept["concept_id"] = concept_id
-        # lineage contract is per CONCEPT: kept concepts from before the
-        # contract stay on the legacy overlap path; concepts written with
-        # ids fail closed on citations that lack them
-        concept_has_lineage = any(
-            isinstance(evidence_item, dict) and evidence_item.get("evidence_ids")
-            for beat_item in concept.get("structure") or []
-            if isinstance(beat_item, dict)
-            for evidence_item in (
-                list(beat_item.get("evidence") or [])
-                + list(beat_item.get("cutaways") or [])
-            )
-        )
+        # The lineage contract is SERVER-OWNED, never inferred from model
+        # output (a writer omitting every id must not demote itself to the
+        # lenient path). Fresh concepts are under contract whenever the
+        # evidence the server supplied carries ids; kept concepts keep the
+        # marker they were stamped with at their own generation.
+        is_kept = kept_ids is not None and concept_id in kept_ids
+        if is_kept:
+            concept_has_lineage = bool(concept.get("lineage_contract"))
+        else:
+            concept_has_lineage = bool(id_index)
+            concept["lineage_contract"] = concept_has_lineage
         concept.setdefault("platforms", ["instagram_reel", "tiktok"])
         editorial = concept.get("editorial")
         if isinstance(editorial, dict):
@@ -846,6 +849,10 @@ def build_plan(
                     "intent": shot["intent"],
                     "observed_content": shot["observed_content"],
                     "confidence": shot["confidence"],
+                    **(
+                        {"evidence_ids": shot["evidence_ids"]}
+                        if shot.get("evidence_ids") else {}
+                    ),
                     "reframe": {
                         "mode": "fit",
                         "center_x": 0.5,
@@ -916,6 +923,10 @@ def build_plan(
                     "intent": shot["intent"],
                     "observed_content": shot["observed_content"],
                     "confidence": shot["confidence"],
+                    **(
+                        {"evidence_ids": shot["evidence_ids"]}
+                        if shot.get("evidence_ids") else {}
+                    ),
                     "reframe": {
                         "mode": "fit",
                         "center_x": 0.5,
@@ -1222,6 +1233,7 @@ def compile_edit_plan(
     )
     if concept is None:
         raise PlanningError(f"Unknown concept: {concept_id}")
+    concept_under_contract = bool(concept.get("lineage_contract"))
 
     spans = []
     cutaways = []
@@ -1297,7 +1309,7 @@ def compile_edit_plan(
                 "confirma la evidencia correspondiente o cambia el título"
             )
     try:
-        return build_plan(
+        compiled = build_plan(
             project,
             spans,
             cutaways=cutaways,
@@ -1312,6 +1324,10 @@ def compile_edit_plan(
         )
     except PlanningError as exc:
         raise PlanningError(f"The selected concept is not compilable: {exc}") from exc
+    else:
+        if concept_under_contract:
+            compiled["lineage_contract"] = True
+        return compiled
 
 
 REVISION_SYSTEM_PROMPT = (
@@ -1421,6 +1437,18 @@ events. Every range must stay at least {MIN_EVENT_SECONDS}s long."""
                 inherited.extend(event["evidence_ids"])
         if inherited:
             span["evidence_ids"] = sorted(set(inherited))
+    if plan.get("lineage_contract"):
+        # a cut moved to footage the current plan never covered has no
+        # inheritable identity — under the contract that fails closed
+        # instead of dropping to the lenient lexical path
+        uncovered = [s2 for s2 in spans if not s2.get("evidence_ids")]
+        spans = [s2 for s2 in spans if s2.get("evidence_ids")]
+        if uncovered and not spans:
+            raise PlanningError(
+                "La revisión movió los cortes a material sin identidad de "
+                "evidencia; el plan quedó sin cambios — pide el cambio de "
+                "otra forma o regenera las ideas"
+            )
     if not spans:
         raise PlanningError(
             "The revision produced no valid cuts; the plan was left unchanged"
@@ -1490,6 +1518,8 @@ events. Every range must stay at least {MIN_EVENT_SECONDS}s long."""
             if k not in ("achieved_plan",)
         } or None,
     )
+    if plan.get("lineage_contract"):
+        new_plan["lineage_contract"] = True
     if approved_captions is not None and unchanged_user_title:
         # the user's own title keeps its exemption across revisions
         for track in new_plan.get("tracks", []):
