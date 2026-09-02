@@ -619,10 +619,12 @@ function editWorkspace(project) {
       <article class="card video-stage">
         ${renderUrl
           ? `<video controls preload="metadata" src="${escapeHtml(renderUrl)}"></video>`
-          : '<div class="video-placeholder">Aún no hay vista previa — usa «Hacer esta» en una historia.</div>'}
-        ${renderFresh === false ? `
+          : '<div class="video-placeholder">Aún no hay vista previa de este corte.</div>'}
+        ${renderFresh === false || (!renderUrl && project.plan) ? `
           <div class="banner">
-            <span>Esta vista previa es de un corte anterior — el plan cambió.</span>
+            <span>${renderUrl
+              ? 'Esta vista previa es de un corte anterior — el plan cambió.'
+              : 'El corte está listo pero sin video (el render falló o no se ha hecho).'}</span>
             <button class="primary compact" id="rerender-now">Renderizar el corte actual</button>
           </div>` : ''}
         <div class="video-caption">
