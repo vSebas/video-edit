@@ -106,6 +106,17 @@ with Spanish reasons and `template_confidence`), and `style_id` on
 `style-application.v1` block). Artifacts are schema-enforced on write and
 read, with per-field measured/semantic tiers.
 
+Honesty rules (from the 2026-09-02 design review, verdict APPROVE WITH
+RESERVATIONS): the match score is a heuristic compatibility estimate, not
+a probability — the UI labels it "Compatibilidad estimada" and shows the
+template's confidence separately. Concepts generated WITH a style are not
+unbiased evidence of fit to that style (the writer was told to echo its
+grammar); the matches endpoint reports `concepts_conditioned_by` and the
+UI warns when comparing against conditioned concepts. Style-conditioning
+currently reaches the planner prompt only — measurable style becomes
+binding at the compiler in a later stage, and success is defined as
+measurable change in the RENDERED cut.
+
 ## OpenTake hybrid bridge
 
 The production bridge lives in `video_app/opentake_bridge.py` /

@@ -329,13 +329,21 @@ async function loadStyleSection() {
       return;
     }
     let matches = [];
+    let conditionedBy = null;
     try {
-      matches = (await api(`/api/projects/${state.activeProjectId}/style-matches`, { method: 'POST' })).matches;
+      const result = await api(`/api/projects/${state.activeProjectId}/style-matches`, { method: 'POST' });
+      matches = result.matches;
+      conditionedBy = result.concepts_conditioned_by;
     } catch { /* sin conceptos todavía */ }
     box.innerHTML = `
       <div class="section-header" style="margin-top:1.4rem">
         <div><span class="eyebrow">Estilos de referencia</span></div>
       </div>
+      ${conditionedBy ? `
+        <p class="muted">⚠ Las historias actuales se generaron CON un estilo,
+        así que su compatibilidad con ese estilo mide obediencia, no ajuste
+        real — para comparar estilos con neutralidad, regenera ideas sin
+        estilo primero.</p>` : ''}
       <div class="style-row">
         ${styles.map((style) => {
           if (style.invalid) {

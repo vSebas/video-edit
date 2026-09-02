@@ -438,7 +438,15 @@ docs consolidation.
    (close the loop at the pixels). Everything else in the design (Trend
    Scout, clustering, providers, music, preference-ML) stays gated behind
    run #1.
-3. **Standing items:** full content-addressed state redesign; periodic
+3. **Style engineering follow-ups (post-run-#1, from the design
+   review's reservations):** make `style-application.v1` structured
+   COMPILER input (shot-duration targets, B-roll ratio, beat
+   quantization, title policy) so measurable style stops being
+   non-binding prose; close the loop at the pixels — re-measure the
+   rendered cut's grammar against the reference and report achieved vs
+   target; calibrate match weights against blind choices and finished
+   edits before any score is presented as more than a heuristic.
+4. **Standing items:** full content-addressed state redesign; periodic
    check that the fork still rebases onto newer OpenTake releases
    (fork-only policy — no upstream PRs; rebase cost is ours);
    docs/UI reconciliation after each acceptance run; writer seat stays

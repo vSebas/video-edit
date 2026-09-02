@@ -1693,7 +1693,23 @@ class ProjectService:
                 match, SCHEMA_DIR / "style-match.schema.json", "style match"
             )
         matches.sort(key=lambda m: -m["score"])
-        return {"matches": matches}
+        # design-review reservation: concepts generated WITH a style are
+        # not unbiased evidence of fit to that style — the writer was told
+        # to echo its grammar, so a high score measures obedience. Surface
+        # which style (if any) conditioned the stored concepts.
+        conditioned_by = None
+        concepts_path = (
+            self.settings.runtime / project_id / "analysis" / "concepts.json"
+        )
+        if concepts_path.is_file():
+            try:
+                conditioned_by = (
+                    (load_json(concepts_path).get("style_application") or {})
+                    .get("style_id")
+                )
+            except ValueError:
+                pass
+        return {"matches": matches, "concepts_conditioned_by": conditioned_by}
 
     def _footage_language(self, project_id: str) -> str | None:
         """Dominant detected speech language from the most recent ASR run,
