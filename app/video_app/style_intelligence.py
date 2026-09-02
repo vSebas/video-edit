@@ -171,14 +171,24 @@ def semantic_observation(client, path: Path, duration: float) -> dict:
     parsed = parse_json_content(response["content"])
     if not isinstance(parsed, dict):
         raise StyleError("style analysis returned no object")
+
+    def _str_list(value) -> list:
+        # the model sometimes returns a bare string; iterating it would
+        # split into characters
+        if isinstance(value, str):
+            value = [part.strip() for part in value.split(",")]
+        if not isinstance(value, list):
+            return []
+        return [item for item in value if isinstance(item, str) and item.strip()]
+
     semantic = {
         "hook_type": parsed.get("hook_type")
         if parsed.get("hook_type") in HOOK_TYPES else None,
         "narrative_shape": [
-            item for item in (parsed.get("narrative_shape") or [])
+            item for item in _str_list(parsed.get("narrative_shape"))
             if item in NARRATIVE_LABELS
         ][:8],
-        "tone": [str(t).lower()[:24] for t in (parsed.get("tone") or [])][:4],
+        "tone": [t.lower()[:24] for t in _str_list(parsed.get("tone"))][:4],
         "payoff_position": parsed.get("payoff_position")
         if parsed.get("payoff_position") in ("early", "mid", "late", "none")
         else None,

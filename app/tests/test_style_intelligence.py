@@ -99,6 +99,16 @@ class TestSemanticAndAggregation:
         assert semantic["narrative_shape"] == ["hook", "payoff"]
         assert semantic["broll_ratio_estimate"] == 0.4
 
+    def test_string_tone_is_not_split_into_characters(self, reference) -> None:
+        # live 2026-09-02: the VLM returned tone as a bare string and the
+        # template stored ['i','n','f','o']
+        payload = dict(SEMANTIC)
+        payload["tone"] = "informative, personal"
+        payload["narrative_shape"] = "hook, payoff"
+        semantic = semantic_observation(FakeVlm(payload), reference, 12.0)
+        assert semantic["tone"] == ["informative", "personal"]
+        assert semantic["narrative_shape"] == ["hook", "payoff"]
+
     def test_single_reference_template(self, reference) -> None:
         deterministic, source = deterministic_observation(reference)
         semantic = semantic_observation(FakeVlm(SEMANTIC), reference, 12.0)
