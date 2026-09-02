@@ -388,61 +388,35 @@ Its doc-drift findings were exact and are fixed.
 
 ## Immediate Next Actions
 
-The trial gate closed 2026-09-01: **hybrid** (see `docs/history/TRIAL_OPENTAKE.md`).
-OpenTake is the editing surface over MCP; our renderer produces final
-pixels; Resolve remains the editor-handoff escape hatch. Items 1-3 of the
-original list (timeline→plan sync, productionized adapter, cleanup review
-UI) all shipped 2026-09-01 — see the P0-P6 log above.
+Everything below the first item is either done or waiting on it. The
+2026-09-01 marathon closed: the hybrid gate (placement, revision-guarded
+sync, cleanup, instruction edits — all workbench features), P1-P6, the
+fork work (state-divergence root cause, lifecycle tools, close fix,
+add_track, link divergence — 840 fork tests), J/L placement and
+divergent-pair round-trip (no known sync gaps), two adversarial Codex
+reviews fully triaged (29 backend findings; 16 UX findings, 2 blockers
+each — all fixed), conversational B-roll ops, UX Architecture v2
+(Historia/Edición/Metraje/Publicar, Spanish, warm theme, phone pass), and
+docs consolidation.
 
-1. **Real-footage acceptance runs (needs the user).** A fresh day of footage
-   end-to-end through the new loop (place → edit in OpenTake → cleanup →
-   sync → instruction edits → captioned render); the first REAL B-roll
-   session (create a V2 track in the OpenTake GUI, drop clips, sync); and
-   the sidecar's second sealed-blind A/B on that same day.
-2. **Act on the P1-P6 Codex cross-review** (auto-fires 16:54 2026-09-01).
-3. **Fork tasks A-E LANDED (2026-09-01 evening; supersedes the queue note
-   below):** Codex did A before hitting its usage limit; Claude implemented
-   B-E directly. A d66b6f6 state-divergence root cause (external MCP binds
-   the authoritative core); B 80bad10 project lifecycle tools (list/open/
-   save over MCP — unattended editing unlocked, scoped to the open bundle's
-   folder); C 0676d06 window close exits the process on Linux; D 9bb7248
-   add_track (+ discovery: core prunes empty tracks on the next edit
-   command, so add_clips must immediately follow); E 4aa0a26 explicit
-   link-divergence (silent partner mutation replaced by refuse-or-flag;
-   divergent pairs survive save/load; playback has no link assumptions).
-   840 fork tests pass. Build note: release binaries need
-   `--features custom-protocol` or the webview shows "Could not connect to
-   localhost". App-side integration LANDED the
-   same evening: placement creates V2/A2 via add_track, places voiceovers
-   (volumes set, geometry verified), and authors J/L cuts by re-tiling the
-   linked audio lane per boundary (no fork change needed — moves never
-   propagated to partners). Both placement refusals are gone, and
-   divergent-pair sync landed the same night: the bridge records each
-   audio partner's identity and plan envelope, sync rebuilds audio events
-   from the partners' own geometry (one code path — mirrored pairs are the
-   degenerate case), and GUI edits on J/L pairs round-trip with the J/L
-   offset preserved. No known round-trip gaps remain.
-   Original (superseded) note: OpenTake learns to
-   REPRESENT render-side polish so placement stops refusing it — add_track
-   + existing-index placement on external MCP (also removes the manual V2
-   step for B-roll), then explicit link-divergence semantics for J/L cuts
-   (replacing the silent linked-partner mutation, issue 5). Runs chained
-   after the batch-1 Codex tasks; app-side placement/sync learn the new
-   vocabulary once the fork commits land and are reviewed. Ducking stays
-   render-side.
-5. **Fork-only patch policy (owner decision 2026-09-01): no PRs or issues
-   to the upstream OpenTake repo.** All fixes live in the vSebas/OpenTake
-   fork; `UPSTREAM_ISSUES.md` stays as internal documentation of the bugs.
-   Consequence: rebasing onto future upstream releases is our own cost —
-   the fork pins v1.0.0-beta.5 until an upstream release offers something
-   worth the rebase. Remaining fork-queue items in value order: project
-   lifecycle tools on external MCP (unlocks unattended editing),
-   progress-event staleness, window-close lingering process.
-4. Standing items: trending-audio matching; reference-vlog style learning;
-   the full content-addressed state redesign; writer seat stays
-   deepseek-v4-pro (rematch 2026-09-01: retained blind over gpt-5.6-sol);
-   sidecar dormant with its harness one command away, but its next judge packet
-   must remove treatment metadata and keep the blind key separate.
+1. **Fresh-footage acceptance runs — needs the user.** The only remaining
+   work no agent can do. One day of footage through the full loop
+   (directed and autonomous), judged with the §14 rubric from
+   `docs/history/CHATGPT_CURRENT_PROJECT_ASSESSMENT_2026-09-01.md` — top
+   metric: would you post it? The same day covers: the first REAL B-roll
+   and J-cut session, and the sealed P7 sidecar A/B (the judge packet is
+   already waiting at `bench/results-context/last-spring-quarter-class/judge/`).
+2. **Reference-style intelligence** — design accepted (see
+   `docs/designs/SOCIAL_TREND_AND_REFERENCE_STYLE_INTELLIGENCE_IMPLEMENTATION_HANDOFF.md`
+   and its review header). Gated behind run #1, except MVP #1 (the
+   single-reference style extractor), which can start whenever the owner
+   supplies a reference video.
+3. **Standing items:** full content-addressed state redesign; periodic
+   check that the fork still rebases onto newer OpenTake releases
+   (fork-only policy — no upstream PRs; rebase cost is ours);
+   docs/UI reconciliation after each acceptance run; writer seat stays
+   deepseek-v4-pro (retained blind 2026-09-01); trending-audio matching
+   arrives via the accepted style design, not separately.
 
 ## Durable Sources of Truth
 
