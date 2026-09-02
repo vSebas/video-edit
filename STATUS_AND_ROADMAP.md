@@ -416,9 +416,16 @@ docs consolidation.
    appended to planner guidance; concepts now carry `editorial` metadata),
    endpoints (`/api/styles`, `/api/styles/references`, `/api/styles/analyze`,
    `/api/projects/{id}/style-matches`), Historia style cards + Diagnóstico
-   reference analyzer, 9 synthetic-media tests (suite 146→155). Waiting on
-   the owner to drop a reference video into `references/` (gitignored) and
-   press "Analizar estilo". Everything else in the design (Trend Scout,
+   reference analyzer. Hardened through two adversarial Codex rounds
+   (2026-09-02: measurement-first raw shot detection, consensus
+   aggregation, fail-closed numerics, schema enforcement, deterministic
+   style ids). v2-handoff expansion also landed: audio beat grid +
+   cut-to-beat measurement, per-field evidence tiers, style-application
+   provenance, styled titles (bundled fonts, font/size/position), and
+   live VlogInbox status. First real reference analyzed: 0.72s median
+   shot, 55 cuts/min, 68 BPM with cuts off-beat (voiceover-led). Suite
+   183. Remaining before run #1: 2-4 more reference videos for a
+   multi-reference style. Everything else in the design (Trend Scout,
    clustering, providers, music, preference-ML) stays gated behind run #1.
 3. **Standing items:** full content-addressed state redesign; periodic
    check that the fork still rebases onto newer OpenTake releases
