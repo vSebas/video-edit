@@ -292,6 +292,7 @@ function storyWorkspace(project) {
         El habla se transcribe localmente y nunca sale de esta máquina.</p>
         <button class="primary big" id="create-vlog">${analyzed ? 'Continuar — escribir ideas' : 'Crear mi vlog'}</button>
       </section>
+      <div id="style-section"></div>
     `;
   }
   const keptCount = keptStoryIds().size;
@@ -1848,6 +1849,7 @@ async function initialize() {
     state.status = status;
     state.projects = projects.projects;
     renderSystemDot();
+    refreshDriveInbox();  // the Drive banner must exist on first paint
     if (state.projects[0]) await loadProject(state.projects[0].project_id);
     else $('#project-view').innerHTML = '<div class="empty-state">Aún no hay vlogs — agrega tus clips.</div>';
   } catch (error) {
