@@ -10,9 +10,9 @@ const state = {
   runs: [],
   busy: null,            // {title, steps: [..], current: index}
   pendingStory: null,
-  forcePick: false,
   workspace: null,       // 'story' | 'edit' | 'media' | 'publish' | 'diagnostics'
   mediaFilter: 'all',
+  loadGeneration: 0,     // stale loadProject responses are dropped
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -36,12 +36,15 @@ async function api(path, options = {}) {
   return payload;
 }
 
+let noticeTimer = null;
 function notice(message, error = false) {
   const element = $('#notice');
   element.textContent = message;
   element.classList.toggle('error', error);
+  element.setAttribute('aria-live', error ? 'assertive' : 'polite');
   element.classList.remove('hidden');
-  if (!error) window.setTimeout(() => element.classList.add('hidden'), 6000);
+  if (noticeTimer) { window.clearTimeout(noticeTimer); noticeTimer = null; }
+  if (!error) noticeTimer = window.setTimeout(() => element.classList.add('hidden'), 6000);
 }
 
 /* ------------------------------------------------------------------ */
@@ -103,6 +106,9 @@ function renderProjectList() {
     </button>
   `).join('');
   document.querySelectorAll('[data-project-id]').forEach((button) => {
+    // While a multi-step flow runs, switching projects could cross async
+    // work between projects — block it (cross-review UX blocker 1).
+    button.disabled = Boolean(state.busy) && button.dataset.projectId !== state.activeProjectId;
     button.addEventListener('click', () => loadProject(button.dataset.projectId));
   });
 }
@@ -131,7 +137,8 @@ const WORKSPACES = [
 function renderTabs(project) {
   const hasPlan = Boolean(project?.plan);
   $('#workspace-tabs').innerHTML = WORKSPACES.map((ws) => `
-    <button class="tab ${state.workspace === ws.id ? 'active' : ''}"
+    <button class="tab ${state.workspace === ws.id ? 'active' : ''}" role="tab"
+      aria-selected="${state.workspace === ws.id}"
       data-workspace="${ws.id}" ${ws.needsPlan && !hasPlan ? 'disabled title="Primero crea un corte"' : ''}>
       ${ws.label}
     </button>
@@ -463,6 +470,7 @@ function newIdeasBanner(project) {
 
 function editWorkspace(project) {
   const renderUrl = project.outputs?.render?.url;
+  const renderFresh = project.outputs?.render?.fresh;
   const revision = project.plan?.revision || 1;
   const duration = project.plan?.project?.duration_seconds;
   return `
@@ -472,8 +480,13 @@ function editWorkspace(project) {
         ${renderUrl
           ? `<video controls preload="metadata" src="${escapeHtml(renderUrl)}"></video>`
           : '<div class="video-placeholder">Aún no hay vista previa — usa «Hacer esta» en una historia.</div>'}
+        ${renderFresh === false ? `
+          <div class="banner">
+            <span>Esta vista previa es de un corte anterior — el plan cambió.</span>
+            <button class="primary compact" id="rerender-now">Renderizar el corte actual</button>
+          </div>` : ''}
         <div class="video-caption">
-          <button class="ghost compact" id="revision-toggle">Corte ${revision} ▾</button>
+          <button class="ghost compact" id="revision-toggle" aria-expanded="false">Corte ${revision} ▾</button>
           <span>${duration ? `${Number(duration).toFixed(0)}s` : ''}</span>
         </div>
         <div id="revision-history" class="revision-history hidden"></div>
@@ -481,7 +494,7 @@ function editWorkspace(project) {
       <article class="card editor-panel">
         <h3>Editor IA</h3>
         <form id="ai-edit-form" class="revision-form vertical">
-          <textarea name="instruction" rows="3" required minlength="3"
+          <textarea name="instruction" rows="3" required minlength="3" maxlength="2000"
             placeholder="quita la escena del refri… acorta el inicio… pon la comida mientras hablo… haz un J-cut en la escena 4…"></textarea>
           <button type="submit" class="primary">Cambiarlo</button>
         </form>
@@ -497,10 +510,27 @@ function editWorkspace(project) {
     </section>
     <section class="storyboard-section">
       <div class="section-header"><div><span class="eyebrow">Escena por escena</span></div>
-      <p class="muted">Click abre el clip original en ese segundo. ¿Algo no encaja? Dilo arriba.</p></div>
+      <p class="muted">Un clic abre el clip original en ese segundo. ¿Algo no encaja? Dilo arriba.</p></div>
       <div class="scene-strip">${sceneStrip(project)}</div>
+      ${overlayLanes(project)}
     </section>
   `;
+}
+
+function overlayLanes(project) {
+  const tracks = project.plan?.tracks || [];
+  const broll = tracks.find((t) => t.kind === 'video' && t.role === 'broll')?.events || [];
+  const voiceover = tracks.find((t) => t.kind === 'audio' && t.role === 'voiceover')?.events || [];
+  if (!broll.length && !voiceover.length) return '';
+  const chip = (event, icon) => `
+    <span class="lane-chip">${icon} ${escapeHtml(event.event_id)} ·
+    ${event.timeline_start_seconds.toFixed(1)}–${(event.timeline_start_seconds + event.duration_seconds).toFixed(1)}s
+    (${escapeHtml(event.asset_id || '')})</span>`;
+  return `
+    <div class="overlay-lanes">
+      ${broll.length ? `<div><span class="eyebrow">B-roll</span> ${broll.map((e) => chip(e, '🎞')).join('')}</div>` : ''}
+      ${voiceover.length ? `<div><span class="eyebrow">Voz en off</span> ${voiceover.map((e) => chip(e, '🎙')).join('')}</div>` : ''}
+    </div>`;
 }
 
 /* Unified AI edit: try the atomic path first; offer a full rewrite when
@@ -510,10 +540,20 @@ async function submitAiEdit(event) {
   const instruction = new FormData(event.currentTarget).get('instruction')?.toString().trim();
   if (!instruction) return;
   const box = $('#ai-edit-result');
+  if (instruction.length > 500) {
+    // Too long for one atomic operation — do not silently truncate.
+    box.innerHTML = `
+      <div class="sync-diff">
+        <p class="muted">Instrucción larga — se aplicará como reescritura del corte.</p>
+        <button class="primary compact" id="ai-rewrite">Reescribir el corte</button>
+      </div>`;
+    $('#ai-rewrite')?.addEventListener('click', () => rewriteCut(instruction));
+    return;
+  }
   box.innerHTML = '<p class="notice">Interpretando…</p>';
   try {
     const proposed = await api(`/api/projects/${state.activeProjectId}/plan/command`, {
-      method: 'POST', body: JSON.stringify({ instruction: instruction.slice(0, 500) }),
+      method: 'POST', body: JSON.stringify({ instruction }),
     });
     if (proposed.status === 'proposed') {
       box.innerHTML = `
@@ -546,30 +586,40 @@ async function submitAiEdit(event) {
       </div>`;
     $('#ai-rewrite')?.addEventListener('click', () => rewriteCut(instruction));
   } catch (error) {
-    box.innerHTML = `<p class="notice error">${escapeHtml(error.message)}</p>`;
+    box.innerHTML = `
+      <p class="notice error">${escapeHtml(error.message)}</p>
+      <button class="ghost compact" id="ai-rewrite">Intentar como reescritura del corte</button>`;
+    $('#ai-rewrite')?.addEventListener('click', () => rewriteCut(instruction));
   }
 }
 
 async function rewriteCut(instruction) {
+  const projectId = state.activeProjectId;
   try {
     setBusy('Cambiando tu vlog', ['Recortando según tu instrucción', 'Renderizando la vista previa'], 0);
-    const revision = await runStep('plan/revise', { instruction });
+    const revision = await runStep('plan/revise', { instruction }, projectId);
     setBusy('Cambiando tu vlog', ['Recortando según tu instrucción', 'Renderizando la vista previa'], 1);
-    await runStep('render');
+    await runStep('render', undefined, projectId);
     state.busy = null;
     notice(revision.result?.revision_note || 'Listo — nuevo corte arriba.');
-    await loadProject(state.activeProjectId);
+    await loadProject(projectId);
   } catch (error) {
     state.busy = null;
     notice(error.message, true);
-    await loadProject(state.activeProjectId);
+    await loadProject(projectId);
   }
 }
 
 async function toggleRevisionHistory() {
   const box = $('#revision-history');
-  if (!box.classList.contains('hidden')) { box.classList.add('hidden'); return; }
+  const toggle = $('#revision-toggle');
+  if (!box.classList.contains('hidden')) {
+    box.classList.add('hidden');
+    toggle?.setAttribute('aria-expanded', 'false');
+    return;
+  }
   box.classList.remove('hidden');
+  toggle?.setAttribute('aria-expanded', 'true');
   box.innerHTML = '<p class="muted">Cargando…</p>';
   try {
     const log = await api(`/api/projects/${state.activeProjectId}/plan/revisions`);
@@ -582,9 +632,9 @@ async function toggleRevisionHistory() {
       <div class="revision-row">
         <strong>Corte ${entry.revision}${entry.revision === current ? ' · actual' : ''}</strong>
         <span>${escapeHtml(entry.note || entry.instruction || '')}</span>
-        ${entry.revision !== current
-          ? `<button class="ghost compact" data-restore="${entry.revision - 1}" title="Vuelve al corte anterior a este cambio">↶ Volver antes de esto</button>`
-          : ''}
+        ${entry.revision === current
+          ? (current > 1 ? `<button class="ghost compact" data-restore="${current - 1}">↶ Deshacer este cambio</button>` : '')
+          : `<button class="ghost compact" data-restore="${entry.revision}">Volver al corte ${entry.revision}</button>`}
       </div>`).join('');
     box.querySelectorAll('[data-restore]').forEach((button) => {
       button.addEventListener('click', () => restoreRevision(Number(button.dataset.restore)));
@@ -593,29 +643,45 @@ async function toggleRevisionHistory() {
 }
 
 async function restoreRevision(revision) {
+  const projectId = state.activeProjectId;
   if (!window.confirm(`¿Volver al corte ${revision}? Se crea una nueva revisión — nada se pierde.`)) return;
   try {
     setBusy('Restaurando el corte', ['Instalando la revisión', 'Renderizando'], 0);
-    await api(`/api/projects/${state.activeProjectId}/plan/revisions/${revision}/restore`, { method: 'POST' });
+    await api(`/api/projects/${projectId}/plan/revisions/${revision}/restore`, { method: 'POST' });
     setBusy('Restaurando el corte', ['Instalando la revisión', 'Renderizando'], 1);
-    await runStep('render');
+    await runStep('render', undefined, projectId);
     state.busy = null;
     notice(`Corte ${revision} restaurado.`);
-    await loadProject(state.activeProjectId);
+    await loadProject(projectId);
   } catch (error) {
     state.busy = null;
     notice(error.message, true);
-    await loadProject(state.activeProjectId);
+    await loadProject(projectId);
   }
 }
 
 /* ---- quick actions ---- */
 
 async function quickCleanup() {
+  const projectId = state.activeProjectId;
   const box = $('#qa-panel');
-  box.innerHTML = '<p class="notice">Buscando muletillas y silencios en OpenTake…</p>';
+  box.innerHTML = '<p class="notice">Comprobando la línea de tiempo…</p>';
   try {
-    const found = await api(`/api/projects/${state.activeProjectId}/opentake/cleanup`, { method: 'POST' });
+    // Pre-check: unsynced manual edits must be reviewed, never silently
+    // swept into the plan by the cleanup chain (cross-review UX blocker 2).
+    const before = await api(`/api/projects/${projectId}/opentake/sync`, { method: 'POST' });
+    if (before.staleness) {
+      box.innerHTML = `<p class="notice error">⚠ ${escapeHtml(before.staleness.advice)}</p>`;
+      return;
+    }
+    if (before.changes.length) {
+      box.innerHTML = `
+        <p class="notice">Hay ${before.changes.length} cambio(s) manuales sin traer de
+        OpenTake. Tráelos primero (Publicar → Traer cambios) y luego afina el diálogo.</p>`;
+      return;
+    }
+    box.innerHTML = '<p class="notice">Buscando muletillas y silencios…</p>';
+    const found = await api(`/api/projects/${projectId}/opentake/cleanup`, { method: 'POST' });
     if (!found.candidates.length) {
       box.innerHTML = '<p class="notice">Sin candidatos — el habla está limpia. (Los «eh» puros no aparecen en la transcripción, así que esto es normal en discurso preparado.)</p>';
       return;
@@ -636,37 +702,61 @@ async function quickCleanup() {
       if (!indices.length) { notice('Nada seleccionado.', true); return; }
       try {
         setBusy('Afinando el diálogo', ['Cortando en OpenTake', 'Actualizando el plan', 'Renderizando'], 0);
-        await api(`/api/projects/${state.activeProjectId}/opentake/cleanup/apply`, {
+        await api(`/api/projects/${projectId}/opentake/cleanup/apply`, {
           method: 'POST', body: JSON.stringify({ indices }),
         });
         setBusy('Afinando el diálogo', ['Cortando en OpenTake', 'Actualizando el plan', 'Renderizando'], 1);
-        await api(`/api/projects/${state.activeProjectId}/opentake/sync`, { method: 'POST' });
-        await api(`/api/projects/${state.activeProjectId}/opentake/sync/apply`, { method: 'POST' });
+        const preview = await api(`/api/projects/${projectId}/opentake/sync`, { method: 'POST' });
+        const expected = new Set(['deleted', 'trimmed', 'split', 'moved', 'unchanged']);
+        const foreign = preview.changes.filter((c) => !expected.has(c.kind));
+        if (preview.staleness || foreign.length) {
+          state.busy = null;
+          notice('La limpieza se aplicó en OpenTake, pero hay cambios adicionales — revísalos en Publicar → Traer cambios.', true);
+          await loadProject(projectId);
+          return;
+        }
+        await api(`/api/projects/${projectId}/opentake/sync/apply`, { method: 'POST' });
         setBusy('Afinando el diálogo', ['Cortando en OpenTake', 'Actualizando el plan', 'Renderizando'], 2);
-        await runStep('render');
+        await runStep('render', undefined, projectId);
         state.busy = null;
         notice('Diálogo afinado y corte re-renderizado.');
-        await loadProject(state.activeProjectId);
+        await loadProject(projectId);
       } catch (error) {
         state.busy = null;
         notice(error.message, true);
-        await loadProject(state.activeProjectId);
+        await loadProject(projectId);
       }
     });
   } catch (error) { box.innerHTML = `<p class="notice error">${escapeHtml(error.message)}</p>`; }
 }
 
-async function quickCaptions() {
+async function quickRerender() {
+  const projectId = state.activeProjectId;
   try {
-    setBusy('Subtítulos', ['Renderizando con subtítulos incrustados'], 0);
-    await runStep('render?burn_captions=true');
+    setBusy('Renderizando', ['Renderizando el corte actual'], 0);
+    await runStep('render', undefined, projectId);
     state.busy = null;
-    notice('Vista previa con subtítulos lista.');
-    await loadProject(state.activeProjectId);
+    notice('Vista previa actualizada.');
+    await loadProject(projectId);
   } catch (error) {
     state.busy = null;
     notice(error.message, true);
-    await loadProject(state.activeProjectId);
+    await loadProject(projectId);
+  }
+}
+
+async function quickCaptions() {
+  const projectId = state.activeProjectId;
+  try {
+    setBusy('Subtítulos', ['Renderizando con subtítulos incrustados'], 0);
+    await runStep('render?burn_captions=true', undefined, projectId);
+    state.busy = null;
+    notice('Vista previa con subtítulos lista.');
+    await loadProject(projectId);
+  } catch (error) {
+    state.busy = null;
+    notice(error.message, true);
+    await loadProject(projectId);
   }
 }
 
@@ -764,6 +854,8 @@ function publishWorkspace(project) {
       <article class="card">
         <h3>Video final</h3>
         ${renderUrl ? `
+          ${project.outputs?.render?.fresh === false
+            ? '<p class="notice error">Este archivo es de un corte anterior — re-renderiza en Edición antes de publicar.</p>' : ''}
           <p class="muted">✓ ${duration ? `${Number(duration).toFixed(0)} segundos` : 'renderizado'} · corte ${project.plan?.revision || 1}</p>
           <a class="primary button-link" href="${escapeHtml(renderUrl)}" download="vlog.mp4">Descargar MP4</a>` : `
           <p class="muted">Aún no hay render — vuelve a Edición.</p>`}
@@ -842,8 +934,28 @@ function diagnosticsWorkspace() {
           </button>`).join('')}
       </div>
       <div id="jobs-panel" class="sync-diff" style="margin-top:1rem">Cargando trabajos…</div>
+      <details class="advanced" style="margin-top:1rem">
+        <summary>Datos crudos (runs, telemetría, estado)</summary>
+        <div id="raw-panel" class="sync-diff">Abriendo…</div>
+      </details>
     </section>
   `;
+}
+
+async function loadRawPanel() {
+  const box = $('#raw-panel');
+  if (!box) return;
+  try {
+    const runs = (state.activeProject?.provider_runs || []).map((run) =>
+      `<p><code>${escapeHtml(run.run_key)}</code> · ${escapeHtml(run.provider?.adapter || '')} ${escapeHtml(run.provider?.model || '')}</p>`
+    ).join('') || '<p class="muted">Sin runs.</p>';
+    let telemetry = '';
+    try {
+      const data = await api(`/api/projects/${state.activeProjectId}/analysis/telemetry`);
+      telemetry = `<pre>${escapeHtml(JSON.stringify(data, null, 2).slice(0, 3000))}</pre>`;
+    } catch { telemetry = '<p class="muted">Sin telemetría.</p>'; }
+    box.innerHTML = `<strong>Runs</strong>${runs}<strong>Telemetría</strong>${telemetry}`;
+  } catch (error) { box.textContent = error.message; }
 }
 
 async function loadJobsPanel() {
@@ -855,7 +967,7 @@ async function loadJobsPanel() {
       .filter((job) => job.project_id === state.activeProjectId)
       .slice(-12).reverse();
     box.innerHTML = jobs.length
-      ? jobs.map((job) => `<p><code>${escapeHtml(job.kind)}</code> · ${escapeHtml(job.status)}${job.error ? ` — ${escapeHtml(job.error.slice(0, 120))}` : ''}</p>`).join('')
+      ? jobs.map((job) => `<p><code>${escapeHtml(JOB_LABELS[job.kind] || job.kind)}</code> · ${escapeHtml(JOB_STATUS_LABELS[job.status] || job.status)}${job.error ? ` — ${escapeHtml(job.error.slice(0, 120))}` : ''}</p>`).join('')
       : '<p class="muted">Sin trabajos registrados para este proyecto.</p>';
   } catch (error) { box.textContent = error.message; }
 }
@@ -938,6 +1050,7 @@ function wireHandlers() {
   $('#qa-cleanup')?.addEventListener('click', quickCleanup);
   $('#qa-captions')?.addEventListener('click', quickCaptions);
   $('#qa-story')?.addEventListener('click', () => { state.workspace = 'story'; renderProject(); });
+  $('#rerender-now')?.addEventListener('click', quickRerender);
 
   // Metraje
   document.querySelectorAll('[data-media-filter]').forEach((button) => {
@@ -966,6 +1079,8 @@ function wireHandlers() {
     renderProject();
   });
   if ($('#jobs-panel')) loadJobsPanel();
+  document.querySelector('#raw-panel')?.closest('details')
+    ?.addEventListener('toggle', (e) => { if (e.currentTarget.open) loadRawPanel(); }, { once: true });
 }
 
 /* ------------------------------------------------------------------ */
@@ -1112,8 +1227,8 @@ async function pollJob(jobId) {
   }
 }
 
-async function runStep(path, body) {
-  const result = await api(`/api/projects/${state.activeProjectId}/${path}`, {
+async function runStep(path, body, projectId = state.activeProjectId) {
+  const result = await api(`/api/projects/${projectId}/${path}`, {
     method: 'POST',
     body: JSON.stringify(body || {}),
   });
@@ -1122,6 +1237,7 @@ async function runStep(path, body) {
 }
 
 async function createVlog() {
+  const projectId = state.activeProjectId;
   const steps = [];
   if (!hasRun('owned-live-visual')) steps.push({ label: 'Mirando tu metraje (unos minutos)', path: 'analysis/visual' });
   if (!hasRun('local-asr')) steps.push({ label: 'Escuchando el habla (local)', path: 'analysis/speech' });
@@ -1129,16 +1245,16 @@ async function createVlog() {
   try {
     for (let index = 0; index < steps.length; index += 1) {
       setBusy('Creando tu vlog', steps.map((step) => step.label), index);
-      await runStep(steps[index].path);
+      await runStep(steps[index].path, undefined, projectId);
     }
     state.busy = null;
     state.workspace = 'story';
     notice('Ideas listas — elige una.');
-    await loadProject(state.activeProjectId);
+    await loadProject(projectId);
   } catch (error) {
     state.busy = null;
     notice(error.message, true);
-    await loadProject(state.activeProjectId);
+    await loadProject(projectId);
   }
 }
 
@@ -1155,29 +1271,30 @@ function startStory(conceptId) {
 }
 
 async function makeStory(conceptId) {
+  const projectId = state.activeProjectId;
   const steps = ['Fijando la historia', 'Cortando el video', 'Renderizando la vista previa', 'Preparando archivos de editor'];
   try {
     setBusy('Haciendo tu vlog', steps, 0);
-    await api(`/api/projects/${state.activeProjectId}/selection`, {
+    await api(`/api/projects/${projectId}/selection`, {
       method: 'POST', body: JSON.stringify({ concept_id: conceptId }),
     });
     setBusy('Haciendo tu vlog', steps, 1);
-    await api(`/api/projects/${state.activeProjectId}/plan`, {
+    await api(`/api/projects/${projectId}/plan`, {
       method: 'POST', body: JSON.stringify({ concept_id: conceptId }),
     });
     setBusy('Haciendo tu vlog', steps, 2);
-    await runStep('render');
+    await runStep('render', undefined, projectId);
     setBusy('Haciendo tu vlog', steps, 3);
-    await runStep('exports', { include_proxies: true });
+    await runStep('exports', { include_proxies: true }, projectId);
     state.busy = null;
     state.workspace = 'edit';
-    localStorage.setItem(`workspace:${state.activeProjectId}`, 'edit');
+    localStorage.setItem(`workspace:${projectId}`, 'edit');
     notice('Tu vlog está listo.');
-    await loadProject(state.activeProjectId);
+    await loadProject(projectId);
   } catch (error) {
     state.busy = null;
     notice(error.message, true);
-    await loadProject(state.activeProjectId);
+    await loadProject(projectId);
   }
 }
 
@@ -1307,8 +1424,10 @@ async function openTakeSyncPreview() {
       <div class="sync-diff">
         <p><strong>${preview.changes.length}</strong> cambio(s) en OpenTake — nueva duración ${preview.duration_seconds}s
         (${preview.unchanged_count} escenas sin cambios):</p>
-        <ul>${preview.changes.map((c) => `<li><code>${escapeHtml(c.kind)}</code> ${escapeHtml(c.event_id || '')} — ${escapeHtml(c.detail || '')}</li>`).join('')}</ul>
-        <button class="primary compact" id="opentake-sync-apply">Aplicar al corte y renderizar</button>
+        <ul>${preview.changes.map((c) => `<li><code>${escapeHtml(DIFF_LABELS[c.kind] || c.kind)}</code> ${escapeHtml(c.event_id || '')} — ${escapeHtml(c.detail || '')}</li>`).join('')}</ul>
+        ${preview.staleness
+          ? '<p class="notice error">Guarda el proyecto en OpenTake antes de poder aplicar.</p>'
+          : '<button class="primary compact" id="opentake-sync-apply">Aplicar al corte y renderizar</button>'}
       </div>`;
     $('#opentake-sync-apply')?.addEventListener('click', async () => {
       try {
@@ -1333,6 +1452,21 @@ async function openTakeSyncPreview() {
 /* ------------------------------------------------------------------ */
 /* Loading                                                             */
 
+const DIFF_LABELS = {
+  deleted: 'eliminado', trimmed: 'recortado', split: 'dividido',
+  moved: 'movido', unchanged: 'sin cambios',
+  volume_changed: 'volumen', broll_added: 'B-roll añadido',
+  broll_removed: 'B-roll quitado', broll_trimmed: 'B-roll recortado',
+  broll_moved: 'B-roll movido', broll_audio_ignored: 'audio de B-roll ignorado',
+  voiceover_added: 'voz en off añadida', voiceover_removed: 'voz en off quitada',
+  voiceover_changed: 'voz en off cambiada',
+};
+
+const JOB_STATUS_LABELS = {
+  queued: 'en cola', running: 'en curso', completed: 'completado',
+  failed: 'falló', interrupted: 'interrumpido',
+};
+
 const JOB_LABELS = {
   visual_analysis: 'Mirando tu metraje',
   speech_analysis: 'Escuchando el habla',
@@ -1346,19 +1480,34 @@ async function loadProject(projectId) {
   if (state.activeProjectId !== projectId) {
     state.workspace = null;
     state.mediaFilter = 'all';
+    state.pendingStory = null;
   }
   state.activeProjectId = projectId;
+  const generation = ++state.loadGeneration;
+  const current = () => state.loadGeneration === generation
+    && state.activeProjectId === projectId;
   state.runs = [];
   renderProjectList();
   if (!state.busy) $('#project-view').innerHTML = '<div class="empty-state">Cargando…</div>';
   try {
-    state.activeProject = await api(`/api/projects/${projectId}`);
-    state.runs = await Promise.all(
-      (state.activeProject.provider_runs || []).map(async (run) => ({
+    const project = await api(`/api/projects/${projectId}`);
+    if (!current()) return;
+    state.activeProject = project;
+    // Render immediately; analysis runs load after (one corrupt run must
+    // not blank the whole project — cross-review UX finding 10).
+    renderProject();
+    const settled = await Promise.allSettled(
+      (project.provider_runs || []).map(async (run) => ({
         ...(await api(run.detail_url)),
         run_key: run.run_key,
       }))
     );
+    if (!current()) return;
+    state.runs = settled
+      .filter((item) => item.status === 'fulfilled')
+      .map((item) => item.value);
+    const failed = settled.length - state.runs.length;
+    if (failed) notice(`${failed} análisis no se pudieron cargar (ver Diagnóstico).`, true);
     if (!state.busy) {
       const jobs = (await api('/api/jobs')).jobs.filter(
         (job) => job.project_id === projectId && ['queued', 'running'].includes(job.status)
@@ -1370,6 +1519,7 @@ async function loadProject(projectId) {
           0,
         );
         Promise.allSettled(jobs.map((job) => pollJob(job.job_id))).then(async () => {
+          if (!current()) return;
           state.busy = null;
           notice('Listo.');
           await loadProject(projectId);
@@ -1377,7 +1527,7 @@ async function loadProject(projectId) {
         return;
       }
     }
-    renderProject();
+    if (current()) renderProject();
   } catch (error) {
     notice(error.message, true);
   }
@@ -1557,10 +1707,22 @@ $('#cancel-dialog').addEventListener('click', () => dialog.close());
 $('#new-project-form').addEventListener('submit', createProject);
 $('#overflow-button').addEventListener('click', (event) => {
   event.stopPropagation();
-  $('#overflow-menu').classList.toggle('hidden');
+  const menu = $('#overflow-menu');
+  menu.classList.toggle('hidden');
+  $('#overflow-button').setAttribute('aria-expanded', String(!menu.classList.contains('hidden')));
 });
 document.addEventListener('click', (event) => {
-  if (!event.target.closest('.overflow-wrap')) $('#overflow-menu')?.classList.add('hidden');
+  if (!event.target.closest('.overflow-wrap')) {
+    $('#overflow-menu')?.classList.add('hidden');
+    $('#overflow-button')?.setAttribute('aria-expanded', 'false');
+  }
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    $('#overflow-menu')?.classList.add('hidden');
+    $('#overflow-button')?.setAttribute('aria-expanded', 'false');
+    $('#overflow-button')?.focus();
+  }
 });
 $('#system-dot').addEventListener('click', () => {
   if (!state.activeProject) return;

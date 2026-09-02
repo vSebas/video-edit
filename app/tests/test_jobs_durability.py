@@ -162,12 +162,33 @@ class TestRevisionRestore:
         from video_app.config import Settings
         from video_app.projects import ProjectService
 
+        def full_plan(revision, intent):
+            event = {
+                "event_id": "v01", "asset_id": None,
+                "source_start_seconds": None, "source_end_seconds": None,
+                "timeline_start_seconds": 0.0, "duration_seconds": 2.0,
+                "playback_rate": 1.0, "intent": intent, "observed_content": None,
+                "confidence": 1.0, "reframe": None, "transition_out": None,
+                "text": None, "volume_db": None,
+            }
+            return {
+                "schema_version": "edit-plan.v1",
+                "generated_at": "2026-09-01T00:00:00Z",
+                "benchmark_id": "t", "concept_id": "c", "revision": revision,
+                "project": {"width": 320, "height": 240, "fps": 30,
+                            "duration_seconds": 2.0,
+                            "background_color": "black"},
+                "tracks": [
+                    {"track_id": "v1", "kind": "video", "events": [dict(event)]},
+                    {"track_id": "a1", "kind": "audio", "events": [dict(event)]},
+                    {"track_id": "t1", "kind": "title", "events": []},
+                ],
+            }
+
         root = tmp_path / "runtime" / "p1"
         (root / "plan" / "revisions").mkdir(parents=True)
-        old = {"schema_version": "edit-plan.v1", "revision": 1,
-               "concept_id": "c", "project": {}, "tracks": [{"marker": "old"}]}
-        current = {"schema_version": "edit-plan.v1", "revision": 2,
-                   "concept_id": "c", "project": {}, "tracks": [{"marker": "new"}]}
+        old = full_plan(1, "old")
+        current = full_plan(2, "new")
         (root / "plan" / "edit-plan.json").write_text(json.dumps(current))
         (root / "plan" / "revisions" / "edit-plan.rev001.json").write_text(
             json.dumps(old))
@@ -186,12 +207,12 @@ class TestRevisionRestore:
         result = service.plan_restore_revision("p1", 1)
         assert result == {"revision": 3, "restored_from": 1}
         plan = json.loads((root / "plan" / "edit-plan.json").read_text())
-        assert plan["tracks"][0]["marker"] == "old"
+        assert plan["tracks"][0]["events"][0]["intent"] == "old"
         assert plan["revision"] == 3
         # the replaced cut was archived, nothing lost
         archived = json.loads(
             (root / "plan" / "revisions" / "edit-plan.rev002.json").read_text())
-        assert archived["tracks"][0]["marker"] == "new"
+        assert archived["tracks"][0]["events"][0]["intent"] == "new"
 
     def test_restore_refuses_current_and_missing(self, tmp_path) -> None:
         import pytest

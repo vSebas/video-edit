@@ -305,6 +305,30 @@ class TestSyncEndpoints:
         }))
         return pid, fx
 
+
+    @staticmethod
+    def _live_mcp(readback):
+        """Patch OpenTakeMcp so apply's live-fingerprint check sees the same
+        timeline the preview used."""
+        import contextlib
+
+        import video_app.opentake_mcp as mcp_module
+
+        class FakeMcp:
+            def __init__(self, *a, **k): ...
+            def get_timeline(self):
+                return readback
+
+        @contextlib.contextmanager
+        def patched():
+            original = mcp_module.OpenTakeMcp
+            mcp_module.OpenTakeMcp = FakeMcp
+            try:
+                yield
+            finally:
+                mcp_module.OpenTakeMcp = original
+        return patched()
+
     def test_preview_then_apply_installs_synced_revision(self, tmp_path) -> None:
         import json as _json
         from pathlib import Path as _P
@@ -326,7 +350,8 @@ class TestSyncEndpoints:
             kinds = {c["kind"] for c in body["changes"]}
             assert "split" in kinds
 
-            applied = client.post(f"/api/projects/{pid}/opentake/sync/apply")
+            with self._live_mcp(readback):
+                applied = client.post(f"/api/projects/{pid}/opentake/sync/apply")
             assert applied.status_code == 200, applied.text
             plan_now = _json.loads(
                 (tmp_path / "runtime" / pid / "plan" / "edit-plan.json").read_text()
@@ -335,7 +360,8 @@ class TestSyncEndpoints:
             archived = tmp_path / "runtime" / pid / "plan" / "revisions"
             assert any(archived.glob("edit-plan.rev*.json"))
             # replay protection: applying again without a preview fails
-            again = client.post(f"/api/projects/{pid}/opentake/sync/apply")
+            with self._live_mcp(readback):
+                again = client.post(f"/api/projects/{pid}/opentake/sync/apply")
             assert again.status_code == 400
 
     def test_apply_rejects_when_plan_moved_after_preview(self, tmp_path) -> None:
@@ -356,7 +382,8 @@ class TestSyncEndpoints:
             plan = _json.loads(plan_path.read_text())
             plan["revision"] = plan.get("revision", 1) + 1
             plan_path.write_text(_json.dumps(plan))
-            stale = client.post(f"/api/projects/{pid}/opentake/sync/apply")
+            with self._live_mcp(readback):
+                stale = client.post(f"/api/projects/{pid}/opentake/sync/apply")
             assert stale.status_code == 400
             assert "changed since" in stale.json()["detail"]
 

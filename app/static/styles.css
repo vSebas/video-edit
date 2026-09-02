@@ -675,15 +675,7 @@ input[type="file"] {
   gap: 1rem; align-items: start;
 }
 
-/* Responsive: stack on narrow screens */
-@media (max-width: 900px) {
-  .shell { grid-template-columns: 1fr; }
-  .sidebar { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 0.6rem; }
-  .sidebar .project-list { display: flex; gap: 0.4rem; overflow-x: auto; }
-  .side-heading { display: none; }
-  .edit-grid { grid-template-columns: 1fr; }
-  .topbar { flex-direction: column; align-items: flex-start; }
-}
+/* (tablet handled by the unified <=900px block at the end of the file) */
 
 /* ---------- Aesthetic polish ---------- */
 .brand-mark {
@@ -703,8 +695,8 @@ input[type="file"] {
 .workspace-tabs .tab.active { box-shadow: 0 2px 10px color-mix(in srgb, var(--accent) 30%, transparent); }
 .video-stage video { box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45); }
 
-/* ---------- Phone pass (real one) ---------- */
-@media (max-width: 760px) {
+/* ---------- Phone + tablet pass ---------- */
+@media (max-width: 900px) {
   html { -webkit-text-size-adjust: 100%; }
   .shell { display: block; }
   .sidebar {
@@ -768,3 +760,14 @@ input[type="file"] {
   dialog { width: calc(100vw - 16px); max-height: calc(100dvh - 24px); overflow-y: auto; }
   .banner { flex-wrap: wrap; }
 }
+
+
+/* Overlay lanes (storyboard) */
+.overlay-lanes { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.overlay-lanes > div { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.lane-chip {
+  font-size: 12px; padding: 3px 9px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--panel-2); color: var(--muted);
+}
+/* Touch/keyboard access to the media delete control */
+.media-card:focus-within .remove-asset { display: block; }

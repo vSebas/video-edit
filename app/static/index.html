@@ -6,7 +6,7 @@
     <meta name="color-scheme" content="dark" />
     <title>Vlog Studio</title>
     <meta http-equiv="Cache-Control" content="no-cache" />
-    <link rel="stylesheet" href="/styles.css?v=18" />
+    <link rel="stylesheet" href="/styles.css?v=19" />
   </head>
   <body>
     <div class="shell">
@@ -35,9 +35,9 @@
             <span class="eyebrow" id="project-status">Cargando</span>
             <h1 id="project-title">Vlog Studio</h1>
           </div>
-          <nav class="workspace-tabs" id="workspace-tabs" aria-label="Áreas"></nav>
+          <nav class="workspace-tabs" id="workspace-tabs" role="tablist" aria-label="Áreas"></nav>
           <div class="overflow-wrap">
-            <button class="icon-button" id="overflow-button" aria-label="Más acciones">⋯</button>
+            <button class="icon-button" id="overflow-button" aria-label="Más acciones" aria-haspopup="menu" aria-expanded="false">⋯</button>
             <div class="overflow-menu hidden" id="overflow-menu"></div>
           </div>
         </header>
@@ -77,7 +77,9 @@
           <textarea name="prompt" rows="3" placeholder="Un vlog corto y divertido de mi día, terminando con el atardecer…"></textarea>
         </label>
         <p class="form-note">
-          Tus archivos se quedan donde están — no se copian ni se modifican.
+          Los archivos subidos se copian a la carpeta del proyecto; los de una
+          carpeta elegida se usan donde están. Tus originales nunca se
+          modifican ni se borran.
         </p>
         <div class="dialog-actions">
           <button type="button" class="secondary" id="cancel-dialog">Cancelar</button>
@@ -86,6 +88,6 @@
       </form>
     </dialog>
 
-    <script type="module" src="/app.js?v=29"></script>
+    <script type="module" src="/app.js?v=30"></script>
   </body>
 </html>

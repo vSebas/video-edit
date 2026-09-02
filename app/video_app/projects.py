@@ -937,7 +937,31 @@ class ProjectService:
             raise ProjectError(f"Plan compilation failed: {exc}") from exc
 
         plan_dir = self.settings.runtime / project_id / "plan"
-        write_json(plan_dir / "edit-plan.json", plan)
+        plan_path = plan_dir / "edit-plan.json"
+        if plan_path.is_file():
+            # Choosing a new story must not rewind history: archive the
+            # current cut and continue the monotonic revision counter
+            # (cross-review UX finding 4).
+            previous = load_json(plan_path)
+            previous_revision = int(previous.get("revision", 1))
+            plan["revision"] = previous_revision + 1
+            write_json(
+                plan_dir / "revisions" / f"edit-plan.rev{previous_revision:03d}.json",
+                previous,
+            )
+            log_path = plan_dir / "revisions" / "revision-log.json"
+            log = load_json(log_path) if log_path.is_file() else {"entries": []}
+            log["entries"].append(
+                {
+                    "revision": plan["revision"],
+                    "instruction": f"new story: {selected}",
+                    "note": "Nueva historia elegida",
+                    "revised_at": utc_now(),
+                    "provider": "story-change",
+                }
+            )
+            write_json(log_path, log)
+        write_json(plan_path, plan)
         write_json(
             plan_dir / "media-inventory.json",
             {"assets": project["inventory"]["assets"]},
@@ -1220,10 +1244,14 @@ class ProjectService:
             )
         except PlanningError as exc:
             raise ProjectError(f"Synced plan failed validation: {exc}") from exc
+        from .cleanup import timeline_fingerprint
+
         write_json(
             plan_dir / "opentake-candidate.json",
             {
                 "base_revision": int(plan.get("revision", 1)),
+                "timeline_fingerprint": timeline_fingerprint(readback),
+                "stale": warning is not None,
                 "candidate": candidate,
                 "diff": diff,
             },
@@ -1239,13 +1267,41 @@ class ProjectService:
         }
 
     def opentake_sync_apply(self, project_id: str) -> dict:
-        """Install the previewed candidate as the current plan revision."""
+        """Install the previewed candidate as the current plan revision.
+
+        The candidate is bound to the exact timeline it was previewed from:
+        apply re-reads the live timeline and refuses on ANY drift, and a
+        preview that carried a staleness warning cannot be applied at all
+        (cross-review UX blocker 2)."""
+        from .cleanup import timeline_fingerprint
+        from .opentake_mcp import OpenTakeMcp, OpenTakeMcpError
+
         plan_dir = self.settings.runtime / project_id / "plan"
         plan_path = plan_dir / "edit-plan.json"
         candidate_path = plan_dir / "opentake-candidate.json"
         if not candidate_path.is_file():
             raise ProjectError("Run a sync preview before applying")
         stored = load_json(candidate_path)
+        if stored.get("stale"):
+            candidate_path.unlink(missing_ok=True)
+            raise ProjectError(
+                "La vista previa tenía una advertencia de desincronización — "
+                "guarda el proyecto en OpenTake (o reinícialo) y vuelve a "
+                "previsualizar"
+            )
+        if stored.get("timeline_fingerprint"):
+            try:
+                live = OpenTakeMcp().get_timeline()
+            except OpenTakeMcpError as exc:
+                raise ProjectError(
+                    f"No se pudo verificar la línea de tiempo: {exc}"
+                ) from exc
+            if timeline_fingerprint(live) != stored["timeline_fingerprint"]:
+                candidate_path.unlink(missing_ok=True)
+                raise ProjectError(
+                    "La línea de tiempo de OpenTake cambió después de la "
+                    "vista previa — vuelve a previsualizar"
+                )
         with self._project_write(project_id):
             plan = load_json(plan_path)
             if int(plan.get("revision", 1)) != stored["base_revision"]:
@@ -1366,6 +1422,16 @@ class ProjectService:
                 raise ProjectError("That is already the current cut")
             restored = load_json(archived_path)
             restored["revision"] = current + 1
+            try:
+                validate_edit_plan(
+                    restored, SCHEMA_DIR / "edit-plan.schema.json",
+                    load_json(self.settings.runtime / project_id / "project.json"),
+                )
+            except PlanningError as exc:
+                raise ProjectError(
+                    f"El corte {revision} ya no es válido con el metraje "
+                    f"actual: {exc}"
+                ) from exc
             write_json(
                 plan_dir / "revisions" / f"edit-plan.rev{current:03d}.json",
                 plan,
@@ -1556,6 +1622,16 @@ class ProjectService:
             asset = next((a for a in assets if a["asset_id"] == asset_id), None)
             if asset is None:
                 raise ProjectError(f"Unknown asset: {asset_id}")
+            used = {
+                event.get("asset_id")
+                for track in (stored.get("plan") or {}).get("tracks", [])
+                for event in track.get("events", [])
+            }
+            if asset_id in used:
+                raise ProjectError(
+                    "Este clip está en el corte actual — quítalo del corte "
+                    "primero (pide el cambio en Edición) y luego bórralo"
+                )
             stored["inventory"]["assets"] = [
                 a for a in assets if a["asset_id"] != asset_id
             ]
@@ -2318,6 +2394,26 @@ class ProjectService:
                 "filename": path.name,
                 "size_bytes": path.stat().st_size,
             }
+        # Freshness: a render can be older than the plan (apply/restore
+        # commit the plan before rendering; a failed render leaves the old
+        # file). The UI must be able to say "corte anterior" honestly
+        # (cross-review UX finding 8).
+        if "render" in result:
+            fresh = None
+            state_path = (
+                self.settings.runtime / project_id / "outputs"
+                / "review.render-state.json"
+            )
+            plan_path = self.settings.runtime / project_id / "plan" / "edit-plan.json"
+            if state_path.is_file() and plan_path.is_file():
+                try:
+                    plan_sha = hashlib.sha256(
+                        json.dumps(load_json(plan_path), sort_keys=True).encode()
+                    ).hexdigest()[:16]
+                    fresh = load_json(state_path).get("plan_sha") == plan_sha
+                except (OSError, ValueError):
+                    fresh = None
+            result["render"]["fresh"] = fresh
         return result
 
     def _resolve_source_directory(self, value: str) -> Path:
