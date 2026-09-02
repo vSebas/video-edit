@@ -339,6 +339,8 @@ function storyWorkspace(project) {
       <div class="section-header">
         <div><span class="eyebrow">Historias</span><h2>El editor propone, tú decides</h2></div>
       </div>
+      ${project.footage_summary ? `
+        <p class="footage-summary">🎬 ${escapeHtml(project.footage_summary)}</p>` : ''}
       <p class="muted">Cada escena cita momentos reales de tus clips. «Hacer esta» corta el
       video, renderiza la vista previa y prepara los archivos de editor. ¿No convence?
       Marca lo que valga (★), di qué quieres y pide ideas nuevas.</p>
@@ -900,6 +902,22 @@ async function quickCaptions() {
 /* ------------------------------------------------------------------ */
 /* METRAJE                                                             */
 
+function assetObservations(assetId) {
+  const moments = [];
+  for (const run of state.runs || []) {
+    for (const item of run.observations || []) {
+      if (item.asset_id !== assetId) continue;
+      if (item.normalization_status && item.normalization_status !== 'accepted') continue;
+      if (item.evidence_type === 'speech') continue;  // visual reading only
+      moments.push({
+        start: item.start_seconds, end: item.end_seconds,
+        caption: item.reviewed_caption || item.caption,
+      });
+    }
+  }
+  return moments.sort((a, b) => a.start - b.start);
+}
+
 function mediaWorkspace(project) {
   const media = project.inventory?.assets || [];
   const used = usedAssetIds(project);
@@ -915,6 +933,13 @@ function mediaWorkspace(project) {
       <div class="section-header">
         <div><span class="eyebrow">Metraje</span><h2>${media.length} archivos en este vlog</h2></div>
       </div>
+      ${project.footage_summary ? `
+        <p class="footage-summary">🎬 ${escapeHtml(project.footage_summary)}</p>` : ''}
+      <p class="muted folder-row">Carpeta:
+        <code>${escapeHtml(`${state.status?.workspace || ''}/${project.source_directory || ''}`)}</code>
+        <button class="ghost compact" id="copy-folder-path">Copiar ruta</button>
+        <span class="muted">— pégala en tu explorador de archivos para inspeccionar
+        los originales.</span></p>
       <label class="add-clips">
         + Agregar clips o notas de voz
         <input type="file" id="add-clips-input" multiple accept="video/*,image/*,audio/*" />
@@ -937,7 +962,19 @@ function mediaWorkspace(project) {
               </div>
               <div class="media-info">
                 <strong title="${escapeHtml(asset.filename)}">${escapeHtml(asset.filename)}</strong>
-                <span>${asset.duration_seconds ? `${Number(asset.duration_seconds).toFixed(0)}s` : 'foto'}</span>
+                <span>${asset.duration_seconds ? `${Number(asset.duration_seconds).toFixed(0)}s` : 'foto'}
+                  ${asset.media_url ? ` · <a href="${escapeHtml(asset.media_url)}" target="_blank" rel="noopener">ver archivo</a>` : ''}</span>
+                ${(() => {
+                  const moments = assetObservations(asset.asset_id);
+                  if (!moments.length) return '';
+                  return `
+                    <details class="clip-observations">
+                      <summary>Qué vio el editor (${moments.length})</summary>
+                      <ul>${moments.map((m) => `
+                        <li><span class="muted">${Number(m.start).toFixed(0)}–${Number(m.end).toFixed(0)}s</span>
+                        ${escapeHtml(m.caption || '')}</li>`).join('')}</ul>
+                    </details>`;
+                })()}
               </div>
             </article>
           `;
@@ -1261,6 +1298,11 @@ function wireHandlers() {
     renderProject();
   });
   $('#see-new-ideas')?.addEventListener('click', () => { state.workspace = 'story'; renderProject(); });
+  $('#copy-folder-path')?.addEventListener('click', async (event) => {
+    const path = event.currentTarget.previousElementSibling?.textContent || '';
+    try { await navigator.clipboard.writeText(path); notice('Ruta copiada.'); }
+    catch { notice('No se pudo copiar — selecciónala manualmente.', true); }
+  });
   if ($('#style-section')) loadStyleSection();
 
   // Edición

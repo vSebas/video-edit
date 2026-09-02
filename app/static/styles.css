@@ -799,3 +799,10 @@ input[type="file"] {
 .costs-table th, .costs-table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); }
 .costs-table td:nth-child(n+3) { font-variant-numeric: tabular-nums; text-align: right; }
 .costs-table th:nth-child(n+3) { text-align: right; }
+
+/* Footage insight */
+.footage-summary { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; line-height: 1.5; }
+.folder-row code { user-select: all; word-break: break-all; }
+.clip-observations { margin-top: 6px; font-size: 12.5px; }
+.clip-observations summary { cursor: pointer; color: var(--accent); }
+.clip-observations ul { margin: 6px 0 0; padding-left: 14px; display: grid; gap: 4px; }
