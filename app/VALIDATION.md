@@ -637,3 +637,16 @@ implemented (suite 195→197):
   first-come order
 - combine_styles reports included/excluded references WITH reasons and
   only accepts observations its template actually recorded
+
+## Fifth round (2026-09-02): closing the last partials
+
+- agreement now spans ALL observed axes (adds tone-set Jaccard, payoff
+  position, speech ratio, BPM, cut-to-beat) — still minimum-over-axes
+- shortfall computed from summed B-roll durations (the rounded ratio
+  could hide a real deficit near target)
+- quota floor: a fair share under the 0.8s atomic minimum lifts to the
+  floor while the global budget holds the total (a 6s budget over ten
+  beats now places B-roll instead of none)
+- renders run UNLOCKED to per-invocation temp files and promote
+  atomically (artifact+state paired) under the per-project lock — the
+  worker-starvation risk of holding the lock through ffmpeg is gone

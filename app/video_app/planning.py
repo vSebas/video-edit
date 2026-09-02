@@ -757,10 +757,12 @@ def build_plan(
                 if budget < 0.8:
                     break  # budget spent — stop, don't approximate
                 quota = beat_quota.get(shot["label"], 0.0)
-                # a beat spends its fair share (bounded by its window and
-                # the global remainder); leftover quota returns to the
-                # pool via `budget` for later beats
-                cap = min(budget, quota, 0.7 * (beat_end - beat_start))
+                # a fair share below the 0.8s atomic minimum is unusable —
+                # lift it to the floor so small budgets still place SOME
+                # B-roll; the global budget keeps the total honest, and
+                # later beats can absorb whatever earlier beats left
+                effective = max(quota, 0.8) if budget >= 0.8 else quota
+                cap = min(budget, effective, 0.7 * (beat_end - beat_start))
             else:
                 cap = 4.0
             duration = round(min(span_length, cap, available), 6)
@@ -940,7 +942,14 @@ def refresh_style_application(plan: dict) -> None:
         and achieved is not None
         and duration
     ):
-        broll_seconds = achieved["broll_ratio"] * duration
+        # exact seconds from the tracks — the two-decimal achieved ratio
+        # would hide a real shortfall on near-target plans
+        broll_seconds = sum(
+            e["duration_seconds"]
+            for track in plan.get("tracks") or []
+            if track.get("kind") == "video" and track.get("role") == "broll"
+            for e in track.get("events") or []
+        )
         block["broll_shortfall_seconds"] = round(
             max(0.0, target_ratio * duration - broll_seconds), 2
         )

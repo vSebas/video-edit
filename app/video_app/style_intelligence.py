@@ -549,16 +549,39 @@ def aggregate_template(name: str, observations: list[dict]) -> dict:
         top = Counter(values).most_common(1)[0][1]
         return top / len(values)
 
+    def toneset_agreement():
+        sets = [
+            frozenset(o["semantic"].get("tone") or [])
+            for o in observations
+        ]
+        sets = [t for t in sets if t]
+        if len(sets) < 2:
+            return None
+        pairs = [
+            len(a & b) / len(a | b)
+            for i, a in enumerate(sets) for b in sets[i + 1:]
+        ]
+        return statistics.mean(pairs) if pairs else None
+
     other_agreements = [
         a for a in (
             numeric_agreement(lambda o: o["deterministic"]["median_shot_seconds"]),
             numeric_agreement(lambda o: o["deterministic"]["cuts_per_minute"]),
+            numeric_agreement(lambda o: o["deterministic"].get("speech_ratio")),
+            numeric_agreement(lambda o: o["deterministic"].get("bpm_estimate")),
+            numeric_agreement(
+                lambda o: o["deterministic"].get("cut_to_beat_seconds")
+            ),
             numeric_agreement(
                 lambda o: o["semantic"].get("broll_ratio_estimate")
             ),
             categorical_agreement(lambda o: o["semantic"].get("hook_type")),
             categorical_agreement(lambda o: o["semantic"].get("caption_style")),
             categorical_agreement(lambda o: o["semantic"].get("uses_voiceover")),
+            categorical_agreement(
+                lambda o: o["semantic"].get("payoff_position")
+            ),
+            toneset_agreement(),
         ) if a is not None
     ]
     # agreement is no better than the WEAKEST supported axis: identical

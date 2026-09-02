@@ -2505,16 +2505,58 @@ class ProjectService:
         return self.semantic_run(project_id, run_key)
 
     def render(self, project_id: str, burn_captions: bool = False) -> dict:
-        # captioned and uncaptioned renders share review.mp4 and its state
-        # file; concurrent jobs must not interleave artifact and cache key
-        with self._render_lock(project_id):
-            return self._render_locked(project_id, burn_captions)
+        # Captioned and uncaptioned renders share review.mp4 and its
+        # state file. The expensive ffmpeg work runs UNLOCKED to a
+        # per-invocation temp file (concurrent renders stay productive
+        # instead of one starving a job worker on the lock); only the
+        # cheap cache check and the atomic artifact+state promotion hold
+        # the per-project lock.
+        return self._render_impl(project_id, burn_captions)
 
     def _render_lock(self, project_id: str):
         with self._render_locks_guard:
             return self._render_locks.setdefault(project_id, threading.Lock())
 
-    def _render_locked(self, project_id: str, burn_captions: bool = False) -> dict:
+    def _render_cache_hit(
+        self, project_id: str, output: Path, state_path: Path,
+        render_key: dict, measure_version: str,
+    ) -> dict | None:
+        if not (output.is_file() and state_path.is_file()):
+            return None
+        prior = load_json(state_path)
+        if {k: prior.get(k) for k in render_key} != render_key:
+            return None
+        # a cached RENDER can still need fresh MEASUREMENT: the analyzer
+        # versions independently of the renderer. The version is only
+        # stamped on SUCCESS — a failure logs, keeps no stale claim, and
+        # retries on the next hit.
+        if prior.get("measure_version") != measure_version:
+            measured = None
+            try:
+                from .style_intelligence import measure_rendered_grammar
+
+                measured = measure_rendered_grammar(output)
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.warning("render re-measurement failed: %s", exc)
+            if measured is not None:
+                prior["achieved_render_grammar"] = measured
+                prior["measure_version"] = measure_version
+                prior.pop("measurement_error", None)
+            else:
+                prior.pop("achieved_render_grammar", None)
+                prior["measurement_error"] = utc_now()
+            write_json(state_path, prior)
+        return {
+            "output": f"/api/projects/{project_id}/outputs/render",
+            "path": str(output),
+            "cached": True,
+            **(
+                {"achieved_render_grammar": prior["achieved_render_grammar"]}
+                if prior.get("achieved_render_grammar") else {}
+            ),
+        }
+
+    def _render_impl(self, project_id: str, burn_captions: bool = False) -> dict:
         project = self.get_project(project_id)
         plan = project.get("plan")
         if not plan:
@@ -2549,47 +2591,22 @@ class ProjectService:
         }
         state_path = output_dir / "review.render-state.json"
         from .style_intelligence import STYLE_MEASURE_VERSION as MEASURE_VERSION
-        if output.is_file() and state_path.is_file():
-            prior = load_json(state_path)
-            if {k: prior.get(k) for k in render_key} == render_key:
-                # a cached RENDER can still need fresh MEASUREMENT: the
-                # analyzer versions independently of the renderer. The
-                # version is only stamped on SUCCESS — a failure logs,
-                # keeps no stale claim, and retries on the next hit.
-                if prior.get("measure_version") != MEASURE_VERSION:
-                    measured = None
-                    try:
-                        from .style_intelligence import measure_rendered_grammar
-
-                        measured = measure_rendered_grammar(output)
-                    except Exception as exc:  # noqa: BLE001
-                        LOGGER.warning("render re-measurement failed: %s", exc)
-                    if measured is not None:
-                        prior["achieved_render_grammar"] = measured
-                        prior["measure_version"] = MEASURE_VERSION
-                        prior.pop("measurement_error", None)
-                    else:
-                        prior.pop("achieved_render_grammar", None)
-                        prior["measurement_error"] = utc_now()
-                    write_json(state_path, prior)
-                return {
-                    "output": f"/api/projects/{project_id}/outputs/render",
-                    "path": str(output),
-                    "cached": True,
-                    **(
-                        {"achieved_render_grammar": prior["achieved_render_grammar"]}
-                        if prior.get("achieved_render_grammar") else {}
-                    ),
-                }
+        with self._render_lock(project_id):
+            cached = self._render_cache_hit(
+                project_id, output, state_path, render_key, MEASURE_VERSION
+            )
+        if cached is not None:
+            return cached
         script = PIPELINE_DIR / "render_edit.py"
         plan_path, inventory_path, media_root = self._plan_sources(project_id)
+        temp_output = output_dir / f"review.{uuid.uuid4().hex[:8]}.tmp.mp4"
         command = [
             sys.executable,
             str(script),
             "--plan",
             str(plan_path),
             "--output",
-            str(output),
+            str(temp_output),
             "--inventory",
             str(inventory_path),
             "--media-root",
@@ -2597,38 +2614,47 @@ class ProjectService:
         ]
         if captions_path is not None:
             command.extend(["--captions", str(captions_path)])
-        result = subprocess.run(command, capture_output=True, text=True, check=False)
-        if result.returncode:
-            detail = (result.stderr or result.stdout).strip()
-            raise ProjectError(f"Render failed: {detail[-1000:]}")
-        # close the loop at the pixels for EVERY fresh render: the styled
-        # arm of an A/B is only meaningful against a measured baseline,
-        # so both arms get the same instruments the reference was read with.
-        # Measurement is diagnostics — it must never fail a good render.
         try:
-            from .style_intelligence import measure_rendered_grammar
+            result = subprocess.run(
+                command, capture_output=True, text=True, check=False
+            )
+            if result.returncode:
+                detail = (result.stderr or result.stdout).strip()
+                raise ProjectError(f"Render failed: {detail[-1000:]}")
+            # close the loop at the pixels for EVERY fresh render: the
+            # styled arm of an A/B is only meaningful against a measured
+            # baseline. Measured on the temp artifact, still unlocked —
+            # diagnostics must never fail a good render.
+            try:
+                from .style_intelligence import measure_rendered_grammar
 
-            achieved_render = measure_rendered_grammar(output)
-        except Exception as exc:  # noqa: BLE001
-            LOGGER.warning("render measurement failed: %s", exc)
-            achieved_render = None
-        write_json(
-            state_path,
-            {
-                **render_key,
-                "rendered_at": utc_now(),
-                **(
-                    {"achieved_render_grammar": achieved_render,
-                     "measure_version": MEASURE_VERSION}
-                    if achieved_render is not None
-                    else {"measurement_error": utc_now()}
-                ),
-                **(
-                    {"style_targets": plan["style_application"].get("targets")}
-                    if plan.get("style_application") else {}
-                ),
-            },
-        )
+                achieved_render = measure_rendered_grammar(temp_output)
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.warning("render measurement failed: %s", exc)
+                achieved_render = None
+            # atomic promotion: the artifact and its state always pair up
+            with self._render_lock(project_id):
+                os.replace(temp_output, output)
+                write_json(
+                    state_path,
+                    {
+                        **render_key,
+                        "rendered_at": utc_now(),
+                        **(
+                            {"achieved_render_grammar": achieved_render,
+                             "measure_version": MEASURE_VERSION}
+                            if achieved_render is not None
+                            else {"measurement_error": utc_now()}
+                        ),
+                        **(
+                            {"style_targets":
+                             plan["style_application"].get("targets")}
+                            if plan.get("style_application") else {}
+                        ),
+                    },
+                )
+        finally:
+            temp_output.unlink(missing_ok=True)
         return {
             "output": f"/api/projects/{project_id}/outputs/render",
             "path": str(output),
