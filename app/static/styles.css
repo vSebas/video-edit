@@ -777,3 +777,12 @@ input[type="file"] {
 .style-card { display: flex; flex-direction: column; gap: 6px; padding: 14px; font-size: 13px; }
 .style-card .style-score { color: var(--accent); font-weight: 700; }
 .style-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* Drive inbox status */
+.inbox-folder { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.inbox-receiving { color: var(--amber); font-weight: 600; }
+.inbox-ready { color: var(--good); font-weight: 600; }
+@media (max-width: 900px) {
+  #drive-inbox { flex-direction: column; align-items: stretch; gap: 10px; }
+  .inbox-folder { justify-content: space-between; width: 100%; }
+}

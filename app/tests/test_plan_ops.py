@@ -155,6 +155,22 @@ class TestApplyOp:
         }, INVENTORY)
         assert candidate["tracks"][2]["events"][0]["text"] == "Nuevo título"
 
+    def test_set_title_style_validated(self) -> None:
+        candidate, summary = apply_op(_plan(), {
+            "op": "set_title", "event_id": "t01", "text": "Hola",
+            "font": "handwritten", "size": 72, "position": "lower",
+        }, INVENTORY)
+        event = candidate["tracks"][2]["events"][0]
+        assert event["text_style"] == {
+            "font": "handwritten", "size": 72, "position": "lower"}
+        assert "fuente handwritten" in summary and "abajo" in summary
+        with pytest.raises(PlanOpError, match="font must be"):
+            apply_op(_plan(), {"op": "set_title", "event_id": "t01",
+                               "text": "x", "font": "comic-sans"}, INVENTORY)
+        with pytest.raises(PlanOpError, match="size must be"):
+            apply_op(_plan(), {"op": "set_title", "event_id": "t01",
+                               "text": "x", "size": 500}, INVENTORY)
+
     def test_unknown_op_and_missing_fields_fail_closed(self) -> None:
         with pytest.raises(PlanOpError, match="Unknown operation"):
             apply_op(_plan(), {"op": "explode"}, INVENTORY)

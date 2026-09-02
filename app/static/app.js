@@ -1671,11 +1671,20 @@ async function refreshProjects() {
   refreshDriveInbox();
 }
 
+let inboxPollTimer = null;
+
 async function refreshDriveInbox() {
   let banner = $('#drive-inbox');
   try {
     const payload = await api('/api/drive/inbox');
     const waiting = (payload.folders || []).filter((folder) => !folder.imported);
+    const receiving = waiting.some((folder) => folder.receiving);
+    // while something is arriving, keep watching so the phone can see its
+    // own Drive upload land without reloading
+    clearTimeout(inboxPollTimer);
+    if ((receiving || waiting.length) && document.visibilityState === 'visible') {
+      inboxPollTimer = setTimeout(refreshDriveInbox, receiving ? 15000 : 60000);
+    }
     if (!waiting.length) { banner?.remove(); return; }
     if (!banner) {
       banner = document.createElement('div');
@@ -1684,11 +1693,25 @@ async function refreshDriveInbox() {
       document.querySelector('.workspace')?.prepend(banner);
     }
     banner.innerHTML = `
-      <span>☁️ ${waiting.length} vlog${waiting.length === 1 ? '' : 's'} en tu Drive VlogInbox:</span>
-      ${waiting.slice(0, 3).map((folder) => `
-        <button class="primary compact" data-drive-import="${escapeHtml(folder.name)}">
-          Importar «${escapeHtml(folder.name)}»
-        </button>`).join('')}
+      <span>☁️ Drive VlogInbox:</span>
+      ${waiting.slice(0, 3).map((folder) => {
+        const size = folder.total_bytes >= 1e9
+          ? `${(folder.total_bytes / 1e9).toFixed(1)} GB`
+          : `${Math.max(1, Math.round(folder.total_bytes / 1e6))} MB`;
+        const status = folder.receiving
+          ? '<span class="inbox-receiving">⬆ recibiendo…</span>'
+          : '<span class="inbox-ready">listo</span>';
+        return `
+        <span class="inbox-folder">
+          <strong>${escapeHtml(folder.name)}</strong>
+          <span class="muted">${folder.file_count} clip${folder.file_count === 1 ? '' : 's'} · ${size}</span>
+          ${status}
+          <button class="primary compact" data-drive-import="${escapeHtml(folder.name)}"
+            ${folder.receiving ? 'disabled title="Espera a que Drive termine de recibir"' : ''}>
+            Importar
+          </button>
+        </span>`;
+      }).join('')}
     `;
     banner.querySelectorAll('[data-drive-import]').forEach((button) => {
       button.addEventListener('click', () => importFromDrive(button.dataset.driveImport));
@@ -1696,19 +1719,39 @@ async function refreshDriveInbox() {
   } catch { banner?.remove(); /* rclone no configurado u offline */ }
 }
 
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') refreshDriveInbox();
+  else clearTimeout(inboxPollTimer);
+});
+
 async function importFromDrive(folder) {
+  let progressTimer = null;
   try {
     setBusy(`Importando «${folder}» desde Drive`, ['Descargando clips', 'Indexando'], 0);
+    const inbox = await api('/api/drive/inbox').catch(() => null);
+    const expected = inbox?.folders?.find((f) => f.name === folder)?.total_bytes || 0;
+    progressTimer = setInterval(async () => {
+      try {
+        const local = await api(`/api/drive/local-progress?folder=${encodeURIComponent(folder)}`);
+        const copied = Math.round(local.copied_bytes / 1e6);
+        const label = expected
+          ? `Descargando clips — ${copied} / ${Math.round(expected / 1e6)} MB`
+          : `Descargando clips — ${copied} MB`;
+        if (state.busy) { state.busy.steps[0] = label; renderProject(); }
+      } catch { /* transient */ }
+    }, 3000);
     const job = await api('/api/drive/import', {
       method: 'POST',
       body: JSON.stringify({ folder }),
     });
     const done = await pollJob(job.job_id);
+    clearInterval(progressTimer);
     state.busy = null;
     notice(`«${folder}» importado.`);
     await refreshProjects();
     if (done.result?.project_id) await loadProject(done.result.project_id);
   } catch (error) {
+    clearInterval(progressTimer);
     state.busy = null;
     notice(error.message, true);
     await refreshProjects();

@@ -246,6 +246,40 @@
             "number",
             "null"
           ]
+        },
+        "text_style": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "font": {
+              "enum": [
+                "sans",
+                "handwritten",
+                "clean",
+                "display",
+                null
+              ]
+            },
+            "size": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 24,
+              "maximum": 140
+            },
+            "position": {
+              "enum": [
+                "top",
+                "center",
+                "lower",
+                null
+              ]
+            }
+          }
         }
       }
     }

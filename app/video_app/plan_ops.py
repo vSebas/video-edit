@@ -292,6 +292,10 @@ def _apply_jl(plan: dict, op: dict, assets: dict) -> str:
     )
 
 
+TITLE_FONTS = ("sans", "handwritten", "clean", "display")
+TITLE_POSITIONS = ("top", "center", "lower")
+
+
 def _apply_title(plan: dict, op: dict, assets: dict) -> str:
     events = _title_events(plan)
     index = _index_of(events, op["event_id"])
@@ -299,7 +303,33 @@ def _apply_title(plan: dict, op: dict, assets: dict) -> str:
     if not 1 <= len(text) <= 120:
         raise PlanOpError("Title text must be 1-120 characters")
     events[index]["text"] = text
-    return f"Título {events[index]['event_id']} ahora dice: «{text}»"
+    notes = []
+    style = dict(events[index].get("text_style") or {})
+    if op.get("font") is not None:
+        if op["font"] not in TITLE_FONTS:
+            raise PlanOpError(
+                f"font must be one of {', '.join(TITLE_FONTS)}"
+            )
+        style["font"] = op["font"]
+        notes.append(f"fuente {op['font']}")
+    if op.get("size") is not None:
+        size = int(op["size"])
+        if not 24 <= size <= 140:
+            raise PlanOpError("size must be 24-140")
+        style["size"] = size
+        notes.append(f"tamaño {size}")
+    if op.get("position") is not None:
+        if op["position"] not in TITLE_POSITIONS:
+            raise PlanOpError(
+                f"position must be one of {', '.join(TITLE_POSITIONS)}"
+            )
+        style["position"] = op["position"]
+        notes.append({"top": "arriba", "center": "al centro",
+                      "lower": "abajo"}[op["position"]])
+    if style:
+        events[index]["text_style"] = style
+    suffix = f" ({', '.join(notes)})" if notes else ""
+    return f"Título {events[index]['event_id']} ahora dice: «{text}»{suffix}"
 
 
 def _voiceover_track(plan: dict, create: bool = False) -> dict | None:
@@ -626,7 +656,7 @@ Respond with EXACTLY one JSON object, nothing else. One of:
 {"op":"trim_event","event_id":"...","edge":"start"|"end","direction":"shorten"|"extend","seconds":<0-60>}
 {"op":"set_volume","event_id":"...","volume_db":<-96..12, -96 mutes>}
 {"op":"jl_cut","event_id":"...","lead_seconds":<0.1..5 J-cut (audio of this scene starts early) or -5..-0.1 L-cut>}
-{"op":"set_title","event_id":"...","text":"..."}
+{"op":"set_title","event_id":"...","text":"...","font":"sans|handwritten|clean|display (optional)","size":"24-140 (optional)","position":"top|center|lower (optional)"}
 {"op":"add_voiceover","asset_id":"<an available voiceover audio asset>","timeline_start_seconds":<number>}
 {"op":"remove_voiceover","event_id":"vo-.."}
 {"op":"add_broll","asset_id":"<a footage asset>","timeline_start_seconds":<number>,"duration_seconds":<optional, default up to 4>,"source_start_seconds":<optional, default 0>}

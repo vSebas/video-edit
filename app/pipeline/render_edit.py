@@ -8,6 +8,14 @@ import subprocess
 from pathlib import Path
 
 
+# Bundled style fonts (app/fonts, OFL) — chosen via text_style.font on
+# title events; "sans" falls through to the Liberation default below.
+STYLE_FONTS = {
+    "handwritten": Path(__file__).resolve().parent.parent / "fonts" / "Caveat.ttf",
+    "clean": Path(__file__).resolve().parent.parent / "fonts" / "Inter.ttf",
+    "display": Path(__file__).resolve().parent.parent / "fonts" / "Montserrat.ttf",
+}
+
 FONT_CANDIDATES = (
     Path("/usr/share/fonts/liberation/LiberationSans-Bold.ttf"),
     Path("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"),
@@ -248,11 +256,22 @@ def main() -> None:
         start = event["timeline_start_seconds"]
         end = start + event["duration_seconds"]
         hook = index == 0
-        font_size = 56 if hook else 58
-        y = 220 if hook else 190
+        style = event.get("text_style") or {}
+        styled_font = STYLE_FONTS.get(style.get("font"))
+        event_font = (
+            styled_font if styled_font is not None and styled_font.exists()
+            else font_path
+        )
+        font_size = int(style.get("size") or (56 if hook else 58))
+        position = style.get("position") or "top"
+        y = {
+            "top": 220 if hook else 190,
+            "center": "(h-text_h)/2",
+            "lower": "h-text_h-220",
+        }.get(position, 220 if hook else 190)
         text = ffmpeg_text(event["text"])
         filters.append(
-            f"[{current_video}]drawtext=expansion=none:fontfile='{font_path}':text='{text}':"
+            f"[{current_video}]drawtext=expansion=none:fontfile='{event_font}':text='{text}':"
             f"fontsize={font_size}:fontcolor=white:borderw=3:bordercolor=black@0.85:"
             f"box=1:boxcolor=black@0.42:boxborderw=24:"
             f"x=(w-text_w)/2:y={y}:fix_bounds=true:"

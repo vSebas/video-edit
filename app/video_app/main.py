@@ -292,6 +292,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def drive_inbox():
         return {"folders": project_call(projects.drive_inbox)}
 
+    @application.get("/api/drive/local-progress")
+    def drive_local_progress(folder: str):
+        return project_call(lambda: projects.drive_local_progress(folder))
+
     @application.post("/api/drive/import", status_code=202)
     def drive_import(request: DriveImportRequest):
         return jobs.submit(

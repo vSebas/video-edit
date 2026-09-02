@@ -388,3 +388,61 @@ class TestVoiceoverRender:
         bed_in = _band_volume(output, 1.4, 2.4, "lowpass=f=600,lowpass=f=600")
         bed_out = _band_volume(output, 3.2, 3.8, "lowpass=f=600,lowpass=f=600")
         assert bed_out > bed_in + 4, f"bed should duck: in={bed_in} out={bed_out}"
+
+
+class TestStyledTitles:
+    """text_style routes real pixels: position moves the drawtext band and
+    the styled font file is actually consumed by the renderer."""
+
+    def _render_with_title(self, root: Path, name: str, text_style: dict | None):
+        plan = json.loads((root / "plan.json").read_text())
+        title_event = {
+            "event_id": "t01", "asset_id": None,
+            "timeline_start_seconds": 0.0, "source_start_seconds": 0.0,
+            "duration_seconds": 2.0, "purpose": "title",
+            "text": "HOLA MUNDO",
+        }
+        if text_style is not None:
+            title_event["text_style"] = text_style
+        for track in plan["tracks"]:
+            if track["kind"] == "title":
+                track["events"] = [title_event]
+        styled_plan = root / f"{name}.json"
+        styled_plan.write_text(json.dumps(plan))
+        output = root / f"{name}.mp4"
+        subprocess.run(
+            [
+                sys.executable, str(PIPELINE / "render_edit.py"),
+                "--plan", str(styled_plan), "--output", str(output),
+                "--inventory", str(root / "inventory.json"),
+                "--media-root", str(root),
+            ],
+            check=True, capture_output=True, text=True,
+        )
+        return output
+
+    @staticmethod
+    def _band_peak(video: Path, crop: str) -> int:
+        raw = subprocess.run(
+            [
+                "ffmpeg", "-hide_banner", "-loglevel", "error",
+                "-ss", "0.5", "-i", str(video), "-frames:v", "1",
+                "-vf", f"crop={crop}",
+                "-f", "rawvideo", "-pix_fmt", "gray", "-",
+            ],
+            check=True, capture_output=True,
+        ).stdout
+        return max(raw)
+
+    def test_position_center_moves_the_text_band(self, rendered) -> None:
+        root, _ = rendered
+        top = self._render_with_title(root, "title_top", {"position": "top"})
+        center = self._render_with_title(
+            root, "title_center", {"position": "center", "font": "handwritten"}
+        )
+        middle_band = "iw:40:0:(ih-40)/2"
+        # white text over the red clip: the middle band lights up only for
+        # the centered title
+        assert self._band_peak(center, middle_band) > (
+            self._band_peak(top, middle_band) + 80
+        )

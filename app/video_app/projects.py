@@ -1819,25 +1819,67 @@ class ProjectService:
     DRIVE_INBOX = "gdrive:VlogInbox"
 
     def drive_inbox(self) -> list[dict]:
-        """Folders waiting in the Drive VlogInbox, with import status."""
+        """Folders waiting in the Drive VlogInbox, with import status,
+        content size, and a receiving/ready signal so the phone can watch
+        its own Drive upload arrive."""
         result = subprocess.run(
-            ["rclone", "lsjson", "--dirs-only", self.DRIVE_INBOX],
+            ["rclone", "lsjson", "-R", "--files-only", self.DRIVE_INBOX],
             capture_output=True, text=True, timeout=60,
         )
         if result.returncode:
             raise ProjectError(f"Drive inbox unavailable: {result.stderr.strip()[-200:]}")
         existing = {p["project_id"] for p in self.list_projects()}
-        folders = []
+        grouped: dict[str, dict] = {}
         for entry in json.loads(result.stdout or "[]"):
-            name = entry["Name"]
+            top, _, _ = entry["Path"].partition("/")
+            if not top or "/" not in entry["Path"]:
+                # files loose in the inbox root belong to no vlog folder
+                continue
+            folder = grouped.setdefault(
+                top, {"files": 0, "bytes": 0, "modified": ""}
+            )
+            folder["files"] += 1
+            folder["bytes"] += int(entry.get("Size") or 0)
+            folder["modified"] = max(folder["modified"], entry.get("ModTime") or "")
+        now = dt.datetime.now(dt.timezone.utc)
+        folders = []
+        for name, info in grouped.items():
+            receiving = False
+            if info["modified"]:
+                try:
+                    last = dt.datetime.fromisoformat(
+                        info["modified"].replace("Z", "+00:00")
+                    )
+                    # the Drive app writes files as it uploads them: a file
+                    # newer than 2 minutes usually means more are coming
+                    receiving = (now - last).total_seconds() < 120
+                except ValueError:
+                    pass
             folders.append(
                 {
                     "name": name,
-                    "modified": entry.get("ModTime"),
+                    "modified": info["modified"] or None,
                     "imported": slugify(name) in existing,
+                    "file_count": info["files"],
+                    "total_bytes": info["bytes"],
+                    "receiving": receiving,
                 }
             )
         return sorted(folders, key=lambda item: item["modified"] or "", reverse=True)
+
+    def drive_local_progress(self, folder: str) -> dict:
+        """Bytes already copied to the laptop for an in-flight import —
+        the UI polls this to show real progress instead of a spinner."""
+        if "/" in folder or folder.startswith("."):
+            raise ProjectError("Invalid inbox folder name")
+        target = self.settings.root / "footage" / slugify(folder)
+        if not target.is_dir():
+            return {"copied_bytes": 0, "file_count": 0}
+        files = [p for p in target.rglob("*") if p.is_file()]
+        return {
+            "copied_bytes": sum(p.stat().st_size for p in files),
+            "file_count": len(files),
+        }
 
     def import_drive_folder(self, folder: str) -> dict:
         """Sync a VlogInbox folder down and create the project: folder name
