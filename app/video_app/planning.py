@@ -237,7 +237,7 @@ Respond with JSON:
         "archetype": "<e.g. research_progress, academic_day_vlog, technical_explainer>",
         "narrative_shape": ["<ordered labels from: hook, setup, attempt, failure, debugging, retry, payoff, reflection, montage, explainer, daily_routine, reveal>"],
         "hook_type": "<one of: unexpected_result, question, bold_claim, in_media_res, greeting, visual_spectacle, problem_statement, none>",
-        "tone": ["<1-4 lowercase adjectives>"],
+        "tone": ["<1-4 from: calm, casual, chaotic, cinematic, cozy, dramatic, educational, emotional, energetic, formal, funny, informative, inspirational, intense, minimal, nostalgic, personal, playful, raw, reflective, sarcastic, serious, upbeat, wholesome — use these ENGLISH labels even for Spanish footage>"],
         "dialogue_density": "low|medium|high",
         "payoff": {{"present": <bool>, "approximate_story_position": "early|mid|late|none"}}
       }},

@@ -460,3 +460,43 @@ declared narrative shape (cross-checking beats against footage semantics
 is a later tier — the declared-flag-only path now caps at 0.6); (b)
 `speech_ratio` remains an audio-activity upper bound on dialogue, not VAD
 — renamed in docstring, not schema. Suite: **166 passed**.
+
+CORRECTION (Codex verification, 2026-09-02): the paragraph above
+overstated the triage — Codex's follow-up rated 9 of 18 findings fully
+fixed and 9 partial, and surfaced 8 new majors + 8 minors introduced or
+exposed by the fixes. Second round, all fixed with tests (suite 166→178):
+
+- fail-closed numerics tightened again: booleans and out-of-range values
+  are invalid, never clamped (True must not become confidence 1.0)
+- consensus honesty: an empty-shape observation is disagreement (halves
+  confidence, no more bypassing the single-reference cap); 1-1
+  categorical ties resolve to unknown, not lexicographically
+- matching: order now dominates narrative fit (a reversed arc scores
+  <0.5 and gets no "coincide" reason); payoff cross-checks the declared
+  story position against the style's measured one; a measured ZERO-cut
+  (long-take) style is valid data, not missing (pacing 1.0, its own
+  guidance line, UI shows "toma continua"); concepts predating
+  `editorial` score unknown (0.5) instead of being falsely accused of
+  lacking a resolution; min_distinct_shots capped at 24 and compared
+  against distinct MOMENTS (same units on both sides)
+- matches carry `template_confidence` (fit and trust are separate axes,
+  both shown); guidance flags low-confidence templates and no longer
+  interpolates the reference-derived NAME into the planner prompt at all
+- style ids are deterministic (sha1 of sources+name): re-analyzing a
+  reference REPLACES its style; DELETE /api/styles/{id} + UI button
+- incompatible stored templates surface as visible stubs ("quedó
+  incompatible — re-analiza") instead of silently vanishing
+- style-match.v1 is now schema-validated too (all three schemas enforced)
+- concept-job fingerprints include the project-state token (prompt,
+  evidence approvals, latest source context) — approving evidence and
+  resubmitting no longer returns the stale running job
+- concepts prompt now lists the tone vocabulary (writer tones were being
+  silently stripped, disabling tone matching entirely)
+- probe hardening: r_frame_rate fallback, N/A duration → StyleError;
+  scene-boundary floor cut 150ms → 50ms (a 4-frame insert survives)
+
+Still open by choice: dialogue_density stays an audio-activity proxy
+(VAD is a later tier); size+mtime style fingerprints are best-effort
+(the observation's sha256 records what was actually analyzed); template
+confidence informs the planner and UI but does not scale match scores
+(fit and trust stay separate axes).

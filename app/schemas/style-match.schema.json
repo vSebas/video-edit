@@ -81,6 +81,14 @@
       "items": {
         "type": "string"
       }
+    },
+    "template_confidence": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 1
     }
   }
 }

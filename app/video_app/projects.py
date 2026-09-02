@@ -1600,7 +1600,11 @@ class ProjectService:
         )
         return {"style_id": template["style_id"], "template": template}
 
-    def list_styles(self) -> list[dict]:
+    def list_styles(self, include_invalid: bool = False) -> list[dict]:
+        """Valid style templates; with include_invalid, incompatible stored
+        files appear as stubs so the UI can say WHY a style vanished instead
+        of silently hiding it (schema tightening must not read as data loss).
+        """
         styles = []
         for path in sorted(self._styles_dir().glob("style-*.json")):
             try:
@@ -1610,10 +1614,46 @@ class ProjectService:
                     "style template",
                 )
                 styles.append(template)
-            except (OSError, ValueError, KeyError, ProjectError):
-                LOGGER.warning("skipping invalid style file %s", path.name)
+            except (OSError, ValueError, KeyError, ProjectError) as exc:
+                LOGGER.warning("invalid style file %s: %s", path.name, exc)
+                if include_invalid:
+                    styles.append({
+                        "style_id": path.stem,
+                        "name": path.stem,
+                        "invalid": True,
+                        "reason": str(exc)[:200],
+                    })
                 continue
         return styles
+
+    def delete_style(self, style_id: str) -> None:
+        if not re.fullmatch(r"style-[a-f0-9]{8}", style_id):
+            raise ProjectError("Identificador de estilo inválido")
+        path = self._styles_dir() / f"{style_id}.json"
+        if not path.is_file():
+            raise ProjectError(f"No existe el estilo {style_id}")
+        path.unlink()
+
+    def concept_inputs_token(self, project_id: str) -> str:
+        """Fingerprint of the PROJECT STATE a concept generation would read
+        (prompt, evidence set with approval states, latest source context).
+        Job dedup needs this besides the request options — otherwise a
+        submit after approving evidence gets an already-running stale job."""
+        project = self.get_project(project_id)
+        evidence = [
+            (e.get("evidence_id") or f"{e.get('asset_id')}:{e.get('start_seconds')}",
+             e.get("status"))
+            for e in self.approved_evidence(project_id)
+            + self.pending_evidence(project_id)
+        ]
+        context = self._latest_source_context(project_id) or {}
+        return hashlib.sha1(
+            json.dumps(
+                [project.get("prompt"), sorted(evidence),
+                 context.get("run_id") or context.get("generated_at")],
+                default=str,
+            ).encode()
+        ).hexdigest()[:16]
 
     def style_matches(self, project_id: str) -> dict:
         """Every style × every grounded concept, scored deterministically."""
@@ -1635,6 +1675,10 @@ class ProjectService:
             for template in styles
             for concept in concepts
         ]
+        for match in matches:
+            self._validate_schema(
+                match, SCHEMA_DIR / "style-match.schema.json", "style match"
+            )
         matches.sort(key=lambda m: -m["score"])
         return {"matches": matches}
 

@@ -378,7 +378,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @application.get("/api/styles")
     def list_styles():
-        return {"styles": projects.list_styles()}
+        return {"styles": projects.list_styles(include_invalid=True)}
+
+    @application.delete("/api/styles/{style_id}")
+    def delete_style(style_id: str):
+        project_call(lambda: projects.delete_style(style_id))
+        return {"deleted": style_id}
 
     @application.get("/api/styles/references")
     def list_style_references():
@@ -389,7 +394,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         from .style_intelligence import STYLE_PROMPT_VERSION
 
         # content identity (size+mtime) so replacing the file or renaming
-        # the style is a new job, not a dedup hit on the old analysis
+        # the style is a new job, not a dedup hit on the old analysis.
+        # Best-effort: a same-size same-mtime swap or a swap between stat
+        # and analysis start is not caught — the observation's sha256
+        # records what was actually analyzed
         try:
             stat = (
                 projects._references_dir() / Path(request.filename).name
@@ -543,14 +551,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 options.use_source_context,
                 style_id=options.style_id,
             ),
-            # every option that changes the result must change the
-            # fingerprint, or concurrent submits collapse into one job
+            # everything that changes the result must change the
+            # fingerprint: the request options AND the project state the
+            # generation will read (evidence approvals, prompt, context)
             fingerprint=hashlib.sha1(
                 json.dumps(
                     [
                         options.provider, options.model, options.guidance,
                         sorted(options.keep_concept_ids or []),
                         options.use_source_context, options.style_id,
+                        projects.concept_inputs_token(project_id),
                     ],
                     default=str,
                 ).encode()

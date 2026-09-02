@@ -338,24 +338,51 @@ async function loadStyleSection() {
       </div>
       <div class="style-row">
         ${styles.map((style) => {
+          if (style.invalid) {
+            return `
+            <article class="card style-card">
+              <strong>${escapeHtml(style.name)}</strong>
+              <span class="muted">⚠ Este estilo quedó incompatible tras una
+              actualización — re-analiza la referencia en Diagnóstico.</span>
+              <button class="secondary compact" data-style-delete="${escapeHtml(style.style_id)}">Borrar</button>
+            </article>`;
+          }
           const best = matches.find((m) => m.style_id === style.style_id);
           const grammar = style.grammar || {};
+          const cuts = Number(grammar.cuts_per_minute);
+          const pace = Number.isFinite(cuts)
+            ? (cuts === 0 ? 'toma continua' : `${cuts} cortes/min`) : '';
+          const confidence = Number(style.confidence);
           return `
             <article class="card style-card">
               <strong>${escapeHtml(style.name)}</strong>
               <span class="muted">${escapeHtml((grammar.narrative_shape || []).slice(0, 5).join(' → ')) || 'sin forma detectada'}</span>
-              <span class="muted">${Number(grammar.cuts_per_minute) ? `${Number(grammar.cuts_per_minute)} cortes/min` : ''}
+              <span class="muted">${pace}
                 ${Number(grammar.broll_ratio) ? ` · ${Math.round(Number(grammar.broll_ratio) * 100)}% B-roll` : ''}</span>
+              ${Number.isFinite(confidence) && confidence < 0.5
+                ? '<span class="muted">⚠ confianza baja (pocas referencias)</span>' : ''}
               ${best ? `
                 <span class="style-score">Mejor historia: ${(best.score * 100).toFixed(0)}%</span>
                 ${best.reasons.slice(0, 2).map((r) => `<span class="muted">✓ ${escapeHtml(r)}</span>`).join('')}
                 ${best.missing.slice(0, 1).map((m) => `<span class="muted">⚠ ${escapeHtml(m)}</span>`).join('')}` : ''}
-              <button class="secondary compact" data-style-ideas="${escapeHtml(style.style_id)}">Ideas con este estilo</button>
+              <div class="style-actions">
+                <button class="secondary compact" data-style-ideas="${escapeHtml(style.style_id)}">Ideas con este estilo</button>
+                <button class="secondary compact" data-style-delete="${escapeHtml(style.style_id)}">Borrar</button>
+              </div>
             </article>`;
         }).join('')}
       </div>`;
     box.querySelectorAll('[data-style-ideas]').forEach((button) => {
       button.addEventListener('click', () => regenerateWithStyle(button.dataset.styleIdeas));
+    });
+    box.querySelectorAll('[data-style-delete]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        if (!window.confirm('¿Borrar este estilo? La referencia en references/ no se toca.')) return;
+        try {
+          await api(`/api/styles/${button.dataset.styleDelete}`, { method: 'DELETE' });
+          loadStyleSection();
+        } catch (error) { notice(error.message, true); }
+      });
     });
   } catch { box.innerHTML = ''; }
 }
