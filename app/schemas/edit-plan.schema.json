@@ -109,6 +109,21 @@
       ],
       "additionalProperties": false,
       "properties": {
+        "style_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^style-[a-f0-9]{8}$"
+        },
+        "template_confidence": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
         "targets": {
           "type": "object",
           "additionalProperties": false,
@@ -128,8 +143,36 @@
             }
           }
         },
-        "achieved_plan": {
+        "target_tiers": {
           "type": "object",
+          "additionalProperties": {
+            "enum": [
+              "measured",
+              "semantic"
+            ]
+          }
+        },
+        "owners": {
+          "type": "object",
+          "additionalProperties": {
+            "enum": [
+              "planner",
+              "compiler"
+            ]
+          }
+        },
+        "unsupported": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 40
+          }
+        },
+        "achieved_plan": {
+          "type": [
+            "object",
+            "null"
+          ],
           "additionalProperties": false,
           "properties": {
             "cuts_per_minute": {
@@ -148,6 +191,13 @@
               "maximum": 1
             }
           }
+        },
+        "broll_shortfall_seconds": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
         }
       }
     }

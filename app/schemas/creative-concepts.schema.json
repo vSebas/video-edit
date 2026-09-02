@@ -76,6 +76,21 @@
           ],
           "additionalProperties": false,
           "properties": {
+            "style_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^style-[a-f0-9]{8}$"
+            },
+            "template_confidence": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 1
+            },
             "targets": {
               "type": "object",
               "additionalProperties": false,
@@ -93,6 +108,15 @@
                   "type": "number",
                   "minimum": 0
                 }
+              }
+            },
+            "target_tiers": {
+              "type": "object",
+              "additionalProperties": {
+                "enum": [
+                  "measured",
+                  "semantic"
+                ]
               }
             },
             "owners": {
@@ -391,6 +415,13 @@
               }
             }
           }
+        },
+        "style_provenance": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
         }
       }
     }

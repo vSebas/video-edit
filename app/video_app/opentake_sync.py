@@ -1121,6 +1121,10 @@ def timeline_to_candidate_plan(
     # after the last A-roll clip must not become black/silent seconds
     # (cross-review 4). totalFrames stays a bound check via _normalize_clip.
     candidate["project"]["duration_seconds"] = _seconds(primary_end, fps)
+    # derived style grammar follows the mutation (stale numbers lie)
+    from .planning import refresh_style_application
+
+    refresh_style_application(candidate)
     diff = (
         _build_diff(infos, descendants)
         + volume_notes + broll_diff + broll_notes + vo_diff

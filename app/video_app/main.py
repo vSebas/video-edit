@@ -74,6 +74,12 @@ class CompilePlanRequest(BaseModel):
     fps: int = Field(default=30, ge=1, le=120)
     # styled compilation of a FIXED concept (the unconfounded A/B arm)
     style_id: str | None = Field(default=None, max_length=64)
+    # "none" guarantees a baseline; "inherited" (default) uses whatever
+    # contract a styled generation embedded; style_id implies explicit
+    style_mode: Literal["inherited", "none"] = "inherited"
+    # explicit acknowledgement that compiling a style-conditioned concept
+    # with an explicit style confounds the A/B
+    allow_conditioned: bool = False
 
 
 class CombineStylesRequest(BaseModel):
@@ -595,6 +601,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 options.height,
                 options.fps,
                 style_id=options.style_id,
+                style_mode=options.style_mode,
+                allow_conditioned=options.allow_conditioned,
             )
         )
 

@@ -577,3 +577,40 @@ Deliberately NOT auto-edited: pacing beyond B-roll (splitting primary
 cuts adds no visual change; shortening them amputates story) stays
 planner-owned; beat quantization and music remain recorded as
 unsupported until the plan can express music.
+
+## Third review round — verification findings fixed (2026-09-02)
+
+Codex's verification of the reservation work (verdict: still APPROVE WITH
+RESERVATIONS, "genuine vertical slice" but partially discharged) produced
+8 majors + 3 minors. All implemented, suite 190→195:
+
+- **B-roll is now a GLOBAL coverage budget** (target × timeline) spent
+  across approved cutaways — a 0.0 target emits none, 0.1 yields ~1.6s
+  on a 16s cut, and unmet budget is recorded as
+  `broll_shortfall_seconds`, never approximated with a floor.
+- **The contract stopped overstating**: only broll_ratio claims compiler
+  ownership (pacing is planner guidance until actually bound); each
+  target carries its epistemic tier; the ENTIRE resolved contract
+  (style_id, confidence, owners, unsupported) travels into the plan.
+- **Achieved grammar is correct and never stale**: the t=0 phantom-cut
+  precedence bug fixed; primary boundaries hidden under B-roll excluded;
+  `compute_achieved_plan` recomputes on every mutation path (atomic ops,
+  OpenTake sync, LLM revision — which now also PRESERVES the style block
+  it used to drop).
+- **A/B integrity enforced, not advised**: `style_mode="none"` guarantees
+  a baseline; explicit style_id over a style-conditioned concept is
+  REFUSED unless `allow_conditioned=true`; provenance is per concept
+  (kept/mixed sets report correctly), and matches carry
+  `concept_conditioned_by`.
+- **Coverage measures observation, not fallbacks**: a pre-editorial
+  concept reports 0.35, not 0.9.
+- **Combine requires independence**: observations deduplicated by source
+  sha256, duplicate style ids rejected, stored observations
+  schema-validated before aggregation.
+- **Aggregate confidence = weakest-axis agreement** across shape, pacing
+  numerics, and categorical fields — identical labels with different
+  pacing no longer average up to "agreeing".
+- Cached renders return the stored pixel measurement and re-measure when
+  the analyzer version changes (without re-rendering); the concepts
+  document is validated AS PERSISTED (after provenance/application
+  attach); match schema requires coverage and template_confidence.

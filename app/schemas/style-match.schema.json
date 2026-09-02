@@ -12,7 +12,9 @@
     "components",
     "reasons",
     "missing",
-    "generated_at"
+    "generated_at",
+    "coverage",
+    "template_confidence"
   ],
   "properties": {
     "schema_version": {
@@ -94,6 +96,13 @@
       "type": "number",
       "minimum": 0,
       "maximum": 1
+    },
+    "concept_conditioned_by": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 64
     }
   }
 }

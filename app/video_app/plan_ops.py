@@ -587,6 +587,10 @@ def apply_op(plan: dict, op: dict, inventory: dict) -> tuple[dict, str]:
     candidate = deepcopy(plan)
     summary = applier(candidate, op, assets)
     candidate["revision"] = int(plan.get("revision", 1)) + 1
+    # derived style grammar must follow every mutation or it becomes a lie
+    from .planning import refresh_style_application
+
+    refresh_style_application(candidate)
     return candidate, summary
 
 

@@ -39,6 +39,10 @@ from .visual import (
 
 LOGGER = logging.getLogger(__name__)
 
+def concepts_doc_concepts(document: dict) -> list[dict]:
+    return document.get("concepts") or []
+
+
 # Schemas and the deterministic render/export scripts ship with the app.
 APP_DIR = Path(__file__).resolve().parent.parent
 SCHEMA_DIR = APP_DIR / "schemas"
@@ -906,16 +910,23 @@ class ProjectService:
                     else None
                 ),
             )
-            self._validate_schema(
-                document,
-                SCHEMA_DIR / "creative-concepts.schema.json",
-                "Creative concepts",
-            )
         except (ProviderError, PlanningError) as exc:
             raise ProjectError(f"Concept generation failed: {exc}") from exc
 
+        kept_ids = {c["concept_id"] for c in keep_concepts}
+        for concept in document.get("concepts") or []:
+            if concept["concept_id"] in kept_ids:
+                continue  # kept concepts keep their original provenance
+            concept["style_provenance"] = style_id or None
         if style_id:
             document["style_application"] = style_application
+        # validate the document AS PERSISTED — validating before attaching
+        # provenance/application protects nothing this path writes
+        self._validate_schema(
+            document,
+            SCHEMA_DIR / "creative-concepts.schema.json",
+            "Creative concepts",
+        )
         write_json(
             self.settings.runtime / project_id / "analysis" / "concepts.json", document
         )
@@ -937,6 +948,8 @@ class ProjectService:
         height: int = 1920,
         fps: int = 30,
         style_id: str | None = None,
+        style_mode: str = "inherited",
+        allow_conditioned: bool = False,
     ) -> dict:
         """Deterministically compile the selected concept into a validated
         edit-plan.v1 and persist it with a matching media inventory."""
@@ -950,12 +963,18 @@ class ProjectService:
         if not selected:
             raise ProjectError("Select a concept before compiling the edit plan")
         approved_ranges = self._approved_ranges(project_id)
-        # Styled compilation from a FIXED concept: an explicit style_id
-        # resolves that style's measured targets regardless of how the
-        # concepts were generated — this is the unconfounded arm of the
-        # application-validity A/B (baseline story, styled plan). Without
-        # it, falling back to the style that conditioned the concepts.
-        if style_id:
+        # Style modes are explicit, not implicit: "none" is a guaranteed
+        # baseline (inheriting nothing), an explicit style_id compiles a
+        # FIXED concept with that style's contract — the unconfounded arm
+        # of the application-validity A/B — and the default inherits the
+        # contract embedded by a styled concept generation, if any.
+        selected_concept = next(
+            (c for c in concepts_doc_concepts(document)
+             if c.get("concept_id") == selected), {}
+        )
+        if style_mode == "none":
+            compile_application = None
+        elif style_id:
             from .style_intelligence import style_targets as resolve_targets
 
             template = next(
@@ -964,11 +983,20 @@ class ProjectService:
             )
             if template is None:
                 raise ProjectError(f"Estilo desconocido: {style_id}")
-            compile_targets = resolve_targets(template).get("targets") or None
+            # the A/B arm is only unconfounded over an UNCONDITIONED story
+            if selected_concept.get("style_provenance") and not allow_conditioned:
+                raise ProjectError(
+                    "Esta historia se generó con el estilo "
+                    f"{selected_concept['style_provenance']} — compilarla con "
+                    "un estilo explícito confunde el experimento. Regenera "
+                    "ideas sin estilo, o pasa allow_conditioned=true a "
+                    "sabiendas."
+                )
+            compile_application = resolve_targets(template)
         else:
-            compile_targets = (
-                ((document.get("style_application") or {}).get("application") or {})
-                .get("targets") or None
+            compile_application = (
+                (document.get("style_application") or {}).get("application")
+                or None
             )
         try:
             plan = compile_edit_plan(
@@ -980,7 +1008,7 @@ class ProjectService:
                 fps,
                 speech_words=self._speech_words(project_id),
                 approved_ranges=approved_ranges,
-                style_targets=compile_targets,
+                style_application=compile_application,
             )
             validate_edit_plan(
                 plan,
@@ -1671,19 +1699,36 @@ class ProjectService:
         confidence-capped hints). Source styles are kept."""
         from .style_intelligence import StyleError, aggregate_template
 
-        if len(style_ids) < 2:
-            raise ProjectError("Combina al menos dos estilos")
+        unique_ids = sorted(set(style_ids))
+        if len(unique_ids) < 2:
+            raise ProjectError("Combina al menos dos estilos DISTINTOS")
         observations = []
-        for style_id in style_ids:
+        seen_sources: set[str] = set()
+        for style_id in unique_ids:
             if not re.fullmatch(r"style-[a-f0-9]{8}", style_id):
                 raise ProjectError(f"Identificador inválido: {style_id}")
             path = self._styles_dir() / f"{style_id}.json"
             if not path.is_file():
                 raise ProjectError(f"No existe el estilo {style_id}")
-            observations.extend(load_json(path).get("observations") or [])
+            for obs in load_json(path).get("observations") or []:
+                # stored observations are data from disk — validate before
+                # they can poison an aggregation
+                self._validate_schema(
+                    obs, SCHEMA_DIR / "style-observation.schema.json",
+                    "style observation",
+                )
+                # confidence rises with INDEPENDENT references: the same
+                # source (by content hash) must never count twice, even
+                # via a previously combined style
+                source = (obs.get("source") or {}).get("sha256")
+                if not source or source in seen_sources:
+                    continue
+                seen_sources.add(source)
+                observations.append(obs)
         if len(observations) < 2:
             raise ProjectError(
-                "Los estilos elegidos no conservan observaciones suficientes"
+                "Se necesitan al menos dos referencias INDEPENDIENTES "
+                "(mismos videos no cuentan doble)"
             )
         try:
             template = aggregate_template(name, observations)
@@ -1757,19 +1802,30 @@ class ProjectService:
         # not unbiased evidence of fit to that style — the writer was told
         # to echo its grammar, so a high score measures obedience. Surface
         # which style (if any) conditioned the stored concepts.
-        conditioned_by = None
-        concepts_path = (
-            self.settings.runtime / project_id / "analysis" / "concepts.json"
-        )
-        if concepts_path.is_file():
-            try:
-                conditioned_by = (
-                    (load_json(concepts_path).get("style_application") or {})
-                    .get("style_id")
-                )
-            except ValueError:
-                pass
-        return {"matches": matches, "concepts_conditioned_by": conditioned_by}
+        # lineage is per concept (kept/mixed sets exist); the document
+        # flag alone misreports both directions
+        conditioned = sorted({
+            c.get("style_provenance")
+            for c in concepts if c.get("style_provenance")
+        })
+        legacy_flag = None
+        if not conditioned:
+            concepts_path = (
+                self.settings.runtime / project_id / "analysis" / "concepts.json"
+            )
+            if concepts_path.is_file():
+                try:
+                    legacy_flag = (
+                        (load_json(concepts_path).get("style_application") or {})
+                        .get("style_id")
+                    )
+                except ValueError:
+                    pass
+        return {
+            "matches": matches,
+            "concepts_conditioned_by": conditioned[0] if conditioned else legacy_flag,
+            "conditioned_styles": conditioned,
+        }
 
     def _footage_language(self, project_id: str) -> str | None:
         """Dominant detected speech language from the most recent ASR run,
@@ -2434,13 +2490,31 @@ class ProjectService:
             ),
         }
         state_path = output_dir / "review.render-state.json"
+        from .style_intelligence import STYLE_PROMPT_VERSION as MEASURE_VERSION
         if output.is_file() and state_path.is_file():
             prior = load_json(state_path)
             if {k: prior.get(k) for k in render_key} == render_key:
+                # a cached RENDER can still need fresh MEASUREMENT: the
+                # analyzers version independently of the renderer
+                if prior.get("measure_version") != MEASURE_VERSION:
+                    try:
+                        from .style_intelligence import measure_rendered_grammar
+
+                        prior["achieved_render_grammar"] = (
+                            measure_rendered_grammar(output)
+                        )
+                        prior["measure_version"] = MEASURE_VERSION
+                        write_json(state_path, prior)
+                    except Exception:  # noqa: BLE001
+                        pass
                 return {
                     "output": f"/api/projects/{project_id}/outputs/render",
                     "path": str(output),
                     "cached": True,
+                    **(
+                        {"achieved_render_grammar": prior["achieved_render_grammar"]}
+                        if prior.get("achieved_render_grammar") else {}
+                    ),
                 }
         script = PIPELINE_DIR / "render_edit.py"
         plan_path, inventory_path, media_root = self._plan_sources(project_id)
@@ -2477,6 +2551,7 @@ class ProjectService:
             {
                 **render_key,
                 "rendered_at": utc_now(),
+                "measure_version": MEASURE_VERSION,
                 **(
                     {"achieved_render_grammar": achieved_render}
                     if achieved_render is not None else {}

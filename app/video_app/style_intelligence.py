@@ -527,7 +527,46 @@ def aggregate_template(name: str, observations: list[dict]) -> dict:
         "payoff_position": "semantic", "uses_voiceover": "semantic",
         "caption_style": "semantic", "jl_transitions": "semantic",
     }
-    # disagreement between references lowers confidence
+    # disagreement between references lowers confidence — measured on
+    # every dimension, not just the narrative labels: identical shapes
+    # with wildly different pacing are NOT an agreeing style
+    def numeric_agreement(getter):
+        values = [v for v in (getter(o) for o in observations) if v is not None]
+        if len(values) < 2:
+            return None
+        center = statistics.median(values)
+        if center == 0:
+            return 1.0 if max(values) == 0 else 0.0
+        spread = statistics.median([abs(v - center) for v in values]) / center
+        return max(0.0, 1.0 - min(1.0, spread))
+
+    def categorical_agreement(getter):
+        values = [v for v in (getter(o) for o in observations) if v is not None]
+        if len(values) < 2:
+            return None
+        top = Counter(values).most_common(1)[0][1]
+        return top / len(values)
+
+    other_agreements = [
+        a for a in (
+            numeric_agreement(lambda o: o["deterministic"]["median_shot_seconds"]),
+            numeric_agreement(lambda o: o["deterministic"]["cuts_per_minute"]),
+            numeric_agreement(
+                lambda o: o["semantic"].get("broll_ratio_estimate")
+            ),
+            categorical_agreement(lambda o: o["semantic"].get("hook_type")),
+            categorical_agreement(lambda o: o["semantic"].get("caption_style")),
+            categorical_agreement(lambda o: o["semantic"].get("uses_voiceover")),
+        ) if a is not None
+    ]
+    # agreement is no better than the weakest axis: identical labels with
+    # wildly different pacing must not average up to "agreeing"
+    overall_agreement = round(
+        min(
+            shape_agreement,
+            statistics.mean(other_agreements) if other_agreements else 1.0,
+        ), 2,
+    )
     confidence = round(
         min(
             statistics.median(
@@ -535,7 +574,7 @@ def aggregate_template(name: str, observations: list[dict]) -> dict:
             ),
             0.55 if len(observations) == 1 else 1.0,
         )
-        * (0.5 + 0.5 * shape_agreement),
+        * (0.5 + 0.5 * overall_agreement),
         2,
     )
     analyzers = sorted({
@@ -742,6 +781,16 @@ def match_concept(template: dict, concept: dict, inventory: dict) -> dict:
     score = round(
         sum(w * value for w, value in active.values()) / total_weight, 2
     )
+    # coverage counts dimensions that were genuinely OBSERVED — a neutral
+    # fallback (unknown shape -> 0.5) is not knowledge and must not count
+    known = {
+        "narrative_fit": bool(concept_shape and style_shape),
+        "payoff_fit": has_editorial,
+        "pacing_feasibility": cuts_per_minute is not None,
+        "broll_feasibility": True,  # inventory is always known
+        "tone_fit": tone_fit is not None,
+    }
+    coverage = round(sum(w for k, (w, _) in weights.items() if known[k]), 2)
     return {
         "schema_version": "style-match.v1",
         "style_id": template["style_id"],
@@ -754,7 +803,8 @@ def match_concept(template: dict, concept: dict, inventory: dict) -> dict:
         "template_confidence": template.get("confidence"),
         # share of scoring weight computed from KNOWN dimensions — a score
         # renormalized from fewer components must not look fully observed
-        "coverage": round(total_weight, 2),
+        "coverage": coverage,
+        "concept_conditioned_by": concept.get("style_provenance"),
         "components": {
             "narrative_fit": narrative_fit,
             "payoff_fit": payoff_fit,
@@ -773,18 +823,31 @@ def style_targets(template: dict) -> dict:
     can bind to. Only measured-tier values become compiler targets —
     semantic labels stay planner guidance."""
     grammar = template.get("grammar") or {}
+    tiers = template.get("grammar_tiers") or {}
     targets = {
         "broll_ratio": grammar.get("broll_ratio"),
         "median_shot_seconds": grammar.get("median_shot_seconds"),
         "cuts_per_minute": grammar.get("cuts_per_minute"),
     }
     return {
+        "style_id": template.get("style_id"),
+        "template_confidence": template.get("confidence"),
         "targets": {k: v for k, v in targets.items() if v is not None},
+        # each target's epistemic tier travels with it: broll_ratio is a
+        # VLM estimate (semantic), pacing numbers are measured — never
+        # silently promote one to the other
+        "target_tiers": {
+            k: tiers.get(k, "semantic") for k, v in targets.items()
+            if v is not None
+        },
+        # ONLY what the compiler actually binds is compiler-owned; pacing
+        # reaches the writer as guidance (more, shorter evidence ranges) —
+        # claiming otherwise makes byte-identical cuts look conditioned
         "owners": {
             "narrative_shape": "planner", "hook_type": "planner",
             "tone": "planner", "payoff_position": "planner",
-            "broll_ratio": "compiler", "median_shot_seconds": "compiler",
-            "cuts_per_minute": "compiler",
+            "median_shot_seconds": "planner", "cuts_per_minute": "planner",
+            "broll_ratio": "compiler",
         },
         "unsupported": [
             key for key, why in (

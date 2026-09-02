@@ -629,7 +629,7 @@ def build_plan(
     revision: int = 1,
     speech_words: dict[str, list[dict]] | None = None,
     cutaways: list[dict] | None = None,
-    style_targets: dict | None = None,
+    style_application: dict | None = None,
 ) -> dict:
     """Deterministically assemble edit-plan.v1 from grounded spans with
     linked video/audio events, a hook title, and optional B-roll cutaways
@@ -710,12 +710,22 @@ def build_plan(
         timeline = round(timeline + duration, 6)
 
     broll_events = []
-    # A measured reference B-roll ratio binds the cutaway cap: a heavy
-    # B-roll style may hold a cutaway up to ~70% of its beat window, a
-    # sparse style shrinks toward 2.5s. Coverage can only come from the
-    # cutaways the sanitizer already approved — no target invents footage.
-    target_ratio = (style_targets or {}).get("broll_ratio")
-    if cutaways:
+    # A measured reference B-roll ratio is a GLOBAL coverage budget
+    # (target × timeline), spent across the approved cutaways in order —
+    # not a per-cutaway cap, which over-covers sparse targets and
+    # under-covers dense ones. A zero target emits no B-roll at all.
+    # Coverage can only come from the cutaways the sanitizer already
+    # approved — no target invents footage; shortfall is reported, not
+    # papered over.
+    _owners = (style_application or {}).get("owners") or {}
+    target_ratio = (
+        ((style_application or {}).get("targets") or {}).get("broll_ratio")
+        if _owners.get("broll_ratio") == "compiler" else None
+    )
+    budget = (
+        target_ratio * timeline if target_ratio is not None else None
+    )
+    if cutaways and (budget is None or budget >= 0.8):
         cursor_by_beat: dict[str, float] = {}
         for shot in cutaways:
             window = beat_windows.get(shot["label"])
@@ -725,10 +735,12 @@ def build_plan(
             position = cursor_by_beat.get(shot["label"], beat_start + 0.4)
             available = beat_end - 0.2 - position
             span_length = shot["source_end_seconds"] - shot["source_start_seconds"]
-            if target_ratio is not None:
-                window_length = beat_end - beat_start
-                cap = max(2.5, min(0.7, target_ratio) * window_length) \
-                    if target_ratio > 0.15 else 2.5
+            if budget is not None:
+                if budget < 0.8:
+                    break  # budget spent — stop, don't approximate
+                # one clip may take at most 70% of its beat window, so the
+                # budget spreads instead of landing in the first beat
+                cap = min(budget, 0.7 * (beat_end - beat_start))
             else:
                 cap = 4.0
             duration = round(min(span_length, cap, available), 6)
@@ -765,6 +777,8 @@ def build_plan(
                 }
             )
             cursor_by_beat[shot["label"]] = round(position + duration + 0.3, 6)
+            if budget is not None:
+                budget -= duration
 
     title_events = [
         {
@@ -784,33 +798,21 @@ def build_plan(
     ]
 
     style_block = None
-    if style_targets is not None:
-        # achieved PLANNED grammar, from the same quantities the reference
-        # was measured with: visual cut boundaries are primary cut edges
-        # plus B-roll in/out edges; coverage is overlaid seconds / total
-        boundaries = sorted({
-            round(e["timeline_start_seconds"], 3) for e in video_events
-        } | {
-            edge
-            for e in broll_events
-            for edge in (
-                round(e["timeline_start_seconds"], 3),
-                round(e["timeline_start_seconds"] + e["duration_seconds"], 3),
-            )
-        } - {0.0})
-        broll_seconds = sum(e["duration_seconds"] for e in broll_events)
-        achieved = {
-            "cuts_per_minute": (
-                round(len(boundaries) / (timeline / 60), 1) if timeline else None
-            ),
-            "broll_ratio": round(broll_seconds / timeline, 2) if timeline else None,
-        }
+    if style_application is not None:
+        # the ENTIRE resolved contract travels into the plan — a styled
+        # plan must be able to say which style produced it and what was
+        # unsupported, not just two numbers
         style_block = {
-            "targets": style_targets,
-            "achieved_plan": achieved,
+            **style_application,
+            "achieved_plan": None,  # filled below from the finished tracks
+            # unmet B-roll budget = the style wants more coverage than the
+            # approved cutaways can honestly give — a fact, not a failure
+            "broll_shortfall_seconds": (
+                round(max(0.0, budget), 2) if budget is not None else None
+            ),
         }
 
-    return {
+    plan = {
         "schema_version": "edit-plan.v1",
         "generated_at": utc_now(),
         "benchmark_id": benchmark_id,
@@ -835,6 +837,62 @@ def build_plan(
             ),
         ],
     }
+    refresh_style_application(plan)
+    return plan
+
+
+def compute_achieved_plan(plan: dict) -> dict | None:
+    """Planned visual grammar from the plan's CURRENT tracks — the same
+    quantities the reference was measured with. Recomputable after any
+    mutation, so the number can never silently go stale. Visible cut
+    boundaries are primary cut edges NOT hidden under a B-roll overlay,
+    plus B-roll in/out edges; t=0 is the start of the video, not a cut."""
+    duration = float((plan.get("project") or {}).get("duration_seconds") or 0)
+    if not duration:
+        return None
+    primary_events: list[dict] = []
+    broll_events: list[dict] = []
+    for track in plan.get("tracks") or []:
+        if track.get("kind") != "video":
+            continue
+        if track.get("role") == "broll":
+            broll_events.extend(track.get("events") or [])
+        else:
+            primary_events.extend(track.get("events") or [])
+    broll_windows = [
+        (e["timeline_start_seconds"],
+         e["timeline_start_seconds"] + e["duration_seconds"])
+        for e in broll_events
+    ]
+
+    def hidden(t: float) -> bool:
+        return any(start < t < end for start, end in broll_windows)
+
+    boundaries = {
+        round(e["timeline_start_seconds"], 3)
+        for e in primary_events
+        if e["timeline_start_seconds"] > 0
+        and not hidden(e["timeline_start_seconds"])
+    } | {
+        round(edge, 3)
+        for start, end in broll_windows
+        for edge in (start, end)
+        if 0 < edge < duration
+    }
+    broll_seconds = sum(e["duration_seconds"] for e in broll_events)
+    return {
+        "cuts_per_minute": round(len(boundaries) / (duration / 60), 1),
+        "broll_ratio": round(min(1.0, broll_seconds / duration), 2),
+    }
+
+
+def refresh_style_application(plan: dict) -> None:
+    """Recompute the derived grammar on a plan that carries a style block.
+    Every plan mutation path must call this — a stored achieved_plan that
+    survives an edit unchanged is a lie."""
+    block = plan.get("style_application")
+    if block:
+        block["achieved_plan"] = compute_achieved_plan(plan)
 
 
 def span_supported(span: dict, approved_ranges: dict[str, list[tuple[float, float]]]) -> bool:
@@ -872,7 +930,7 @@ def compile_edit_plan(
     fps: int = DEFAULT_FPS,
     speech_words: dict[str, list[dict]] | None = None,
     approved_ranges: dict[str, list[tuple[float, float]]] | None = None,
-    style_targets: dict | None = None,
+    style_application: dict | None = None,
 ) -> dict:
     """Deterministically compile a sanitized concept into edit-plan.v1."""
     concept = next(
@@ -935,7 +993,7 @@ def compile_edit_plan(
             height=height,
             fps=fps,
             speech_words=speech_words,
-            style_targets=style_targets,
+            style_application=style_application,
         )
     except PlanningError as exc:
         raise PlanningError(f"The selected concept is not compilable: {exc}") from exc
@@ -1051,6 +1109,12 @@ events. Every range must stay at least {MIN_EVENT_SECONDS}s long."""
         fps=plan["project"]["fps"],
         revision=int(plan.get("revision", 1)) + 1,
         speech_words=speech_words,
+        # the style contract survives a revision; its derived grammar is
+        # recomputed from the NEW tracks by build_plan
+        style_application={
+            k: v for k, v in (plan.get("style_application") or {}).items()
+            if k not in ("achieved_plan",)
+        } or None,
     )
     note = str(parsed.get("revision_note", "")).strip() or "Plan revised."
     return new_plan, note

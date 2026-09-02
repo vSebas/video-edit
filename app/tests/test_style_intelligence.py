@@ -524,6 +524,8 @@ class TestMatchEdgeCases:
         match = match_concept(_template(), concept, INVENTORY)
         assert match["components"]["payoff_fit"] == 0.5
         assert match["components"]["narrative_fit"] == 0.5
+        # unknown dimensions are NOT counted as observed coverage
+        assert match["coverage"] == 0.35
         assert any("metadatos editoriales" in m for m in match["missing"])
         # and never the false claim that the story lacks a resolution
         assert not any("no lo tiene" in m for m in match["missing"])
@@ -591,14 +593,22 @@ class TestCompilerBinding:
         {"asset_id": "clip_1", "media_type": "video", "duration_seconds": 30},
     ]}}
 
-    def _plan(self, style_targets=None):
+    def _plan(self, targets=None):
         from video_app.planning import build_plan
 
+        application = None
+        if targets is not None:
+            application = {
+                "style_id": "style-00000000",
+                "targets": targets,
+                "owners": {"broll_ratio": "compiler"},
+                "unsupported": ["music"],
+            }
         return build_plan(
             self.PROJECT, [dict(s) for s in self.SPANS],
             cutaways=[dict(c) for c in self.CUTAWAYS],
             concept_id="c", benchmark_id="t", hook_text="hola",
-            style_targets=style_targets,
+            style_application=application,
         )
 
     def _broll_duration(self, plan):
@@ -614,8 +624,53 @@ class TestCompilerBinding:
         assert styled > baseline + 1.0  # bound rose toward the target
 
     def test_sparse_broll_target_shrinks_cutaways(self) -> None:
+        # global budget: 0.1 x 16s timeline = 1.6s of B-roll, not a fixed cap
         sparse = self._broll_duration(self._plan({"broll_ratio": 0.1}))
-        assert sparse <= 2.6
+        assert 0.8 <= sparse <= 1.7
+
+    def test_zero_broll_target_emits_none(self) -> None:
+        plan = self._plan({"broll_ratio": 0.0})
+        assert self._broll_duration(plan) == 0.0
+        assert plan["style_application"]["broll_shortfall_seconds"] == 0.0
+
+    def test_shortfall_is_reported_not_papered_over(self) -> None:
+        # target wants ~11s of B-roll; the one approved cutaway gives ~5.6
+        plan = self._plan({"broll_ratio": 0.7})
+        assert plan["style_application"]["broll_shortfall_seconds"] > 4.0
+
+    def test_full_contract_travels_into_the_plan(self) -> None:
+        plan = self._plan({"broll_ratio": 0.5})
+        block = plan["style_application"]
+        assert block["style_id"] == "style-00000000"
+        assert block["owners"]["broll_ratio"] == "compiler"
+        assert block["unsupported"] == ["music"]
+
+    def test_achieved_grammar_refreshes_after_mutation(self) -> None:
+        from video_app.plan_ops import apply_op
+
+        plan = self._plan({"broll_ratio": 0.5})
+        before = plan["style_application"]["achieved_plan"]["broll_ratio"]
+        broll_id = next(
+            t for t in plan["tracks"] if t.get("role") == "broll"
+        )["events"][0]["event_id"]
+        candidate, _ = apply_op(
+            plan, {"op": "remove_broll", "event_id": broll_id},
+            self.PROJECT["inventory"],
+        )
+        after = candidate["style_application"]["achieved_plan"]["broll_ratio"]
+        assert before > 0 and after == 0.0
+
+    def test_single_long_take_measures_zero_cuts(self) -> None:
+        from video_app.planning import compute_achieved_plan
+
+        plan = {
+            "project": {"duration_seconds": 60.0},
+            "tracks": [{"kind": "video", "events": [{
+                "timeline_start_seconds": 0.0, "duration_seconds": 60.0,
+            }]}],
+        }
+        # the t=0 start of the video is not a cut (operator-precedence bug)
+        assert compute_achieved_plan(plan)["cuts_per_minute"] == 0.0
 
     def test_plan_records_targets_and_achieved(self) -> None:
         plan = self._plan({"broll_ratio": 0.7, "cuts_per_minute": 55.0})
@@ -648,7 +703,12 @@ class TestCompilerBinding:
             "broll_ratio": 0.65, "median_shot_seconds": 3.0,
             "cuts_per_minute": 55.0}
         assert contract["owners"]["broll_ratio"] == "compiler"
+        # only what the compiler actually binds may claim compiler ownership
+        assert contract["owners"]["cuts_per_minute"] == "planner"
+        assert contract["owners"]["median_shot_seconds"] == "planner"
         assert contract["owners"]["narrative_shape"] == "planner"
+        assert contract["style_id"] == template["style_id"]
+        assert contract["target_tiers"]["broll_ratio"] in ("measured", "semantic")
         assert "beat_quantization" in contract["unsupported"]
 
     def test_match_reports_coverage(self) -> None:
@@ -693,6 +753,9 @@ class TestMultiReferenceCombine:
         }
         with pytest.raises(Exception):
             service.combine_styles([stored_ids[0]], "solo")
+        # the same style twice must not launder one reference past the cap
+        with pytest.raises(Exception):
+            service.combine_styles([stored_ids[0], stored_ids[0]], "doble")
 
 
 class TestGuidance:
