@@ -46,6 +46,14 @@ def broll_entries(plan: dict) -> list[dict]:
     return []
 
 
+def voiceover_entries(plan: dict) -> list[dict]:
+    """Voiceover track events (if any) → add_clips entries."""
+    audios = [t for t in plan["tracks"] if t["kind"] == "audio"]
+    if len(audios) == 2 and audios[1].get("role") == "voiceover":
+        return _event_entries(audios[1]["events"], plan["project"]["fps"])
+    return []
+
+
 def _video_tracks(readback: dict) -> list[dict]:
     tracks = [t for t in readback.get("tracks", []) if t.get("type") == "video"]
     return sorted(
@@ -113,7 +121,7 @@ def verify_placement(
     }
     audio = [c for t in readback.get("tracks", []) if t.get("type") == "audio"
              for c in t.get("clips", [])
-             if c.get("linkGroupId") not in broll_groups]
+             if c.get("linkGroupId") and c.get("linkGroupId") not in broll_groups]
     failures = []
     if len(video) != len(entries):
         failures.append(f"video clip count {len(video)} != {len(entries)}")
@@ -187,9 +195,53 @@ def _broll_bridge_events(entries: list[dict], readback: dict) -> list[dict]:
     ]
 
 
+def _unlinked_audio_clips(readback: dict) -> list[dict]:
+    """Audio clips with no link partner — the voiceover lane's population."""
+    return sorted(
+        (c for t in readback.get("tracks", []) if t.get("type") == "audio"
+         for c in t.get("clips", []) if not c.get("linkGroupId")),
+        key=lambda c: (c["startFrame"], c.get("trimStartFrame", 0)),
+    )
+
+
+def verify_voiceover_placement(entries: list[dict], ref_for: dict[str, str],
+                               readback: dict) -> list[str]:
+    clips = _unlinked_audio_clips(readback)
+    failures = []
+    if len(clips) != len(entries):
+        failures.append(f"voiceover clip count {len(clips)} != {len(entries)}")
+        return failures
+    ordered = sorted(entries, key=lambda e: (e["startFrame"], e["trimStartFrame"]))
+    for want, got in zip(ordered, clips):
+        for field in ("startFrame", "durationFrames", "trimStartFrame"):
+            if got.get(field, 0) != want[field]:
+                failures.append(
+                    f"{want['event_id']}: {field} {got.get(field, 0)} != {want[field]}"
+                )
+        if got.get("mediaRef") != ref_for[want["asset_id"]]:
+            failures.append(f"{want['event_id']}: wrong media {got.get('mediaRef')}")
+    return failures
+
+
+def _voiceover_bridge_events(entries: list[dict], readback: dict) -> list[dict]:
+    clips = _unlinked_audio_clips(readback)
+    ordered = sorted(entries, key=lambda e: (e["startFrame"], e["trimStartFrame"]))
+    return [
+        {
+            "event_id": e["event_id"],
+            "clip_id": c["clipId"],
+            "source_start_frame": e["trimStartFrame"],
+            "source_end_frame": e["trimStartFrame"] + e["durationFrames"],
+            "timeline_start_frame": e["startFrame"],
+        }
+        for e, c in zip(ordered, clips)
+    ]
+
+
 def build_bridge(plan: dict, entries: list[dict], ref_for: dict[str, str],
                  readback: dict, project_id: str,
-                 broll: list[dict] | None = None) -> dict:
+                 broll: list[dict] | None = None,
+                 voiceover: list[dict] | None = None) -> dict:
     video_tracks = _video_tracks(readback)
     clips = sorted(
         (video_tracks[0].get("clips", []) if video_tracks else []),
@@ -216,6 +268,8 @@ def build_bridge(plan: dict, entries: list[dict], ref_for: dict[str, str],
     }
     if broll:
         bridge["broll_events"] = _broll_bridge_events(broll, readback)
+    if voiceover:
+        bridge["voiceover_events"] = _voiceover_bridge_events(voiceover, readback)
     return bridge
 
 
@@ -241,18 +295,17 @@ def place_plan(
     if not mirrored:
         raise BridgeError(
             "This plan has J/L cuts (audio boundaries differ from video). "
-            "OpenTake's linked clips cannot represent that — render directly, "
-            "or send the earlier mirrored revision and keep J/L as the final "
+            "Representing them in OpenTake still needs a divergent-move "
+            "primitive in the fork (link divergence covers trims, not "
+            "position). Render directly, or keep J/L as the final "
             "render-side polish."
         )
-    audio_tracks = [t for t in plan["tracks"] if t["kind"] == "audio"]
-    if len(audio_tracks) > 1 and audio_tracks[1].get("events"):
-        raise BridgeError(
-            "This plan has a voiceover track — render-side polish that "
-            "OpenTake cannot represent. Remove the voiceover (instrucción: "
-            "'quita la voz en off') before sending, or render directly."
-        )
-    for event in audio_events:
+    voiceover_plan_events = next(
+        (t["events"] for t in plan["tracks"]
+         if t["kind"] == "audio" and t.get("role") == "voiceover"),
+        [],
+    )
+    for event in audio_events + voiceover_plan_events:
         db = event.get("volume_db")
         if db is not None and db > 0:
             # OpenTake volume caps at unity; silently clamping a +gain
@@ -264,7 +317,8 @@ def place_plan(
             )
     entries = plan_entries(plan)
     broll = broll_entries(plan)
-    needed = sorted({e["asset_id"] for e in entries + broll})
+    voiceover = voiceover_entries(plan)
+    needed = sorted({e["asset_id"] for e in entries + broll + voiceover})
     ref_for = map_media(client, inventory, needed)
 
     try:
@@ -284,18 +338,6 @@ def place_plan(
                 f"OpenTake canvas is {dims[0]}x{dims[1]} but the plan is "
                 f"{want[0]}x{want[1]} — align the project settings first"
             )
-        broll_index = None
-        if broll:
-            # The MCP surface cannot create tracks; overlays need an
-            # existing second video track (added once in the OpenTake GUI).
-            before_videos = _video_tracks(before)
-            if len(before_videos) < 2:
-                raise BridgeError(
-                    "This plan has B-roll, but the open OpenTake project has "
-                    "only one video track. Add an empty video track in "
-                    "OpenTake (right-click the track area), then send again."
-                )
-            broll_index = before_videos[1].get("trackIndex")
         existing = [c["clipId"] for t in before.get("tracks", [])
                     for c in t.get("clips", [])]
         if existing:
@@ -310,6 +352,11 @@ def place_plan(
             for e in entries
         ]})
         if broll:
+            # Fork add_track (task D): create the overlay lane ourselves.
+            # The core prunes empty tracks on the NEXT edit command, so the
+            # add_clips must be the immediately following edit.
+            created = client.tool("add_track", {"type": "video"})
+            broll_index = created.get("trackIndex")
             client.tool("add_clips", {"entries": [
                 {
                     "mediaRef": ref_for[e["asset_id"]],
@@ -319,6 +366,19 @@ def place_plan(
                     "trackIndex": broll_index,
                 }
                 for e in broll
+            ]})
+        if voiceover:
+            created = client.tool("add_track", {"type": "audio"})
+            voiceover_index = created.get("trackIndex")
+            client.tool("add_clips", {"entries": [
+                {
+                    "mediaRef": ref_for[e["asset_id"]],
+                    "startFrame": e["startFrame"],
+                    "durationFrames": e["durationFrames"],
+                    "trimStartFrame": e["trimStartFrame"],
+                    "trackIndex": voiceover_index,
+                }
+                for e in voiceover
             ]})
         readback = client.get_timeline()
 
@@ -344,6 +404,22 @@ def place_plan(
                 volume_for.setdefault(
                     round(max(0.0, 10 ** (db / 20)), 4), []
                 ).append(partner)
+        if voiceover:
+            # Voiceover clip volumes (unlinked clips, set directly).
+            plan_vo = next(
+                t for t in plan["tracks"]
+                if t["kind"] == "audio" and t.get("role") == "voiceover"
+            )["events"]
+            vo_clips = _unlinked_audio_clips(readback)
+            ordered_vo = sorted(
+                plan_vo, key=lambda e: e["timeline_start_seconds"]
+            )
+            for event, clip in zip(ordered_vo, vo_clips):
+                db = event.get("volume_db")
+                if db is not None and db != 0:
+                    volume_for.setdefault(
+                        round(max(0.0, 10 ** (db / 20)), 4), []
+                    ).append(clip["clipId"])
         for volume, clip_ids in volume_for.items():
             client.tool(
                 "set_clip_properties", {"clipIds": clip_ids, "volume": volume}
@@ -385,14 +461,19 @@ def place_plan(
     failures = verify_placement(entries, ref_for, readback)
     if broll:
         failures += verify_broll_placement(broll, ref_for, readback)
+    if voiceover:
+        failures += verify_voiceover_placement(voiceover, ref_for, readback)
     if failures:
         raise BridgeError(
             "Placement verification failed: " + "; ".join(failures[:5])
         )
-    bridge = build_bridge(plan, entries, ref_for, readback, project_id, broll)
+    bridge = build_bridge(
+        plan, entries, ref_for, readback, project_id, broll, voiceover
+    )
     summary = {
         "placed_clips": len(entries),
         "placed_broll_clips": len(broll),
+        "placed_voiceover_clips": len(voiceover),
         "total_frames": sum(e["durationFrames"] for e in entries),
         "removed_previous_clips": len(existing),
     }

@@ -98,6 +98,22 @@ def _readback_tracks(readback: dict, kind: str) -> list[dict]:
     )
 
 
+def _plan_audio_tracks(plan: dict) -> tuple[dict, dict | None]:
+    """The primary audio track plus an optional role-declared voiceover."""
+    tracks = plan.get("tracks")
+    if not isinstance(tracks, list):
+        raise SyncError("plan tracks must be a list")
+    matches = [track for track in tracks if track.get("kind") == "audio"]
+    if not matches or len(matches) > 2:
+        raise SyncError("plan must contain one audio track plus at most one voiceover")
+    for match in matches:
+        if not isinstance(match.get("events"), list):
+            raise SyncError("plan audio events must be a list")
+    if len(matches) == 2 and matches[1].get("role") != "voiceover":
+        raise SyncError("a second plan audio track must declare role 'voiceover'")
+    return matches[0], matches[1] if len(matches) == 2 else None
+
+
 def _plan_video_tracks(plan: dict) -> tuple[dict, dict | None]:
     """The primary video track plus an optional role-declared B-roll track."""
     tracks = plan.get("tracks")
@@ -352,7 +368,7 @@ def timeline_to_candidate_plan(
         raise SyncError("readback totalFrames must be positive")
 
     video_track, plan_broll_track = _plan_video_tracks(plan)
-    audio_track = _single_track(plan, "audio", "plan")
+    audio_track, plan_voiceover_track = _plan_audio_tracks(plan)
     original_video = video_track["events"]
     original_audio = audio_track["events"]
     original_broll = plan_broll_track["events"] if plan_broll_track else []
@@ -502,6 +518,48 @@ def timeline_to_candidate_plan(
             "bridge does not cover plan B-roll events: " + ", ".join(missing_broll)
         )
 
+    original_voiceover = (
+        plan_voiceover_track["events"] if plan_voiceover_track else []
+    )
+    voiceover_by_id = {}
+    for event in original_voiceover:
+        event_id = event.get("event_id")
+        if not isinstance(event_id, str) or not event_id:
+            raise SyncError("plan voiceover event has no event_id")
+        if event_id in voiceover_by_id:
+            raise SyncError(f"duplicate plan voiceover event_id {event_id}")
+        if _number(event.get("playback_rate", 1.0), event_id) != 1.0:
+            raise SyncError(f"unsupported playback_rate on plan event {event_id}")
+        voiceover_by_id[event_id] = event
+    vo_bridge_events = bridge.get("voiceover_events", [])
+    if not isinstance(vo_bridge_events, list):
+        raise SyncError("bridge voiceover_events must be a list")
+    vo_exact_by_clip = {}
+    vo_bridged_ids = set()
+    for item in vo_bridge_events:
+        if not isinstance(item, dict):
+            raise SyncError("bridge voiceover event must be an object")
+        event_id = item.get("event_id")
+        clip_id = item.get("clip_id")
+        if event_id not in voiceover_by_id:
+            raise SyncError(
+                f"bridge references unknown plan voiceover event {event_id}"
+            )
+        if event_id in vo_bridged_ids:
+            raise SyncError(f"duplicate bridge voiceover event {event_id}")
+        vo_bridged_ids.add(event_id)
+        if not isinstance(clip_id, str) or not clip_id:
+            raise SyncError(f"bridge voiceover event {event_id} has no clip_id")
+        if (clip_id in vo_exact_by_clip or clip_id in exact_by_clip
+                or clip_id in broll_exact_by_clip):
+            raise SyncError(f"duplicate bridge clip_id {clip_id}")
+        vo_exact_by_clip[clip_id] = voiceover_by_id[event_id]
+    missing_vo = [eid for eid in voiceover_by_id if eid not in vo_bridged_ids]
+    if missing_vo:
+        raise SyncError(
+            "bridge does not cover plan voiceover events: " + ", ".join(missing_vo)
+        )
+
     readback_videos = _readback_tracks(readback, "video")
     readback_audios = _readback_tracks(readback, "audio")
     if len(readback_videos) > 2:
@@ -568,6 +626,16 @@ def timeline_to_candidate_plan(
             )
     audio_clips = [
         clip for clip in audio_clips if clip["link_group_id"] not in broll_groups
+    ]
+    # Unlinked audio clips are the voiceover lane (placement creates them
+    # unlinked; linked clips always belong to a primary or B-roll pair).
+    vo_clips = [
+        clip for clip in audio_clips
+        if not isinstance(clip["link_group_id"], str) or not clip["link_group_id"]
+    ]
+    audio_clips = [
+        clip for clip in audio_clips
+        if isinstance(clip["link_group_id"], str) and clip["link_group_id"]
     ]
     audio_by_group = defaultdict(list)
     for clip in audio_clips:
@@ -841,6 +909,99 @@ def timeline_to_candidate_plan(
                 }
             )
 
+    vo_diff = []
+    rebuilt_vo = []
+    used_vo_ids = set(voiceover_by_id)
+    vo_added = 0
+    surviving_vo_ids = set()
+    for clip in sorted(
+        vo_clips, key=lambda c: (c["start"], c["trim_start"], c["clip_id"])
+    ):
+        if clip["start"] + clip["duration"] > primary_end:
+            raise SyncError(
+                f"voiceover clip {clip['clip_id']} ends past the primary "
+                f"track end {primary_end}"
+            )
+        new_db = _volume_db(clip.get("volume"))
+        original = vo_exact_by_clip.get(clip["clip_id"])
+        if original is not None:
+            event = _rebuilt_event(original, original["event_id"], clip, fps)
+            event["asset_id"] = asset_for_ref[clip["media_ref"]]
+            old_db = original.get("volume_db")
+            if (new_db if new_db is not None else 0.0) != (
+                old_db if old_db is not None else 0.0
+            ):
+                event["volume_db"] = new_db
+                vo_diff.append(
+                    {
+                        "kind": "volume_changed",
+                        "event_id": original["event_id"],
+                        "clip_id": clip["clip_id"],
+                        "detail": (
+                            f"{old_db if old_db is not None else 0}dB -> "
+                            f"{new_db if new_db is not None else 0}dB"
+                        ),
+                    }
+                )
+            surviving_vo_ids.add(original["event_id"])
+            expected = _event_frames(original, fps, original["event_id"])
+            if expected != (clip["trim_start"], clip["source_end"], clip["start"]):
+                vo_diff.append(
+                    {
+                        "kind": "voiceover_changed",
+                        "event_id": original["event_id"],
+                        "clip_id": clip["clip_id"],
+                        "detail": (
+                            f"source [{expected[0]},{expected[1]}) at "
+                            f"{expected[2]} -> [{clip['trim_start']},"
+                            f"{clip['source_end']}) at {clip['start']}"
+                        ),
+                    }
+                )
+        else:
+            vo_added += 1
+            while f"vo-{vo_added:02d}" in used_vo_ids:
+                vo_added += 1
+            used_vo_ids.add(f"vo-{vo_added:02d}")
+            source_start = _seconds(clip["trim_start"], fps)
+            duration = _seconds(clip["duration"], fps)
+            event = {
+                "event_id": f"vo-{vo_added:02d}",
+                "asset_id": asset_for_ref[clip["media_ref"]],
+                "source_start_seconds": source_start,
+                "source_end_seconds": round(source_start + duration, 6),
+                "timeline_start_seconds": _seconds(clip["start"], fps),
+                "duration_seconds": duration,
+                "playback_rate": 1.0,
+                "intent": "voiceover",
+                "observed_content": None,
+                "confidence": 1.0,
+                "reframe": None,
+                "transition_out": None,
+                "text": None,
+                "volume_db": new_db,
+            }
+            vo_diff.append(
+                {
+                    "kind": "voiceover_added",
+                    "event_id": event["event_id"],
+                    "clip_id": clip["clip_id"],
+                    "detail": (
+                        f"{event['asset_id']} at timeline frame {clip['start']}"
+                    ),
+                }
+            )
+        rebuilt_vo.append(event)
+    for event_id in voiceover_by_id:
+        if event_id not in surviving_vo_ids:
+            vo_diff.append(
+                {
+                    "kind": "voiceover_removed",
+                    "event_id": event_id,
+                    "detail": "voiceover clip removed",
+                }
+            )
+
     candidate = deepcopy(plan)
     candidate_videos = [t for t in candidate["tracks"] if t.get("kind") == "video"]
     candidate_videos[0]["events"] = rebuilt_video
@@ -855,13 +1016,26 @@ def timeline_to_candidate_plan(
                 "events": rebuilt_broll,
             }
         )
-    for track in candidate["tracks"]:
-        if track.get("kind") == "audio":
-            track["events"] = rebuilt_audio
+    candidate_audios = [t for t in candidate["tracks"] if t.get("kind") == "audio"]
+    candidate_audios[0]["events"] = rebuilt_audio
+    if len(candidate_audios) == 2:
+        candidate_audios[1]["events"] = rebuilt_vo
+    elif rebuilt_vo:
+        candidate["tracks"].append(
+            {
+                "track_id": "a2",
+                "kind": "audio",
+                "role": "voiceover",
+                "events": rebuilt_vo,
+            }
+        )
     candidate["revision"] = plan_revision + 1
     # Duration follows the primary story, not the canvas: an empty tail
     # after the last A-roll clip must not become black/silent seconds
     # (cross-review 4). totalFrames stays a bound check via _normalize_clip.
     candidate["project"]["duration_seconds"] = _seconds(primary_end, fps)
-    diff = _build_diff(infos, descendants) + volume_notes + broll_diff + broll_notes
+    diff = (
+        _build_diff(infos, descendants)
+        + volume_notes + broll_diff + broll_notes + vo_diff
+    )
     return candidate, diff

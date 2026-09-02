@@ -724,3 +724,255 @@ class TestJLPlacementRefusal:
 
         with pytest.raises(BridgeError, match="J/L cuts"):
             place_plan(plan, inventory, "p", client=Untouchable())
+
+
+class FakeOpenTake:
+    """Scripted MCP client: enough of OpenTake's semantics for placement —
+    linked-pair auto-creation for video media, unlinked clips for audio
+    media, add_track with zone-partitioned append, volume set."""
+
+    def __init__(self, media):
+        self.media = media  # asset stem -> {"id", "kind"}
+        self.tracks = [
+            {"track": "V1", "trackIndex": 0, "type": "video", "clips": []},
+            {"track": "A1", "trackIndex": 1, "type": "audio", "clips": []},
+        ]
+        self.counter = 0
+        self.fps = 30
+
+    def _next(self, prefix):
+        self.counter += 1
+        return f"{prefix}{self.counter:02d}"
+
+    def get_timeline(self):
+        end = max(
+            (c["startFrame"] + c["durationFrames"]
+             for t in self.tracks for c in t["clips"]),
+            default=0,
+        )
+        return {
+            "fps": self.fps, "width": 320, "height": 240,
+            "totalFrames": end,
+            "tracks": [
+                {**t, "clips": [dict(c) for c in t["clips"]]}
+                for t in self.tracks
+            ],
+        }
+
+    def tool(self, name, arguments=None):
+        arguments = arguments or {}
+        if name == "get_media":
+            return {"entries": [
+                {"name": stem, "id": info["id"]}
+                for stem, info in self.media.items()
+            ]}
+        if name == "remove_clips":
+            ids = set(arguments["clipIds"])
+            for track in self.tracks:
+                track["clips"] = [
+                    c for c in track["clips"] if c["clipId"] not in ids
+                ]
+            return {}
+        if name == "add_track":
+            kind = arguments["type"]
+            if kind == "video":
+                index = max(
+                    i for i, t in enumerate(self.tracks)
+                    if t["type"] == "video"
+                ) + 1
+            else:
+                index = len(self.tracks)
+            self.tracks.insert(
+                index,
+                {"track": f"{kind[0].upper()}?", "trackIndex": index,
+                 "type": kind, "clips": []},
+            )
+            for i, track in enumerate(self.tracks):
+                track["trackIndex"] = i
+            return {"trackIndex": index}
+        if name == "add_clips":
+            for entry in arguments["entries"]:
+                kind = next(
+                    info["kind"] for info in self.media.values()
+                    if info["id"] == entry["mediaRef"]
+                )
+                index = entry.get("trackIndex")
+                clip = {
+                    "clipId": self._next("c"),
+                    "mediaRef": entry["mediaRef"],
+                    "startFrame": entry["startFrame"],
+                    "durationFrames": entry["durationFrames"],
+                    "trimStartFrame": entry.get("trimStartFrame", 0),
+                }
+                if index is None and kind == "video":
+                    group = self._next("lg")
+                    clip["linkGroupId"] = group
+                    self.tracks[0]["clips"].append(clip)
+                    audio_track = next(
+                        t for t in self.tracks if t["type"] == "audio"
+                    )
+                    audio_track["clips"].append({
+                        **clip, "clipId": self._next("c"),
+                        "mediaType": "audio",
+                    })
+                else:
+                    target = self.tracks[index]
+                    if target["type"] == "video":
+                        clip["linkGroupId"] = self._next("lg")
+                        # broll pair: linked audio lands on first audio track
+                        audio_track = next(
+                            t for t in self.tracks if t["type"] == "audio"
+                        )
+                        audio_track["clips"].append({
+                            **clip, "clipId": self._next("c"),
+                            "mediaType": "audio",
+                        })
+                    target["clips"].append(clip)
+            return {}
+        if name == "set_clip_properties":
+            volume = arguments.get("volume")
+            for track in self.tracks:
+                for clip in track["clips"]:
+                    if clip["clipId"] in arguments["clipIds"]:
+                        clip["volume"] = volume
+            return {}
+        raise AssertionError(f"unexpected tool {name}")
+
+
+def _mini_plan_with_voiceover():
+    def event(eid, asset, src, start, dur, intent, volume=None):
+        return {
+            "event_id": eid, "asset_id": asset,
+            "source_start_seconds": src,
+            "source_end_seconds": round(src + dur, 6),
+            "timeline_start_seconds": start, "duration_seconds": dur,
+            "playback_rate": 1.0, "intent": intent,
+            "observed_content": None, "confidence": 0.9, "reframe": None,
+            "transition_out": None, "text": None, "volume_db": volume,
+        }
+    return {
+        "schema_version": "edit-plan.v1",
+        "generated_at": "2026-09-01T00:00:00Z",
+        "benchmark_id": "t", "concept_id": "t", "revision": 1,
+        "project": {"width": 320, "height": 240, "fps": 30,
+                    "duration_seconds": 4.0, "background_color": "black"},
+        "tracks": [
+            {"track_id": "v1", "kind": "video", "events": [
+                event("v01", "red", 0.0, 0.0, 4.0, "base")]},
+            {"track_id": "a1", "kind": "audio", "events": [
+                event("a01", "red", 0.0, 0.0, 4.0, "base")]},
+            {"track_id": "t1", "kind": "title", "events": []},
+            {"track_id": "v2", "kind": "video", "role": "broll", "events": [
+                event("bro-01", "blue", 0.5, 1.0, 1.0, "b-roll")]},
+            {"track_id": "a2", "kind": "audio", "role": "voiceover",
+             "events": [event("vo-01", "memo", 0.0, 2.0, 1.5, "voiceover",
+                              volume=-6.0)]},
+        ],
+    }
+
+
+MINI_INVENTORY = {"assets": [
+    {"asset_id": "red", "filename": "red.mp4", "media_type": "video",
+     "duration_seconds": 6.0},
+    {"asset_id": "blue", "filename": "blue.mp4", "media_type": "video",
+     "duration_seconds": 6.0},
+    {"asset_id": "memo", "filename": "memo.m4a", "media_type": "audio",
+     "duration_seconds": 3.0},
+]}
+
+
+class TestFullPlacement:
+    def test_placement_creates_tracks_and_places_broll_and_voiceover(self) -> None:
+        from video_app.opentake_bridge import place_plan
+
+        client = FakeOpenTake({
+            "red": {"id": "ref-red", "kind": "video"},
+            "blue": {"id": "ref-blue", "kind": "video"},
+            "memo": {"id": "ref-memo", "kind": "audio"},
+        })
+        summary, bridge = place_plan(
+            _mini_plan_with_voiceover(), MINI_INVENTORY, "p", client=client
+        )
+        assert summary["placed_clips"] == 1
+        assert summary["placed_broll_clips"] == 1
+        assert summary["placed_voiceover_clips"] == 1
+        assert len(bridge["broll_events"]) == 1
+        assert len(bridge["voiceover_events"]) == 1
+        # voiceover clip landed unlinked with its volume set
+        timeline = client.get_timeline()
+        unlinked = [
+            c for t in timeline["tracks"] if t["type"] == "audio"
+            for c in t["clips"] if not c.get("linkGroupId")
+        ]
+        assert len(unlinked) == 1
+        assert unlinked[0].get("volume") == round(10 ** (-6.0 / 20), 4)
+
+    def test_positive_voiceover_gain_refused_in_preflight(self) -> None:
+        import pytest
+        from video_app.opentake_bridge import BridgeError, place_plan
+
+        plan = _mini_plan_with_voiceover()
+        plan["tracks"][4]["events"][0]["volume_db"] = 6.0
+
+        class Untouchable:
+            def __getattr__(self, name):
+                raise AssertionError(f"client.{name} was called")
+
+        with pytest.raises(BridgeError, match="gain"):
+            place_plan(plan, MINI_INVENTORY, "p", client=Untouchable())
+
+
+class TestVoiceoverSync:
+    def test_round_trip_and_gui_added_voiceover(self) -> None:
+        from video_app.opentake_bridge import place_plan
+        from video_app.opentake_sync import timeline_to_candidate_plan
+
+        plan = _mini_plan_with_voiceover()
+        client = FakeOpenTake({
+            "red": {"id": "ref-red", "kind": "video"},
+            "blue": {"id": "ref-blue", "kind": "video"},
+            "memo": {"id": "ref-memo", "kind": "audio"},
+        })
+        _, bridge = place_plan(plan, MINI_INVENTORY, "p", client=client)
+        readback = client.get_timeline()
+        candidate, diff = timeline_to_candidate_plan(plan, bridge, readback)
+        audios = [t for t in candidate["tracks"] if t["kind"] == "audio"]
+        assert audios[1]["role"] == "voiceover"
+        (vo,) = audios[1]["events"]
+        assert vo["event_id"] == "vo-01"  # identity preserved via bridge
+        # untouched round trip: no voiceover changes reported
+        assert not [d for d in diff if d["kind"].startswith("voiceover")]
+
+        # a NEW unlinked audio clip (GUI-added voiceover) becomes vo-02
+        audio_track = next(t for t in client.tracks if t["type"] == "audio")
+        audio_track["clips"].append({
+            "clipId": "gui-vo", "mediaRef": "ref-memo",
+            "startFrame": 60, "durationFrames": 30, "trimStartFrame": 0,
+        })
+        candidate, diff = timeline_to_candidate_plan(
+            plan, bridge, client.get_timeline()
+        )
+        audios = [t for t in candidate["tracks"] if t["kind"] == "audio"]
+        ids = [e["event_id"] for e in audios[1]["events"]]
+        assert "vo-02" in ids and "vo-01" in ids
+        assert any(d["kind"] == "voiceover_added" for d in diff)
+
+    def test_voiceover_past_primary_end_fails_closed(self) -> None:
+        import pytest
+        from video_app.opentake_bridge import place_plan
+        from video_app.opentake_sync import SyncError, timeline_to_candidate_plan
+
+        plan = _mini_plan_with_voiceover()
+        client = FakeOpenTake({
+            "red": {"id": "ref-red", "kind": "video"},
+            "blue": {"id": "ref-blue", "kind": "video"},
+            "memo": {"id": "ref-memo", "kind": "audio"},
+        })
+        _, bridge = place_plan(plan, MINI_INVENTORY, "p", client=client)
+        audio_track = next(t for t in client.tracks if t["type"] == "audio")
+        audio_track["clips"].append({
+            "clipId": "hangover", "mediaRef": "ref-memo",
+            "startFrame": 115, "durationFrames": 30, "trimStartFrame": 0,
+        })
+        with pytest.raises(SyncError, match="past the primary"):
+            timeline_to_candidate_plan(plan, bridge, client.get_timeline())
