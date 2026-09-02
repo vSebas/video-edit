@@ -19,10 +19,13 @@
       "const": "style-template.v1"
     },
     "style_id": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^style-[a-f0-9]{8}$"
     },
     "name": {
-      "type": "string"
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
     },
     "generated_at": {
       "type": "string"
@@ -45,39 +48,92 @@
       "properties": {
         "narrative_shape": {
           "type": "array",
+          "maxItems": 8,
           "items": {
-            "type": "string"
+            "enum": [
+              "hook",
+              "setup",
+              "attempt",
+              "failure",
+              "debugging",
+              "retry",
+              "payoff",
+              "reflection",
+              "montage",
+              "explainer",
+              "daily_routine",
+              "reveal"
+            ]
           }
         },
         "hook_type": {
-          "type": [
-            "string",
-            "null"
+          "enum": [
+            "unexpected_result",
+            "question",
+            "bold_claim",
+            "in_media_res",
+            "greeting",
+            "visual_spectacle",
+            "problem_statement",
+            "none",
+            null
           ]
         },
         "tone": {
           "type": "array",
+          "maxItems": 4,
           "items": {
-            "type": "string"
+            "enum": [
+              "calm",
+              "casual",
+              "chaotic",
+              "cinematic",
+              "cozy",
+              "dramatic",
+              "educational",
+              "emotional",
+              "energetic",
+              "formal",
+              "funny",
+              "informative",
+              "inspirational",
+              "intense",
+              "minimal",
+              "nostalgic",
+              "personal",
+              "playful",
+              "raw",
+              "reflective",
+              "sarcastic",
+              "serious",
+              "upbeat",
+              "wholesome"
+            ]
           }
         },
         "median_shot_seconds": {
           "type": [
             "number",
             "null"
-          ]
+          ],
+          "minimum": 0,
+          "maximum": 100000
         },
         "cuts_per_minute": {
           "type": [
             "number",
             "null"
-          ]
+          ],
+          "minimum": 0,
+          "maximum": 100000
         },
         "broll_ratio": {
           "type": [
             "number",
             "null"
-          ]
+          ],
+          "minimum": 0,
+          "maximum": 1
         },
         "payoff_position": {
           "enum": [

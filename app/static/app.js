@@ -343,9 +343,9 @@ async function loadStyleSection() {
           return `
             <article class="card style-card">
               <strong>${escapeHtml(style.name)}</strong>
-              <span class="muted">${(grammar.narrative_shape || []).slice(0, 5).join(' → ') || 'sin forma detectada'}</span>
-              <span class="muted">${grammar.cuts_per_minute ? `${grammar.cuts_per_minute} cortes/min` : ''}
-                ${grammar.broll_ratio ? ` · ${Math.round(grammar.broll_ratio * 100)}% B-roll` : ''}</span>
+              <span class="muted">${escapeHtml((grammar.narrative_shape || []).slice(0, 5).join(' → ')) || 'sin forma detectada'}</span>
+              <span class="muted">${Number(grammar.cuts_per_minute) ? `${Number(grammar.cuts_per_minute)} cortes/min` : ''}
+                ${Number(grammar.broll_ratio) ? ` · ${Math.round(Number(grammar.broll_ratio) * 100)}% B-roll` : ''}</span>
               ${best ? `
                 <span class="style-score">Mejor historia: ${(best.score * 100).toFixed(0)}%</span>
                 ${best.reasons.slice(0, 2).map((r) => `<span class="muted">✓ ${escapeHtml(r)}</span>`).join('')}

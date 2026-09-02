@@ -4,6 +4,7 @@ import datetime as dt
 import hashlib
 import importlib.util
 import json
+import logging
 import os
 import re
 import shutil
@@ -35,6 +36,8 @@ from .visual import (
     auto_review_decisions,
 )
 
+
+LOGGER = logging.getLogger(__name__)
 
 # Schemas and the deterministic render/export scripts ship with the app.
 APP_DIR = Path(__file__).resolve().parent.parent
@@ -1556,10 +1559,14 @@ class ProjectService:
             aggregate_template,
             build_observation,
             deterministic_observation,
+            resolve_reference_path,
             semantic_observation,
         )
 
-        path = (self._references_dir() / Path(filename).name).resolve()
+        try:
+            path = resolve_reference_path(self._references_dir(), filename)
+        except StyleError as exc:
+            raise ProjectError(str(exc)) from exc
         if not path.is_file():
             raise ProjectError(
                 f"No existe references/{Path(filename).name} — deja ahí el "
@@ -1577,6 +1584,15 @@ class ProjectService:
             )
         except (StyleError, ProviderError) as exc:
             raise ProjectError(f"Análisis de referencia falló: {exc}") from exc
+        # the schemas are enforcement points, not documentation
+        self._validate_schema(
+            observation, SCHEMA_DIR / "style-observation.schema.json",
+            "style observation",
+        )
+        self._validate_schema(
+            template, SCHEMA_DIR / "style-template.schema.json",
+            "style template",
+        )
         directory = self._styles_dir()
         write_json(
             directory / f"{template['style_id']}.json",
@@ -1588,8 +1604,14 @@ class ProjectService:
         styles = []
         for path in sorted(self._styles_dir().glob("style-*.json")):
             try:
-                styles.append(load_json(path)["template"])
-            except (OSError, ValueError, KeyError):
+                template = load_json(path)["template"]
+                self._validate_schema(
+                    template, SCHEMA_DIR / "style-template.schema.json",
+                    "style template",
+                )
+                styles.append(template)
+            except (OSError, ValueError, KeyError, ProjectError):
+                LOGGER.warning("skipping invalid style file %s", path.name)
                 continue
         return styles
 

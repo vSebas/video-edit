@@ -419,3 +419,44 @@ Current automated result in `video-editing-app:local`: **126 passed**, plus a sa
   waiting on a real reference video in `references/` (gitignored).
 
 Suite after this slice: **155 passed** in `video-editing-app:local`.
+
+## Style slice — Codex adversarial review triage (2026-09-02)
+
+18 findings (1 blocker, 12 major, 5 minor); all fixed except two
+consciously narrowed (see below). Proof of the blocker on the user's real
+reference: the windowed VLM segmenter reported 2.07s median shot /
+23.5 cuts-min; the new raw scene-cut measurer reports 0.72s / 55 —
+the reference is a fast-cut video and the old numbers were fabricated
+by the segmenter's 1.5s merge floor. Fixes, each with a test:
+
+- dedicated `_raw_shots` (no min-merge, no 8s split, fail-closed);
+  montage keeps 0.5s cuts, a 20s take is ONE shot
+- `speech_ratio` requires an audio stream and a clean ffmpeg exit —
+  None (unknown) otherwise, never a guess; muted video → None
+- tone is a 24-word controlled vocabulary end to end (VLM whitelist,
+  planner editorial whitelist, schema enum) — closes the
+  reference-video → planner-prompt injection channel; the style name is
+  stripped and the guidance block is framed as untrusted data
+- fail-closed numerics: confidence "high"/NaN → 0.3, explicit 0 stays 0
+- schemas are enforcement points: validated on write AND read (invalid
+  stored styles are skipped with a warning), enums/ranges tightened in
+  all three style schemas and the concepts `editorial` block
+- consensus aggregation: medoid narrative shape (majority beats longest),
+  deterministic mode tie-break, frequency-ordered tones, disagreement
+  multiplies confidence down (proven: 2 agreeing + 1 outlier < 2 agreeing)
+- matching: order-aware narrative fit (reversed arc scores lower),
+  payoff full credit needs the declared shape to actually end in one,
+  pacing counts DISTINCT moments (a range repeated 20× is one), spare
+  B-roll excludes cutaway-used assets, tone joins the score (renormalized
+  weights .30/.25/.20/.15/.10), min_distinct_shots surfaces in "missing"
+- symlink containment on reference filenames (escape → error, traversal
+  → neutralized to basename)
+- concept-job fingerprint hashes ALL result-affecting options; style-job
+  fingerprint includes content identity (size+mtime), name, prompt version
+- style card rendering escapes stored-template values
+
+Consciously narrowed: (a) payoff verification still trusts the concept's
+declared narrative shape (cross-checking beats against footage semantics
+is a later tier — the declared-flag-only path now caps at 0.6); (b)
+`speech_ratio` remains an audio-activity upper bound on dialogue, not VAD
+— renamed in docstring, not schema. Suite: **166 passed**.

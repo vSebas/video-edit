@@ -98,7 +98,10 @@
           "minimum": 0
         },
         "speech_ratio": {
-          "type": "number",
+          "type": [
+            "number",
+            "null"
+          ],
           "minimum": 0,
           "maximum": 1
         }
@@ -112,21 +115,68 @@
       ],
       "properties": {
         "hook_type": {
-          "type": [
-            "string",
-            "null"
+          "enum": [
+            "unexpected_result",
+            "question",
+            "bold_claim",
+            "in_media_res",
+            "greeting",
+            "visual_spectacle",
+            "problem_statement",
+            "none",
+            null
           ]
         },
         "narrative_shape": {
           "type": "array",
+          "maxItems": 8,
           "items": {
-            "type": "string"
+            "enum": [
+              "hook",
+              "setup",
+              "attempt",
+              "failure",
+              "debugging",
+              "retry",
+              "payoff",
+              "reflection",
+              "montage",
+              "explainer",
+              "daily_routine",
+              "reveal"
+            ]
           }
         },
         "tone": {
           "type": "array",
+          "maxItems": 4,
           "items": {
-            "type": "string"
+            "enum": [
+              "calm",
+              "casual",
+              "chaotic",
+              "cinematic",
+              "cozy",
+              "dramatic",
+              "educational",
+              "emotional",
+              "energetic",
+              "formal",
+              "funny",
+              "informative",
+              "inspirational",
+              "intense",
+              "minimal",
+              "nostalgic",
+              "personal",
+              "playful",
+              "raw",
+              "reflective",
+              "sarcastic",
+              "serious",
+              "upbeat",
+              "wholesome"
+            ]
           }
         },
         "payoff_position": {
@@ -164,7 +214,8 @@
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "maxLength": 300
         },
         "confidence": {
           "type": "number",

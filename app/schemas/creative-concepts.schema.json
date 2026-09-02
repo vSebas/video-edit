@@ -212,24 +212,73 @@
               "type": [
                 "string",
                 "null"
-              ]
+              ],
+              "maxLength": 48,
+              "pattern": "^[a-z0-9_]*$"
             },
             "narrative_shape": {
               "type": "array",
+              "maxItems": 8,
               "items": {
-                "type": "string"
+                "enum": [
+                  "hook",
+                  "setup",
+                  "attempt",
+                  "failure",
+                  "debugging",
+                  "retry",
+                  "payoff",
+                  "reflection",
+                  "montage",
+                  "explainer",
+                  "daily_routine",
+                  "reveal"
+                ]
               }
             },
             "hook_type": {
-              "type": [
-                "string",
-                "null"
+              "enum": [
+                "unexpected_result",
+                "question",
+                "bold_claim",
+                "in_media_res",
+                "greeting",
+                "visual_spectacle",
+                "problem_statement",
+                "none",
+                null
               ]
             },
             "tone": {
               "type": "array",
+              "maxItems": 4,
               "items": {
-                "type": "string"
+                "enum": [
+                  "calm",
+                  "casual",
+                  "chaotic",
+                  "cinematic",
+                  "cozy",
+                  "dramatic",
+                  "educational",
+                  "emotional",
+                  "energetic",
+                  "formal",
+                  "funny",
+                  "informative",
+                  "inspirational",
+                  "intense",
+                  "minimal",
+                  "nostalgic",
+                  "personal",
+                  "playful",
+                  "raw",
+                  "reflective",
+                  "sarcastic",
+                  "serious",
+                  "upbeat",
+                  "wholesome"
+                ]
               }
             },
             "dialogue_density": {

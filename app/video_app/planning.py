@@ -369,19 +369,40 @@ def _sanitize_concepts(
         concept.setdefault("platforms", ["instagram_reel", "tiktok"])
         editorial = concept.get("editorial")
         if isinstance(editorial, dict):
+            from .style_intelligence import (
+                HOOK_TYPES, NARRATIVE_LABELS, TONE_LABELS,
+            )
+
+            def _label_list(value, allowed, cap):
+                # same coercion the style analyzer uses: a bare string must
+                # not iterate into characters, and only whitelisted labels
+                # survive into style matching
+                if isinstance(value, str):
+                    value = [part.strip() for part in value.split(",")]
+                if not isinstance(value, list):
+                    return []
+                return [
+                    str(x).lower() for x in value
+                    if isinstance(x, str) and str(x).lower() in allowed
+                ][:cap]
+
             payoff = editorial.get("payoff") if isinstance(editorial.get("payoff"), dict) else {}
             concept["editorial"] = {
-                "archetype": str(editorial.get("archetype") or "")[:48] or None,
-                "narrative_shape": [
-                    str(x)[:24] for x in (editorial.get("narrative_shape") or [])
-                ][:8],
-                "hook_type": str(editorial.get("hook_type") or "")[:32] or None,
-                "tone": [str(x).lower()[:24] for x in (editorial.get("tone") or [])][:4],
+                "archetype": re.sub(
+                    r"[^a-z0-9_]+", "_", str(editorial.get("archetype") or "").lower()
+                ).strip("_")[:48] or None,
+                "narrative_shape": _label_list(
+                    editorial.get("narrative_shape"), NARRATIVE_LABELS, 8
+                ),
+                "hook_type": editorial.get("hook_type")
+                if editorial.get("hook_type") in HOOK_TYPES else None,
+                "tone": _label_list(editorial.get("tone"), TONE_LABELS, 4),
                 "dialogue_density": editorial.get("dialogue_density")
                 if editorial.get("dialogue_density") in ("low", "medium", "high")
                 else None,
                 "payoff": {
-                    "present": bool(payoff.get("present")),
+                    # strict: "false" (string) must not become True
+                    "present": payoff.get("present") is True,
                     "approximate_story_position": payoff.get("approximate_story_position")
                     if payoff.get("approximate_story_position")
                     in ("early", "mid", "late", "none") else None,

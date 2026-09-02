@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 import secrets
@@ -384,13 +386,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @application.post("/api/styles/analyze", status_code=202)
     def analyze_style_reference(request: AnalyzeStyleReferenceRequest):
+        from .style_intelligence import STYLE_PROMPT_VERSION
+
+        # content identity (size+mtime) so replacing the file or renaming
+        # the style is a new job, not a dedup hit on the old analysis
+        try:
+            stat = (
+                projects._references_dir() / Path(request.filename).name
+            ).stat()
+            identity = f"{stat.st_size}:{stat.st_mtime_ns}"
+        except OSError:
+            identity = "missing"
         return jobs.submit(
             "style_analysis",
             "styles",
             lambda: projects.analyze_style_reference(
                 request.filename, request.name
             ),
-            fingerprint=request.filename,
+            fingerprint=(
+                f"{Path(request.filename).name}:{request.name}:"
+                f"{identity}:{STYLE_PROMPT_VERSION}"
+            ),
         )
 
     @application.post("/api/projects/{project_id}/style-matches")
@@ -527,7 +543,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 options.use_source_context,
                 style_id=options.style_id,
             ),
-            fingerprint=f"{options.style_id}:{(options.guidance or '')[:60]}",
+            # every option that changes the result must change the
+            # fingerprint, or concurrent submits collapse into one job
+            fingerprint=hashlib.sha1(
+                json.dumps(
+                    [
+                        options.provider, options.model, options.guidance,
+                        sorted(options.keep_concept_ids or []),
+                        options.use_source_context, options.style_id,
+                    ],
+                    default=str,
+                ).encode()
+            ).hexdigest()[:16],
         )
 
     @application.post("/api/projects/{project_id}/plan", status_code=201)
