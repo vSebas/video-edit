@@ -7,9 +7,9 @@ observations with timecodes — not a new timeline engine.
 
 The ratified execution direction is hybrid: OpenTake is the editing surface,
 the owned FFmpeg path renders final pixels, and Resolve remains the editable
-export escape hatch. OpenTake placement and cleanup are currently bounded
-trial scripts, not yet buttons in this workbench; timeline-to-plan sync is the
-next required integration.
+export escape hatch. As of 2026-09-01 that direction is fully integrated:
+placement (tracks, B-roll, voiceover, J/L re-tiling), dialogue cleanup, and
+revision-guarded timeline-to-plan sync are workbench features, not scripts.
 
 Run with Docker:
 
@@ -21,11 +21,15 @@ docker compose up --build -d app
 Open <http://127.0.0.1:8787> (or from any device on the tailnet:
 `http://pacman.tailf9616b.ts.net:8787`).
 
-The UI is a three-step guided flow — Create (one button chains analysis and
-story writing), Pick a story (evidence thumbnails, missing-shot and
-voiceover advice), Watch/tweak/export (scene-by-scene workspace, revision
-chat, clip value scores, recommendations) — with raw pipeline controls and
-project management in an Advanced drawer.
+The UI (Spanish-only) is organized around the user journey in four
+workspaces — **Historia** (story cards, new-idea guidance, reference-style
+cards), **Edición** (player, ONE natural-language edit input with an inline
+proposal, scene strip with B-roll/voice lanes, revision history with
+restore), **Metraje** (clips with usage badges and value scores), and
+**Publicar** (download, freshness warnings, OpenTake placement/sync,
+DaVinci exports) — plus **Diagnóstico** behind the ⋯ menu (capabilities,
+forced re-runs, jobs, reference analysis, raw telemetry). Phone-first at
+≤900px.
 
 ## Walking-skeleton pipeline (daily vlogs)
 
@@ -35,8 +39,9 @@ proposal and editable exports:
 1. **Get footage in** (any of):
    - Google Drive **VlogInbox** (preferred, async): upload from the Drive
      app into `VlogInbox/<title>` with an optional `nota` text file as the
-     prompt; the UI banners waiting folders and one click imports.
-     Strictly read-only toward Drive.
+     prompt; the UI banner shows each folder's clip count, size, and a
+     live "recibiendo/listo" state, and imports with real copied-MB
+     progress. Strictly read-only toward Drive.
    - Browser upload (`POST /api/uploads`, phone or laptop) with live
      progress on both ends; per-clip `POST /api/uploads/item` for iOS
      Shortcuts; `POST /api/projects/{id}/uploads` adds clips/voiceovers to
@@ -63,8 +68,11 @@ proposal and editable exports:
    prior revisions kept.
 7. `POST /plan/command` + `/plan/command/apply` — atomic natural-language
    edits: one instruction → one operation from a closed set (delete, trim,
-   volume, J/L cut, title, voiceover add/remove), computed and bounds-checked deterministically;
-   the LLM only picks the op. Revision-guarded propose/apply.
+   volume, J/L cut, styled title — font/size/position over bundled OFL
+   fonts, voiceover add/remove, B-roll add/remove/replace/move with
+   evidence-caption content hints), computed and bounds-checked
+   deterministically; the LLM only picks the op. Revision-guarded
+   propose/apply with single-use proposal tokens.
 8. `POST /render?burn_captions=true` — review render with timeline-aligned
    Spanish captions burned in. Renders are cached per plan content: an
    unchanged plan returns the existing file instantly.
@@ -81,20 +89,31 @@ proposal and editable exports:
    in the body (`opentake_adapter.py --sync [--apply-sync]` does this);
    a host-run app can fetch it itself via `OPENTAKE_MCP_URL`/`_TOKEN`.
 
-## OpenTake hybrid bridge (trial tooling)
+## Reference Style Intelligence
 
-`app/scripts/opentake_adapter.py` places the flat video track of an existing
-`edit-plan.v1` into the currently open scratch OpenTake project and verifies
-the emitted geometry, source trims, media references, and linked audio.
-`app/scripts/opentake_cleanup.py` lists or applies conservative Spanish
-filler/dead-air candidates from the newest local large-v3 transcript.
+Drop a video you admire into `references/` (gitignored, never committed)
+and analyze it from Diagnóstico. Extraction is measurement-first: shot
+boundaries, pacing, audio activity, and the beat grid (BPM, cut-to-beat
+offsets) are measured deterministically; a single gemini-3.6-flash call
+reads only the editing grammar (hook type, narrative shape,
+controlled-vocabulary tone, payoff position) — never story content.
+Endpoints: `GET /api/styles` (templates, incompatible ones surfaced as
+stubs), `POST /api/styles/analyze` (deterministic style ids — re-analysis
+replaces), `DELETE /api/styles/{id}`, `POST
+/api/projects/{id}/style-matches` (deterministic concept×style scoring
+with Spanish reasons and `template_confidence`), and `style_id` on
+`POST /concepts` for style-conditioned ideas (recorded as a
+`style-application.v1` block). Artifacts are schema-enforced on write and
+read, with per-field measured/semantic tiers.
 
-These are evidence-producing trial tools, not the production adapter. They
-use one MCP session with no retry/reconciliation, identify media by filename
-stem, assume the trial's flat 30 fps/1x timeline, and do not make remove-then-
-add transactional or roll it back. The cleanup candidate numbering is not
-revision-bound. Run them only against a saved project you can recover. The
-productionization item is tracked in `STATUS_AND_ROADMAP.md`.
+## OpenTake hybrid bridge
+
+The production bridge lives in `video_app/opentake_bridge.py` /
+`opentake_sync.py` (preflight, transactional placement with best-effort
+restore, whole-inventory media map, fail-closed sync). The
+`app/scripts/opentake_adapter.py` and `opentake_cleanup.py` CLIs remain as
+host-side drivers (they pass the `get_timeline` readback to the sync
+endpoints) and for evidence-producing experiments.
 
 Project management: clone with shared analysis, reset (keep or wipe
 analysis), delete; per-clip value scores (`GET /clip-scores`); clip removal

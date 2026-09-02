@@ -49,7 +49,7 @@ docker compose run --rm app python pipeline/validate_edit.py \
 |---|---|
 | `app/` | The application: FastAPI service, browser workbench, adapters |
 | `app/pipeline/` | Deterministic render, OTIO/XMEML export, independent edit validation |
-| `app/scripts/` | Editor verification and bounded OpenTake trial tools |
+| `app/scripts/` | Editor verification and host-side OpenTake CLI drivers |
 | `app/schemas/` | Versioned media, evidence, concept, edit-plan, and report schemas |
 | `bench/` | Model bake-offs and their recorded results |
 | `footage/` | Your source clips (never committed) |
