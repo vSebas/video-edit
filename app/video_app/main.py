@@ -675,8 +675,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return FileResponse(path, media_type="image/jpeg")
 
     @application.get("/api/projects/{project_id}/outputs/{kind}")
-    def output(project_id: str, kind: str):
-        path = project_call(lambda: projects.output_path(project_id, kind))
+    def output(project_id: str, kind: str, artifact: str | None = None):
+        path = project_call(
+            lambda: projects.output_path(project_id, kind, artifact)
+        )
         media_type = "video/mp4" if kind == "render" else "application/octet-stream"
         return FileResponse(path, media_type=media_type, filename=path.name if kind != "render" else None)
 

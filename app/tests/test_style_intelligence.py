@@ -698,6 +698,46 @@ class TestCompilerBinding:
         # clip end at 10 (into black) AND clip start at 20 are both cuts
         assert compute_achieved_plan(plan)["cuts_per_minute"] == 4.0
 
+    def test_leftover_budget_reaches_quota_blocked_beats(self) -> None:
+        # beat b0 has a short cutaway (spends little of its quota); beat
+        # b1's cutaway is quota-blocked in pass one but the leftover pass
+        # affords it — order must not strand real budget
+        from video_app.planning import build_plan
+
+        spans = [
+            {"label": f"b{i}", "asset_id": "clip_0",
+             "source_start_seconds": i * 8.0,
+             "source_end_seconds": i * 8.0 + 8.0,
+             "intent": "p", "observed_content": "x", "confidence": 0.9}
+            for i in range(2)
+        ]
+        cutaways = [
+            {"label": "b0", "asset_id": "clip_1",
+             "source_start_seconds": 0.0, "source_end_seconds": 0.9,
+             "intent": "b", "observed_content": "x", "confidence": 0.9},
+            {"label": "b1", "asset_id": "clip_1",
+             "source_start_seconds": 10.0, "source_end_seconds": 22.0,
+             "intent": "b", "observed_content": "x", "confidence": 0.9},
+        ]
+        plan = build_plan(
+            self.PROJECT, spans, cutaways=cutaways,
+            concept_id="c", benchmark_id="t", hook_text="hola",
+            style_application={
+                "style_id": "style-00000000",
+                "targets": {"broll_ratio": 0.6},
+                "owners": {"broll_ratio": "compiler"},
+            },
+        )
+        total = self._broll_duration(plan)
+        # budget 9.6s; quota-only allocation strands budget: b0's cutaway
+        # is 0.9s, b1's fair share is 4.8 — the leftover pass must extend
+        # b1 beyond its quota (bounded by the 70%-window honesty cap)
+        assert total > 6.0
+        # and the shortfall reports what the windows genuinely can't hold
+        assert plan["style_application"]["broll_shortfall_seconds"] == (
+            pytest.approx(9.6 - total, abs=0.1)
+        )
+
     def test_single_long_take_measures_zero_cuts(self) -> None:
         from video_app.planning import compute_achieved_plan
 

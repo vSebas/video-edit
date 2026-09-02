@@ -745,6 +745,8 @@ def build_plan(
             }
     if cutaways and (budget is None or budget >= 0.8):
         cursor_by_beat: dict[str, float] = {}
+        placed_seconds: dict[int, float] = {}
+        beat_placed: dict[str, float] = {}
         for shot in cutaways:
             window = beat_windows.get(shot["label"])
             if window is None:
@@ -767,7 +769,7 @@ def build_plan(
                 cap = 4.0
             duration = round(min(span_length, cap, available), 6)
             if duration < 0.8:
-                continue  # no honest room left in this beat's window
+                continue  # the leftover pass may still afford this one
             source_start = round(
                 max(0, round(shot["source_start_seconds"] * fps)) / fps, 6
             )
@@ -799,11 +801,80 @@ def build_plan(
                 }
             )
             cursor_by_beat[shot["label"]] = round(position + duration + 0.3, 6)
+            placed_seconds[id(shot)] = duration
+            beat_placed[shot["label"]] = (
+                beat_placed.get(shot["label"], 0.0) + duration
+            )
             if budget is not None:
                 budget -= duration
                 beat_quota[shot["label"]] = max(
                     0.0, beat_quota.get(shot["label"], 0.0) - duration
                 )
+
+        # leftover pass: quotas kept pass one fair, but truncated or
+        # skipped cutaways may have left real budget unspent — spend it on
+        # any cutaway with unused SOURCE material and window room, under
+        # the same honesty bounds (0.7-window per beat, approved footage)
+        for shot in cutaways if budget is not None else []:
+            if budget < 0.8:
+                break
+            window = beat_windows.get(shot["label"])
+            if window is None:
+                continue
+            beat_start, beat_end = window
+            already = placed_seconds.get(id(shot), 0.0)
+            position = cursor_by_beat.get(shot["label"], beat_start + 0.4)
+            available = beat_end - 0.2 - position
+            span_length = (
+                shot["source_end_seconds"] - shot["source_start_seconds"]
+                - already
+            )
+            cap = min(
+                budget,
+                0.7 * (beat_end - beat_start)
+                - beat_placed.get(shot["label"], 0.0),
+            )
+            duration = round(min(span_length, cap, available), 6)
+            if duration < 0.8:
+                continue
+            source_start = round(
+                max(
+                    0,
+                    round((shot["source_start_seconds"] + already) * fps),
+                ) / fps, 6,
+            )
+            duration = round(max(1, round(duration * fps)) / fps, 6)
+            index = len(broll_events) + 1
+            broll_events.append(
+                {
+                    "event_id": f"bro-{index:02d}_{shot['label']}"[:64],
+                    "asset_id": shot["asset_id"],
+                    "source_start_seconds": source_start,
+                    "source_end_seconds": round(source_start + duration, 6),
+                    "timeline_start_seconds": round(position, 6),
+                    "duration_seconds": duration,
+                    "playback_rate": 1.0,
+                    "intent": shot["intent"],
+                    "observed_content": shot["observed_content"],
+                    "confidence": shot["confidence"],
+                    "reframe": {
+                        "mode": "fit",
+                        "center_x": 0.5,
+                        "center_y": 0.5,
+                        "scale": 1.0,
+                        "rotation_degrees": detected_rotation(shot["asset_id"]),
+                        "manual_review": bool(detected_rotation(shot["asset_id"])),
+                    },
+                    "transition_out": {"type": "cut", "duration_seconds": 0.0},
+                    "text": None,
+                    "volume_db": None,
+                }
+            )
+            cursor_by_beat[shot["label"]] = round(position + duration + 0.3, 6)
+            beat_placed[shot["label"]] = (
+                beat_placed.get(shot["label"], 0.0) + duration
+            )
+            budget -= duration
 
     title_events = [
         {

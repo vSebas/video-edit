@@ -650,3 +650,15 @@ implemented (suite 195→197):
 - renders run UNLOCKED to per-invocation temp files and promote
   atomically (artifact+state paired) under the per-project lock — the
   worker-starvation risk of holding the lock through ffmpeg is gone
+
+## Sixth round (2026-09-02): the last two code items
+
+- leftover B-roll budget now redistributes in a second pass to ANY
+  cutaway with unused source material and window room — a truncated
+  clip extends beyond its quota when budget remains, bounded by the
+  70%-of-window honesty cap; the shortfall reports exactly what the
+  windows genuinely cannot hold
+- render results are IMMUTABLE keyed artifacts (review.<key>.mp4,
+  pruned to the newest 4): a job's recorded output URL always resolves
+  to its own pixels even after a concurrent captioned/plain render
+  replaces review.mp4 (which remains the stable "latest" via hardlink)

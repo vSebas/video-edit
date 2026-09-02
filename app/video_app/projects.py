@@ -2519,7 +2519,7 @@ class ProjectService:
 
     def _render_cache_hit(
         self, project_id: str, output: Path, state_path: Path,
-        render_key: dict, measure_version: str,
+        render_key: dict, measure_version: str, artifact_key: str,
     ) -> dict | None:
         if not (output.is_file() and state_path.is_file()):
             return None
@@ -2546,8 +2546,14 @@ class ProjectService:
                 prior.pop("achieved_render_grammar", None)
                 prior["measurement_error"] = utc_now()
             write_json(state_path, prior)
+        keyed = output.parent / f"review.{artifact_key}.mp4"
         return {
-            "output": f"/api/projects/{project_id}/outputs/render",
+            "output": (
+                f"/api/projects/{project_id}/outputs/render"
+                f"?artifact={artifact_key}"
+                if keyed.is_file()
+                else f"/api/projects/{project_id}/outputs/render"
+            ),
             "path": str(output),
             "cached": True,
             **(
@@ -2590,15 +2596,20 @@ class ProjectService:
             ),
         }
         state_path = output_dir / "review.render-state.json"
+        artifact_key = hashlib.sha1(
+            json.dumps(render_key, sort_keys=True).encode()
+        ).hexdigest()[:8]
         from .style_intelligence import STYLE_MEASURE_VERSION as MEASURE_VERSION
         with self._render_lock(project_id):
             cached = self._render_cache_hit(
-                project_id, output, state_path, render_key, MEASURE_VERSION
+                project_id, output, state_path, render_key, MEASURE_VERSION,
+                artifact_key,
             )
         if cached is not None:
             return cached
         script = PIPELINE_DIR / "render_edit.py"
         plan_path, inventory_path, media_root = self._plan_sources(project_id)
+        keyed_output = output_dir / f"review.{artifact_key}.mp4"
         temp_output = output_dir / f"review.{uuid.uuid4().hex[:8]}.tmp.mp4"
         command = [
             sys.executable,
@@ -2632,9 +2643,22 @@ class ProjectService:
             except Exception as exc:  # noqa: BLE001
                 LOGGER.warning("render measurement failed: %s", exc)
                 achieved_render = None
-            # atomic promotion: the artifact and its state always pair up
+            # atomic promotion: the immutable keyed artifact is the job's
+            # durable result; review.mp4 is just the LATEST via hardlink,
+            # so a concurrent job can never swap this job's pixels
             with self._render_lock(project_id):
-                os.replace(temp_output, output)
+                os.replace(temp_output, keyed_output)
+                latest_link = output_dir / f".latest.{uuid.uuid4().hex[:6]}"
+                os.link(keyed_output, latest_link)
+                os.replace(latest_link, output)
+                # prune old keyed artifacts, keeping the newest few
+                keyed = sorted(
+                    output_dir.glob("review.????????.mp4"),
+                    key=lambda p: p.stat().st_mtime,
+                    reverse=True,
+                )
+                for stale in keyed[4:]:
+                    stale.unlink(missing_ok=True)
                 write_json(
                     state_path,
                     {
@@ -2656,7 +2680,11 @@ class ProjectService:
         finally:
             temp_output.unlink(missing_ok=True)
         return {
-            "output": f"/api/projects/{project_id}/outputs/render",
+            "output": (
+                f"/api/projects/{project_id}/outputs/render"
+                f"?artifact={artifact_key}"
+            ),
+            "latest": f"/api/projects/{project_id}/outputs/render",
             "path": str(output),
             **(
                 {"achieved_render_grammar": achieved_render}
@@ -2813,8 +2841,18 @@ class ProjectService:
         path = self.settings.runtime / project_id / "thumbnails" / f"{asset_id}.jpg"
         return self._require_file(path)
 
-    def output_path(self, project_id: str, kind: str) -> Path:
+    def output_path(
+        self, project_id: str, kind: str, artifact: str | None = None
+    ) -> Path:
         runtime_outputs = self.settings.runtime / project_id / "outputs"
+        if artifact is not None:
+            # immutable keyed render artifact — a job's recorded result
+            # must resolve to ITS render, not whatever replaced review.mp4
+            if kind != "render" or not re.fullmatch(r"[a-f0-9]{8}", artifact):
+                raise ProjectError("Unknown output artifact")
+            return self._require_file(
+                runtime_outputs / f"review.{artifact}.mp4"
+            )
         mapping = {
             "render": runtime_outputs / "review.mp4",
             "otio": runtime_outputs / "timeline.otio",
