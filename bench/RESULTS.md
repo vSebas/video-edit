@@ -132,3 +132,16 @@ named originals, timestamps, and telemetry elsewhere.
 
 Bench cost: ~$2 RunPod (pod terminated) + a few cents of API calls + free
 TwelveLabs tier. Reka remains unrun.
+
+## gemini-3.8-flash spot-check (2026-09-02, style semantics)
+
+3.8-flash appeared on the API and was compared against stored 3.6-flash
+readings on the 5 real style references (semantic fields only — the
+deterministic measurements are model-independent). Owner adjudicated the
+three factual disagreements: 3.6 was right on voiceover presence (none),
+payoff position (early ~10s), and caption density (heavy); 3.8 was
+closer only on a B-roll ratio estimate (0.8 vs 0.65 against owner's
+~80%). **3.6-flash retained (3-1 on binary facts).** Consistent with the
+3.7-flash grounding regression: newer flash versions keep losing on
+factual footage reading. Tone shuffled between models on all five
+references — justifying its 0.10 informational weight in matching.
