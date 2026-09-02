@@ -629,10 +629,13 @@ def build_plan(
     revision: int = 1,
     speech_words: dict[str, list[dict]] | None = None,
     cutaways: list[dict] | None = None,
+    style_targets: dict | None = None,
 ) -> dict:
     """Deterministically assemble edit-plan.v1 from grounded spans with
     linked video/audio events, a hook title, and optional B-roll cutaways
-    laid over their beat's window."""
+    laid over their beat's window. Measured style targets (when given)
+    bind the cutaway layout toward the reference's B-roll coverage —
+    always within grounded material, never inventing content."""
     if not spans:
         raise PlanningError("No usable evidence ranges to build a plan from")
     if speech_words:
@@ -707,6 +710,11 @@ def build_plan(
         timeline = round(timeline + duration, 6)
 
     broll_events = []
+    # A measured reference B-roll ratio binds the cutaway cap: a heavy
+    # B-roll style may hold a cutaway up to ~70% of its beat window, a
+    # sparse style shrinks toward 2.5s. Coverage can only come from the
+    # cutaways the sanitizer already approved — no target invents footage.
+    target_ratio = (style_targets or {}).get("broll_ratio")
     if cutaways:
         cursor_by_beat: dict[str, float] = {}
         for shot in cutaways:
@@ -717,7 +725,13 @@ def build_plan(
             position = cursor_by_beat.get(shot["label"], beat_start + 0.4)
             available = beat_end - 0.2 - position
             span_length = shot["source_end_seconds"] - shot["source_start_seconds"]
-            duration = round(min(span_length, 4.0, available), 6)
+            if target_ratio is not None:
+                window_length = beat_end - beat_start
+                cap = max(2.5, min(0.7, target_ratio) * window_length) \
+                    if target_ratio > 0.15 else 2.5
+            else:
+                cap = 4.0
+            duration = round(min(span_length, cap, available), 6)
             if duration < 0.8:
                 continue  # no honest room left in this beat's window
             source_start = round(
@@ -769,12 +783,40 @@ def build_plan(
         }
     ]
 
+    style_block = None
+    if style_targets is not None:
+        # achieved PLANNED grammar, from the same quantities the reference
+        # was measured with: visual cut boundaries are primary cut edges
+        # plus B-roll in/out edges; coverage is overlaid seconds / total
+        boundaries = sorted({
+            round(e["timeline_start_seconds"], 3) for e in video_events
+        } | {
+            edge
+            for e in broll_events
+            for edge in (
+                round(e["timeline_start_seconds"], 3),
+                round(e["timeline_start_seconds"] + e["duration_seconds"], 3),
+            )
+        } - {0.0})
+        broll_seconds = sum(e["duration_seconds"] for e in broll_events)
+        achieved = {
+            "cuts_per_minute": (
+                round(len(boundaries) / (timeline / 60), 1) if timeline else None
+            ),
+            "broll_ratio": round(broll_seconds / timeline, 2) if timeline else None,
+        }
+        style_block = {
+            "targets": style_targets,
+            "achieved_plan": achieved,
+        }
+
     return {
         "schema_version": "edit-plan.v1",
         "generated_at": utc_now(),
         "benchmark_id": benchmark_id,
         "concept_id": concept_id,
         "revision": revision,
+        **({"style_application": style_block} if style_block else {}),
         "project": {
             "width": width,
             "height": height,
@@ -830,6 +872,7 @@ def compile_edit_plan(
     fps: int = DEFAULT_FPS,
     speech_words: dict[str, list[dict]] | None = None,
     approved_ranges: dict[str, list[tuple[float, float]]] | None = None,
+    style_targets: dict | None = None,
 ) -> dict:
     """Deterministically compile a sanitized concept into edit-plan.v1."""
     concept = next(
@@ -892,6 +935,7 @@ def compile_edit_plan(
             height=height,
             fps=fps,
             speech_words=speech_words,
+            style_targets=style_targets,
         )
     except PlanningError as exc:
         raise PlanningError(f"The selected concept is not compilable: {exc}") from exc

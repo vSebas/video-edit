@@ -68,6 +68,50 @@
         "guidance_block": {
           "type": "string",
           "maxLength": 4000
+        },
+        "application": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "targets": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "broll_ratio": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "median_shot_seconds": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "cuts_per_minute": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              }
+            },
+            "owners": {
+              "type": "object",
+              "additionalProperties": {
+                "enum": [
+                  "planner",
+                  "compiler"
+                ]
+              }
+            },
+            "unsupported": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 40
+              }
+            }
+          }
         }
       }
     }

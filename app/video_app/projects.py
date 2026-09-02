@@ -854,7 +854,7 @@ class ProjectService:
         told (pacing, shape, tone) — grounding still owns the content."""
         project = self.get_project(project_id)
         if style_id:
-            from .style_intelligence import style_guidance
+            from .style_intelligence import style_guidance, style_targets
 
             template = next(
                 (t for t in self.list_styles() if t["style_id"] == style_id),
@@ -874,6 +874,9 @@ class ProjectService:
                 "template_confidence": template.get("confidence"),
                 "analyzers": template.get("analyzers") or [],
                 "guidance_block": block,
+                # the resolved contract: measured targets the COMPILER
+                # binds to, owners per property, and what is unsupported
+                "application": style_targets(template),
             }
         evidence = self.approved_evidence(project_id) + self.pending_evidence(project_id)
         keep_concepts: list[dict] = []
@@ -946,6 +949,12 @@ class ProjectService:
         if not selected:
             raise ProjectError("Select a concept before compiling the edit plan")
         approved_ranges = self._approved_ranges(project_id)
+        # concepts generated with a style carry the resolved application
+        # contract; its measured targets bind the compiler
+        compile_targets = (
+            ((document.get("style_application") or {}).get("application") or {})
+            .get("targets") or None
+        )
         try:
             plan = compile_edit_plan(
                 project,
@@ -956,6 +965,7 @@ class ProjectService:
                 fps,
                 speech_words=self._speech_words(project_id),
                 approved_ranges=approved_ranges,
+                style_targets=compile_targets,
             )
             validate_edit_plan(
                 plan,
@@ -2402,10 +2412,33 @@ class ProjectService:
         if result.returncode:
             detail = (result.stderr or result.stdout).strip()
             raise ProjectError(f"Render failed: {detail[-1000:]}")
-        write_json(state_path, {**render_key, "rendered_at": utc_now()})
+        # close the style loop at the pixels: measure what was actually
+        # rendered with the same instruments used on the reference, so a
+        # styled cut can be judged by achieved grammar, not by prompts
+        achieved_render = None
+        if plan.get("style_application"):
+            from .style_intelligence import measure_rendered_grammar
+
+            achieved_render = measure_rendered_grammar(output)
+        write_json(
+            state_path,
+            {
+                **render_key,
+                "rendered_at": utc_now(),
+                **(
+                    {"achieved_render_grammar": achieved_render,
+                     "style_targets": plan["style_application"].get("targets")}
+                    if achieved_render is not None else {}
+                ),
+            },
+        )
         return {
             "output": f"/api/projects/{project_id}/outputs/render",
             "path": str(output),
+            **(
+                {"achieved_render_grammar": achieved_render}
+                if achieved_render is not None else {}
+            ),
         }
 
     def prepare_exports(self, project_id: str, include_proxies: bool = False) -> dict:

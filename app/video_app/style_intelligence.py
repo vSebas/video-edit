@@ -752,6 +752,9 @@ def match_concept(template: dict, concept: dict, inventory: dict) -> dict:
         # concept fits the OBSERVED grammar; this says how much to trust
         # the observation itself (consumers must show both)
         "template_confidence": template.get("confidence"),
+        # share of scoring weight computed from KNOWN dimensions — a score
+        # renormalized from fewer components must not look fully observed
+        "coverage": round(total_weight, 2),
         "components": {
             "narrative_fit": narrative_fit,
             "payoff_fit": payoff_fit,
@@ -761,6 +764,60 @@ def match_concept(template: dict, concept: dict, inventory: dict) -> dict:
         },
         "reasons": reasons,
         "missing": missing,
+    }
+
+
+def style_targets(template: dict) -> dict:
+    """The RESOLVED application contract (design §9.6/§13): which style
+    properties are executable where, with measured targets the compiler
+    can bind to. Only measured-tier values become compiler targets —
+    semantic labels stay planner guidance."""
+    grammar = template.get("grammar") or {}
+    targets = {
+        "broll_ratio": grammar.get("broll_ratio"),
+        "median_shot_seconds": grammar.get("median_shot_seconds"),
+        "cuts_per_minute": grammar.get("cuts_per_minute"),
+    }
+    return {
+        "targets": {k: v for k, v in targets.items() if v is not None},
+        "owners": {
+            "narrative_shape": "planner", "hook_type": "planner",
+            "tone": "planner", "payoff_position": "planner",
+            "broll_ratio": "compiler", "median_shot_seconds": "compiler",
+            "cuts_per_minute": "compiler",
+        },
+        "unsupported": [
+            key for key, why in (
+                ("beat_quantization", grammar.get("cuts_on_beat")),
+                ("music", grammar.get("bpm_estimate")),
+                ("caption_typography", grammar.get("caption_style")),
+            ) if why
+        ],
+    }
+
+
+def measure_rendered_grammar(path: Path) -> dict | None:
+    """Close the loop at the pixels: measure the RENDERED cut's actual
+    grammar with the same instruments used on references. Returns None if
+    the output cannot be measured (never a guess)."""
+    try:
+        probe = _probe(path)
+        duration = probe["duration"]
+        if duration <= 0:
+            return None
+        cuts = _raw_shots(path, duration)
+    except StyleError:
+        return None
+    lengths = sorted(
+        end - start
+        for start, end in zip(cuts, cuts[1:] + [duration])
+        if end > start
+    ) or [duration]
+    return {
+        "duration_seconds": round(duration, 2),
+        "shot_count": len(lengths),
+        "median_shot_seconds": round(statistics.median(lengths), 2),
+        "cuts_per_minute": round(max(0, len(lengths) - 1) / (duration / 60), 1),
     }
 
 

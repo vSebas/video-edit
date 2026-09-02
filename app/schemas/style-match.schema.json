@@ -89,6 +89,11 @@
       ],
       "minimum": 0,
       "maximum": 1
+    },
+    "coverage": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
     }
   }
 }

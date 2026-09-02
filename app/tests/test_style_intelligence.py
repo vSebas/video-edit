@@ -571,6 +571,95 @@ class TestStyleStore:
             service.delete_style("../../etc/passwd")
 
 
+class TestCompilerBinding:
+    """Design-review reservation: measurable style must bind the compiler,
+    not just the prompt — and the loop closes at the pixels."""
+
+    SPANS = [
+        {"label": f"b{i}", "asset_id": "clip_0",
+         "source_start_seconds": i * 8.0, "source_end_seconds": i * 8.0 + 8.0,
+         "intent": "p", "observed_content": "x", "confidence": 0.9}
+        for i in range(2)
+    ]
+    CUTAWAYS = [
+        {"label": "b0", "asset_id": "clip_1",
+         "source_start_seconds": 0.0, "source_end_seconds": 7.0,
+         "intent": "b-roll", "observed_content": "x", "confidence": 0.9},
+    ]
+    PROJECT = {"project_id": "p", "inventory": {"assets": [
+        {"asset_id": "clip_0", "media_type": "video", "duration_seconds": 30},
+        {"asset_id": "clip_1", "media_type": "video", "duration_seconds": 30},
+    ]}}
+
+    def _plan(self, style_targets=None):
+        from video_app.planning import build_plan
+
+        return build_plan(
+            self.PROJECT, [dict(s) for s in self.SPANS],
+            cutaways=[dict(c) for c in self.CUTAWAYS],
+            concept_id="c", benchmark_id="t", hook_text="hola",
+            style_targets=style_targets,
+        )
+
+    def _broll_duration(self, plan):
+        for track in plan["tracks"]:
+            if track.get("role") == "broll":
+                return sum(e["duration_seconds"] for e in track["events"])
+        return 0.0
+
+    def test_high_broll_target_widens_cutaways(self) -> None:
+        baseline = self._broll_duration(self._plan())
+        styled = self._broll_duration(self._plan({"broll_ratio": 0.7}))
+        assert baseline == pytest.approx(4.0, abs=0.1)  # legacy fixed cap
+        assert styled > baseline + 1.0  # bound rose toward the target
+
+    def test_sparse_broll_target_shrinks_cutaways(self) -> None:
+        sparse = self._broll_duration(self._plan({"broll_ratio": 0.1}))
+        assert sparse <= 2.6
+
+    def test_plan_records_targets_and_achieved(self) -> None:
+        plan = self._plan({"broll_ratio": 0.7, "cuts_per_minute": 55.0})
+        block = plan["style_application"]
+        assert block["targets"]["cuts_per_minute"] == 55.0
+        achieved = block["achieved_plan"]
+        assert achieved["broll_ratio"] == pytest.approx(
+            self._broll_duration(plan) / plan["project"]["duration_seconds"],
+            abs=0.02,
+        )
+        assert achieved["cuts_per_minute"] > 0
+        # no targets -> no block, plans stay byte-identical to before
+        assert "style_application" not in self._plan()
+
+    def test_rendered_grammar_is_measurable(self, reference) -> None:
+        from video_app.style_intelligence import measure_rendered_grammar
+
+        measured = measure_rendered_grammar(reference)
+        assert measured["shot_count"] == 4
+        assert measured["cuts_per_minute"] == pytest.approx(15.0, abs=3.0)
+
+    def test_style_targets_contract(self) -> None:
+        from video_app.style_intelligence import style_targets
+
+        template = _template(cuts_per_minute=55.0, broll_ratio=0.65)
+        template["grammar"]["cuts_on_beat"] = True
+        template["grammar"]["bpm_estimate"] = 68.0
+        contract = style_targets(template)
+        assert contract["targets"] == {
+            "broll_ratio": 0.65, "median_shot_seconds": 3.0,
+            "cuts_per_minute": 55.0}
+        assert contract["owners"]["broll_ratio"] == "compiler"
+        assert contract["owners"]["narrative_shape"] == "planner"
+        assert "beat_quantization" in contract["unsupported"]
+
+    def test_match_reports_coverage(self) -> None:
+        full = match_concept(_template(), _concept(), INVENTORY)
+        assert full["coverage"] == 1.0
+        concept = _concept()
+        concept["editorial"]["tone"] = []
+        partial = match_concept(_template(), concept, INVENTORY)
+        assert partial["coverage"] == 0.9
+
+
 class TestGuidance:
     def test_guidance_carries_the_grammar_not_content(self) -> None:
         text = style_guidance(_template())

@@ -101,6 +101,55 @@
           }
         }
       }
+    },
+    "style_application": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "targets": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "broll_ratio": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "median_shot_seconds": {
+              "type": "number",
+              "minimum": 0
+            },
+            "cuts_per_minute": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        },
+        "achieved_plan": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "cuts_per_minute": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "broll_ratio": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
+        }
+      }
     }
   },
   "$defs": {

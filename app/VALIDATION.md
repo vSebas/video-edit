@@ -546,3 +546,34 @@ The identified architectural risk — a self-confirming label loop where
 model-written labels agree with model-written labels while the pixels
 barely change — is recorded in the v2 doc header as the thing run #1
 must disprove.
+
+## Design-review reservations implemented (2026-09-02, second pass)
+
+The APPROVE-WITH-RESERVATIONS conditions that were engineering work (not
+docs) are now built, each with tests (suite 183→189):
+
+- **Compiler binding**: style-application.v1 carries a resolved contract
+  ({targets, owners, unsupported}); `compile_plan` passes the measured
+  targets into `build_plan`, where the reference's B-roll ratio binds
+  the cutaway layout (a 0.7-ratio style may hold a cutaway to ~70% of
+  its beat window vs the legacy 4.0s cap; a sparse style shrinks to
+  2.5s) — always bounded by sanitizer-approved cutaways, no target
+  invents footage. Proven: same spans, high target → >1s more coverage;
+  sparse target → ≤2.6s; no targets → byte-identical legacy plans.
+- **Achieved grammar on the plan**: styled plans record
+  `style_application.achieved_plan` (visual cuts/min incl. B-roll
+  edges, B-roll ratio) next to the targets.
+- **Pixel loop**: a fresh render of a styled plan re-measures the OUTPUT
+  with the same instruments used on references
+  (`measure_rendered_grammar`) and stores achieved-vs-target in the
+  render state + response.
+- **Coverage honesty**: matches report `coverage` (share of scoring
+  weight from known dimensions) so a renormalized score can't pose as
+  fully observed; UI already labels the score "Compatibilidad estimada"
+  and warns when concepts were style-conditioned
+  (`concepts_conditioned_by`).
+
+Deliberately NOT auto-edited: pacing beyond B-roll (splitting primary
+cuts adds no visual change; shortening them amputates story) stays
+planner-owned; beat quantization and music remain recorded as
+unsupported until the plan can express music.
