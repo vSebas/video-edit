@@ -55,14 +55,12 @@ docker compose run --rm app python pipeline/validate_edit.py \
 | `footage/` | Your source clips (never committed) |
 | `runtime/` | Per-project state, evidence, renders, exports (never committed) |
 
-Documentation is deliberately seven files: this one, `app/README.md` (the
-daily loop and its endpoints), `app/VALIDATION.md` (what has actually been
-verified, with dates), `bench/RESULTS.md` (the evidence behind every model
-choice), `STATUS_AND_ROADMAP.md` (current state and what is next),
-`EXECUTION_LAYER_PLAN.md` (the execution-layer analysis: build-vs-adopt,
-with the risks of each), and `TRIAL_OPENTAKE.md` (the trial that settled it,
-closed 2026-09-01 with a hybrid verdict: OpenTake edits over MCP, our
-renderer renders, Resolve stays the escape hatch).
+Documentation is deliberately five living files: this one, `app/README.md`
+(the daily loop and its endpoints), `app/VALIDATION.md` (what has actually
+been verified, with dates), `bench/RESULTS.md` (the evidence behind every
+model choice), and `STATUS_AND_ROADMAP.md` (current state and what is
+next). Closed records and external memos live verbatim under
+`docs/history/` — see its README for the index.
 
 ## Principles
 

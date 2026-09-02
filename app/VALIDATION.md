@@ -307,7 +307,7 @@ on 2026-08-19. It now reports what it actually produces.
   unique non-null link groups, and identical video/audio link-group sets.
 - Kill/restart recovery, export, and visual comparison closed the trial with
   the owner-ratified hybrid: OpenTake edits, the owned renderer produces final
-  pixels, and Resolve remains the escape hatch. `TRIAL_OPENTAKE.md` contains
+  pixels, and Resolve remains the escape hatch. `docs/history/TRIAL_OPENTAKE.md` contains
   the gate evidence.
 - Both OpenTake scripts remain trial tooling: no automated tests exercise their
   MCP transport, and they have no retry/reconciliation, revision binding, or

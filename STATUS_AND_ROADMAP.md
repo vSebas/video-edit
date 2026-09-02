@@ -211,25 +211,25 @@ advanced colour, and even full semantic search.
 
 Acted on: the owner asked whether OpenTake should become the base, hosting
 our planner and ported Palmier features. That proposal was drafted, reviewed
-adversarially, and recommended against — see `EXECUTION_LAYER_PLAN.md` for
+adversarially, and recommended against — see `docs/history/EXECUTION_LAYER_PLAN.md` for
 the analysis, the two factual errors the draft contained, and the seven-phase
 owned-compiler plan. The owner then chose, risks in view, to trial the
 OpenTake path first (fork vSebas/OpenTake, based on v1.0.0-beta.5, five
 Linux patches). The trial ran 2026-08-20 to 2026-09-01 and closed with a
 HYBRID verdict — OpenTake as editing surface, our renderer for final
-pixels; evidence in `TRIAL_OPENTAKE.md`.
+pixels; evidence in `docs/history/TRIAL_OPENTAKE.md`.
 The audit's owned-compiler fallback order was: Spanish dialogue cleanup (2-3
 weeks) → atomic edit-command layer with undo and readback (4-6) →
 multi-track execution with B-roll, J/L cuts, VO and ducking (4-6) → dialogue
 audio treatment (2-3) → styled captions in the render (1-2) → learn from the
 finished Resolve timeline (2-4) → rotation and static framing (3-7 days) →
 beat detection (4-7 days). It is no longer the active ordering; the hybrid
-roadmap below supersedes it, while `EXECUTION_LAYER_PLAN.md` retains the
+roadmap below supersedes it, while `docs/history/EXECUTION_LAYER_PLAN.md` retains the
 canonical fallback estimates and gates.
 
 Integration was initially costed at ~7-13 weeks and recommended against; the
 owner knowingly superseded that recommendation with the bounded trial in
-`TRIAL_OPENTAKE.md`. The estimate remains a warning about productionizing the
+`docs/history/TRIAL_OPENTAKE.md`. The estimate remains a warning about productionizing the
 bridge, not an open decision. Both projects are GPLv3 — reimplement behaviour,
 do not copy source.
 
@@ -376,7 +376,7 @@ closed between 2026-08-05 and 2026-08-19. What is genuinely still open:
 
 ### Second external assessment, reviewed (2026-09-01 night)
 
-`CHATGPT_CURRENT_PROJECT_ASSESSMENT_2026-09-01.md` — reviewed same night;
+`docs/history/CHATGPT_CURRENT_PROJECT_ASSESSMENT_2026-09-01.md` — reviewed same night;
 verdict in its header. Net adoptions: §14 is the acceptance-run rubric
 (top-level metric: "would the owner actually post this video?");
 conversational B-roll ops LANDED same night
@@ -388,7 +388,7 @@ Its doc-drift findings were exact and are fixed.
 
 ## Immediate Next Actions
 
-The trial gate closed 2026-09-01: **hybrid** (see `TRIAL_OPENTAKE.md`).
+The trial gate closed 2026-09-01: **hybrid** (see `docs/history/TRIAL_OPENTAKE.md`).
 OpenTake is the editing surface over MCP; our renderer produces final
 pixels; Resolve remains the editor-handoff escape hatch. Items 1-3 of the
 original list (timeline→plan sync, productionized adapter, cleanup review
@@ -450,8 +450,8 @@ UI) all shipped 2026-09-01 — see the P0-P6 log above.
 - `app/README.md` — the daily loop and its endpoints
 - `app/VALIDATION.md` — what has actually been verified, with dates
 - `bench/RESULTS.md` — the evidence behind every model choice
-- `EXECUTION_LAYER_PLAN.md` — the execution-layer analysis and owned build plan
-- `TRIAL_OPENTAKE.md` — the OpenTake trial: setup, steps, and its gate
+- `docs/history/EXECUTION_LAYER_PLAN.md` — the execution-layer analysis and owned build plan
+- `docs/history/TRIAL_OPENTAKE.md` — the OpenTake trial: setup, steps, and its gate
 - This file — current state, what is deliberately incomplete, what is next
 
 Superseded material lives in git history rather than in the tree: the July
