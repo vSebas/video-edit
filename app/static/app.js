@@ -1739,7 +1739,9 @@ async function refreshDriveInbox() {
             : `${status}
                <button class="primary compact" data-drive-import="${escapeHtml(folder.name)}"
                  ${folder.receiving ? 'disabled title="Espera a que Drive termine de recibir"' : ''}>
-                 Importar
+                 ${folder.local_bytes > 0 && folder.local_bytes < folder.total_bytes
+                   ? `Reanudar (${Math.round(folder.local_bytes / folder.total_bytes * 100)}%)`
+                   : 'Importar'}
                </button>`}
         </span>`;
       }).join('')}

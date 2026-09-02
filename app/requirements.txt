@@ -6,3 +6,4 @@ opentimelineio>=0.18,<0.19
 python-multipart>=0.0.9,<1
 pytest>=8.3,<9
 uvicorn[standard]>=0.35,<1
+pillow-heif

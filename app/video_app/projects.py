@@ -2050,6 +2050,11 @@ class ProjectService:
                     receiving = (now - last).total_seconds() < 120
                 except ValueError:
                     pass
+            local = self.settings.root / "footage" / slugify(name)
+            local_bytes = (
+                sum(p.stat().st_size for p in local.rglob("*") if p.is_file())
+                if local.is_dir() else 0
+            )
             folders.append(
                 {
                     "name": name,
@@ -2057,10 +2062,29 @@ class ProjectService:
                     "imported": slugify(name) in existing,
                     "file_count": info["files"],
                     "total_bytes": info["bytes"],
+                    "local_bytes": local_bytes,
                     "receiving": receiving,
                 }
             )
         return sorted(folders, key=lambda item: item["modified"] or "", reverse=True)
+
+    @staticmethod
+    def _convert_heic(heic: Path, jpg: Path) -> bool:
+        """HEIC → JPG via pillow-heif (bundled modern libheif — the
+        distro's is too old for iOS 17+ files). Orientation is baked in
+        so downstream ffmpeg sees the photo upright."""
+        try:
+            from PIL import Image, ImageOps
+            from pillow_heif import register_heif_opener
+
+            register_heif_opener()
+            with Image.open(heic) as image:
+                upright = ImageOps.exif_transpose(image)
+                upright.convert("RGB").save(jpg, "JPEG", quality=92)
+            return True
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("HEIC conversion failed for %s: %s", heic.name, exc)
+            return False
 
     def cancel_drive_import(self, folder: str) -> dict:
         slug = slugify(folder)
@@ -2117,6 +2141,31 @@ class ProjectService:
                     "conservan; vuelve a pulsar Importar para reanudar"
                 )
             raise ProjectError(f"Drive sync failed: {(stderr or '').strip()[-300:]}")
+        # Integrity: verify every local file against Drive's checksums —
+        # a silent partial/corrupt copy must fail the import, not become
+        # a project missing footage
+        check = subprocess.run(
+            ["rclone", "check", "--one-way",
+             f"{self.DRIVE_INBOX}/{folder}", str(target)],
+            capture_output=True, text=True, timeout=600,
+        )
+        if check.returncode:
+            raise ProjectError(
+                "La verificación de integridad falló — algunos archivos no "
+                "coinciden con Drive. Vuelve a pulsar Importar para "
+                f"reintentar: {check.stderr.strip()[-300:]}"
+            )
+        # iPhone HEIC photos: ffmpeg cannot decode them, so convert to JPG
+        # at ingest (originals kept) — otherwise photos silently never
+        # become B-roll assets
+        for heic in sorted(target.rglob("*")):
+            if heic.suffix.lower() != ".heic" or not heic.is_file():
+                continue
+            jpg = heic.with_suffix(".jpg")
+            if jpg.exists():
+                continue
+            if not self._convert_heic(heic, jpg):
+                jpg.unlink(missing_ok=True)
         prompt = ""
         for note in sorted(target.glob("*.txt")):
             if note.stem.lower().startswith(("nota", "note")):
