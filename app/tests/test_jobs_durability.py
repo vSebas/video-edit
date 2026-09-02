@@ -75,13 +75,24 @@ class TestRenderCache:
         calls = []
 
         def fake_run(command, **kwargs):
-            calls.append(command)
-            Path(command[command.index("--output") + 1]).write_bytes(b"mp4")
+            # the pixel-measurement probes also pass through subprocess —
+            # only renderer invocations count as "renders"
+            if any("render_edit.py" in str(part) for part in command):
+                calls.append(command)
+                Path(command[command.index("--output") + 1]).write_bytes(b"mp4")
 
             class Result:
+                returncode = 1  # non-render subprocesses fail closed
+                stdout = stderr = ""
+
+            class RenderResult:
                 returncode = 0
                 stdout = stderr = ""
-            return Result()
+            return (
+                RenderResult()
+                if any("render_edit.py" in str(part) for part in command)
+                else Result()
+            )
 
         monkeypatch.setattr(projects_module.subprocess, "run", fake_run)
         service = ProjectService(

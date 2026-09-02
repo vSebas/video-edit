@@ -2464,10 +2464,14 @@ class ProjectService:
             raise ProjectError(f"Render failed: {detail[-1000:]}")
         # close the loop at the pixels for EVERY fresh render: the styled
         # arm of an A/B is only meaningful against a measured baseline,
-        # so both arms get the same instruments the reference was read with
-        from .style_intelligence import measure_rendered_grammar
+        # so both arms get the same instruments the reference was read with.
+        # Measurement is diagnostics — it must never fail a good render.
+        try:
+            from .style_intelligence import measure_rendered_grammar
 
-        achieved_render = measure_rendered_grammar(output)
+            achieved_render = measure_rendered_grammar(output)
+        except Exception:  # noqa: BLE001
+            achieved_render = None
         write_json(
             state_path,
             {
