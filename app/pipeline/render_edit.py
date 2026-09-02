@@ -251,6 +251,8 @@ def main() -> None:
             f"enable='between(t\\,{timeline_start}\\,{timeline_end})'[{output_label}]"
         )
         current_video = output_label
+    title_text_dir = output_path.parent / f".titles.{output_path.stem}"
+    title_text_dir.mkdir(parents=True, exist_ok=True)
     for index, event in enumerate(title_events):
         output_label = f"vtitle{index}"
         start = event["timeline_start_seconds"]
@@ -269,9 +271,13 @@ def main() -> None:
             "center": "(h-text_h)/2",
             "lower": "h-text_h-220",
         }.get(position, 220 if hook else 190)
-        text = ffmpeg_text(event["text"])
+        # arbitrary title text (apostrophes, colons, %) breaks inline
+        # filter quoting no matter how it is escaped — a textfile whose
+        # PATH we control sidesteps the whole quoting problem
+        text_path = title_text_dir / f"title{index}.txt"
+        text_path.write_text(event["text"], encoding="utf-8")
         filters.append(
-            f"[{current_video}]drawtext=expansion=none:fontfile='{event_font}':text='{text}':"
+            f"[{current_video}]drawtext=expansion=none:fontfile='{event_font}':textfile='{text_path}':"
             f"fontsize={font_size}:fontcolor=white:borderw=3:bordercolor=black@0.85:"
             f"box=1:boxcolor=black@0.42:boxborderw=24:"
             f"x=(w-text_w)/2:y={y}:fix_bounds=true:"

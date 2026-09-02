@@ -400,7 +400,7 @@ class TestStyledTitles:
             "event_id": "t01", "asset_id": None,
             "timeline_start_seconds": 0.0, "source_start_seconds": 0.0,
             "duration_seconds": 2.0, "purpose": "title",
-            "text": "HOLA MUNDO",
+            "text": "Stanford's AI: 100% real, 'wow'\\n",
         }
         if text_style is not None:
             title_event["text_style"] = text_style
@@ -433,6 +433,18 @@ class TestStyledTitles:
             check=True, capture_output=True,
         ).stdout
         return max(raw)
+
+    def test_hostile_title_characters_render(self, rendered) -> None:
+        # live failure 2026-09-02: "Stanford's" terminated the quoted
+        # filter string and corrupted the whole graph
+        root, _ = rendered
+        output = self._render_with_title(
+            root, "title_apostrophe", None
+        )
+        assert output.exists()
+
+    def _render_with_hostile_text(self, root):
+        pass
 
     def test_position_center_moves_the_text_band(self, rendered) -> None:
         root, _ = rendered
