@@ -432,8 +432,10 @@ docs consolidation.
    validity (one concept held fixed, baseline vs styled PLAN — the styled
    arm must NOT regenerate the story or the A/B is confounded); success
    claims cover only the executable subset (structure, pacing, B-roll,
-   beats, titles). Remaining before run #1: 2-4 more reference videos for
-   a multi-reference style. Before DECLARING the subsystem successful
+   beats, titles). Multi-reference style is LIVE (2026-09-02:
+   five real references combined into style-675776bf at confidence 0.69
+   — the disagreement penalty working on real pacing variance). Nothing
+   remains before run #1. Before DECLARING the subsystem successful
    (not before running): style-application.v1 must become structured
    compiler input, and the rendered cut's grammar must be re-measured
    (close the loop at the pixels). Everything else in the design (Trend

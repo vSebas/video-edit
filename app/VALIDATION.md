@@ -673,3 +673,19 @@ real-choice weight calibration, the blind A/B execution, and
 multi-reference validation using genuinely independent videos."
 The subsystem is engineering-complete until real footage arrives.
 Suite: 198 passed.
+
+## Multi-reference style — LIVE (2026-09-02)
+
+The owner added four real references (all Spanish short-form). Each
+analyzed clean with genuinely distinct measured grammars (0.6-1.27s
+median shot, 26.6-82.9 cuts/min, 15-90% B-roll, 68-136 BPM, none
+beat-cut). Combined into `style-675776bf` ("mi estilo (5 referencias)"):
+5/5 included, 0 excluded, consensus grammar hook→setup→explainer→
+montage→reflection, 1.18s median / 42.9 cpm / 65% B-roll / voiceover /
+minimal captions / personal-casual-educational tone. Confidence 0.69 —
+above the 0.55 single-reference cap because five independent sources
+agree on the core, below full trust because pacing genuinely disagrees:
+the weakest-axis penalty working on real variance, exactly as designed.
+Live matches show every honesty signal at once: coverage 0.35
+(pre-editorial concepts), template confidence beside the score, and the
+"regenera las ideas" hint. Run #1's style arm is now fully unblocked.
