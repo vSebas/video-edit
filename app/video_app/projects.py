@@ -1348,6 +1348,49 @@ class ProjectService:
             "revision_preview": candidate["revision"],
         }
 
+    def plan_restore_revision(self, project_id: str, revision: int) -> dict:
+        """Install an archived revision as a NEW revision (roll forward,
+        never rewind: the current plan is archived like any other change,
+        so nothing in the history is ever lost)."""
+        plan_dir = self.settings.runtime / project_id / "plan"
+        plan_path = plan_dir / "edit-plan.json"
+        archived_path = plan_dir / "revisions" / f"edit-plan.rev{revision:03d}.json"
+        if not plan_path.is_file():
+            raise ProjectError("This project does not have a compiled plan")
+        if not archived_path.is_file():
+            raise ProjectError(f"No archived revision {revision}")
+        with self._project_write(project_id):
+            plan = load_json(plan_path)
+            current = int(plan.get("revision", 1))
+            if current == revision:
+                raise ProjectError("That is already the current cut")
+            restored = load_json(archived_path)
+            restored["revision"] = current + 1
+            write_json(
+                plan_dir / "revisions" / f"edit-plan.rev{current:03d}.json",
+                plan,
+            )
+            write_json(plan_path, restored)
+            log_path = plan_dir / "revisions" / "revision-log.json"
+            log = load_json(log_path) if log_path.is_file() else {"entries": []}
+            log["entries"].append(
+                {
+                    "revision": restored["revision"],
+                    "instruction": f"restore revision {revision}",
+                    "note": f"Corte {revision} restaurado",
+                    "revised_at": utc_now(),
+                    "provider": "restore",
+                }
+            )
+            write_json(log_path, log)
+            path = self.settings.runtime / project_id / "project.json"
+            state = load_json(path)
+            state["updated_at"] = utc_now()
+            state["plan"] = restored
+            state["status"] = "plan_ready"
+            write_json(path, state)
+        return {"revision": restored["revision"], "restored_from": revision}
+
     def plan_command_apply(
         self, project_id: str, proposal_id: str | None = None
     ) -> dict:

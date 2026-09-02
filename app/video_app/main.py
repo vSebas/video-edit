@@ -384,6 +384,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except (OSError, ValueError):
             return {"entries": []}
 
+    @application.post("/api/projects/{project_id}/plan/revisions/{revision}/restore")
+    def plan_restore_revision(project_id: str, revision: int):
+        return project_call(
+            lambda: projects.plan_restore_revision(project_id, revision)
+        )
+
     @application.post("/api/projects/{project_id}/plan/command")
     def plan_command_propose(project_id: str, request: PlanCommandRequest):
         return project_call(

@@ -153,3 +153,61 @@ class TestAnalysisArtifactIdentity:
         hit = service._existing_run_for("p1", key)
         assert hit == {"run_key": "gemini-live-x", "cached": True}
         assert service._existing_run_for("p1", "different") is None
+
+
+class TestRevisionRestore:
+    def test_restore_installs_archived_cut_as_new_revision(self, tmp_path) -> None:
+        from pathlib import Path
+
+        from video_app.config import Settings
+        from video_app.projects import ProjectService
+
+        root = tmp_path / "runtime" / "p1"
+        (root / "plan" / "revisions").mkdir(parents=True)
+        old = {"schema_version": "edit-plan.v1", "revision": 1,
+               "concept_id": "c", "project": {}, "tracks": [{"marker": "old"}]}
+        current = {"schema_version": "edit-plan.v1", "revision": 2,
+                   "concept_id": "c", "project": {}, "tracks": [{"marker": "new"}]}
+        (root / "plan" / "edit-plan.json").write_text(json.dumps(current))
+        (root / "plan" / "revisions" / "edit-plan.rev001.json").write_text(
+            json.dumps(old))
+        (root / "project.json").write_text(json.dumps({
+            "schema_version": "video-app-project.v1", "project_id": "p1",
+            "name": "t", "created_at": "x", "updated_at": "x",
+            "source_directory": "footage", "prompt": "", "status": "plan_ready",
+            "footage_summary": "", "analysis": {}, "inventory": {"assets": []},
+            "concepts": [], "selected_concept_id": None, "plan": current,
+            "outputs": {},
+        }))
+        service = ProjectService(Settings(
+            root=Path(__file__).resolve().parents[2],
+            runtime=tmp_path / "runtime",
+        ))
+        result = service.plan_restore_revision("p1", 1)
+        assert result == {"revision": 3, "restored_from": 1}
+        plan = json.loads((root / "plan" / "edit-plan.json").read_text())
+        assert plan["tracks"][0]["marker"] == "old"
+        assert plan["revision"] == 3
+        # the replaced cut was archived, nothing lost
+        archived = json.loads(
+            (root / "plan" / "revisions" / "edit-plan.rev002.json").read_text())
+        assert archived["tracks"][0]["marker"] == "new"
+
+    def test_restore_refuses_current_and_missing(self, tmp_path) -> None:
+        import pytest
+        from pathlib import Path
+
+        from video_app.config import Settings
+        from video_app.projects import ProjectError, ProjectService
+
+        root = tmp_path / "runtime" / "p1"
+        (root / "plan").mkdir(parents=True)
+        current = {"revision": 2}
+        (root / "plan" / "edit-plan.json").write_text(json.dumps(current))
+        (root / "project.json").write_text(json.dumps({"project_id": "p1"}))
+        service = ProjectService(Settings(
+            root=Path(__file__).resolve().parents[2],
+            runtime=tmp_path / "runtime",
+        ))
+        with pytest.raises(ProjectError, match="No archived"):
+            service.plan_restore_revision("p1", 7)

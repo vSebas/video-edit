@@ -1,12 +1,12 @@
 <!doctype html>
-<html lang="en">
+<html lang="es">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark" />
-    <title>Video Editing Workbench</title>
+    <title>Vlog Studio</title>
     <meta http-equiv="Cache-Control" content="no-cache" />
-    <link rel="stylesheet" href="/styles.css?v=16" />
+    <link rel="stylesheet" href="/styles.css?v=17" />
   </head>
   <body>
     <div class="shell">
@@ -15,31 +15,36 @@
           <span class="brand-mark">V</span>
           <div>
             <strong>Vlog Studio</strong>
-            <span>your footage, AI-edited</span>
+            <span>tu metraje, editado con IA</span>
           </div>
         </div>
 
-        <button class="primary full" id="new-project-button">+ New vlog from clips</button>
+        <button class="primary full" id="new-project-button">+ Nuevo vlog</button>
 
-        <div class="side-heading">My vlogs</div>
-        <nav id="project-list" class="project-list" aria-label="Projects"></nav>
+        <div class="side-heading">Mis vlogs</div>
+        <nav id="project-list" class="project-list" aria-label="Proyectos"></nav>
 
-        <div class="side-heading status-heading">System</div>
-        <div id="capability-list" class="capability-list"></div>
+        <button class="system-dot" id="system-dot" title="Estado del sistema — click para diagnóstico">
+          <i></i><span id="system-dot-label">Comprobando…</span>
+        </button>
       </aside>
 
       <main class="workspace">
         <header class="topbar">
-          <div>
-            <span class="eyebrow" id="project-status">Loading project</span>
-            <h1 id="project-title">Video Editing Workbench</h1>
+          <div class="topbar-title">
+            <span class="eyebrow" id="project-status">Cargando</span>
+            <h1 id="project-title">Vlog Studio</h1>
           </div>
-          <div class="top-actions" id="top-actions"></div>
+          <nav class="workspace-tabs" id="workspace-tabs" aria-label="Áreas"></nav>
+          <div class="overflow-wrap">
+            <button class="icon-button" id="overflow-button" aria-label="Más acciones">⋯</button>
+            <div class="overflow-menu hidden" id="overflow-menu"></div>
+          </div>
         </header>
 
         <div id="notice" class="notice hidden" role="status"></div>
         <section id="project-view" class="project-view loading">
-          <div class="empty-state">Loading the project workspace…</div>
+          <div class="empty-state">Cargando el proyecto…</div>
         </section>
       </main>
     </div>
@@ -48,39 +53,39 @@
       <form id="new-project-form">
         <div class="dialog-heading">
           <div>
-            <span class="eyebrow">New vlog</span>
-            <h2>Where are your clips?</h2>
+            <span class="eyebrow">Nuevo vlog</span>
+            <h2>¿Dónde están tus clips?</h2>
           </div>
-          <button type="button" class="icon-button" id="close-dialog" aria-label="Close">×</button>
+          <button type="button" class="icon-button" id="close-dialog" aria-label="Cerrar">×</button>
         </div>
         <label>
-          Give this day a name
-          <input name="name" required placeholder="Tuesday — lake trip" />
+          Ponle nombre a este día
+          <input name="name" required placeholder="Martes — paseo al lago" />
         </label>
         <label>
-          Upload clips from this device
+          Subir clips desde este dispositivo
           <input type="file" name="files" id="upload-files" multiple accept="video/*,image/*,audio/*" />
         </label>
-        <p class="form-note">…or pick a folder already on the computer:</p>
+        <p class="form-note">…o elige una carpeta que ya esté en la computadora:</p>
         <label>
-          Folder with your clips
-          <input name="source_directory" placeholder="Pick below or type a path" />
+          Carpeta con tus clips
+          <input name="source_directory" placeholder="Elige abajo o escribe una ruta" />
         </label>
-        <div id="folder-browser" class="folder-browser" aria-label="Browse workspace folders"></div>
+        <div id="folder-browser" class="folder-browser" aria-label="Explorar carpetas"></div>
         <label>
-          What's the story? (optional)
-          <textarea name="prompt" rows="3" placeholder="A short fun vlog of my day, ending with the sunset…"></textarea>
+          ¿De qué trata? (opcional)
+          <textarea name="prompt" rows="3" placeholder="Un vlog corto y divertido de mi día, terminando con el atardecer…"></textarea>
         </label>
         <p class="form-note">
-          Your files stay where they are — nothing is copied or modified.
+          Tus archivos se quedan donde están — no se copian ni se modifican.
         </p>
         <div class="dialog-actions">
-          <button type="button" class="secondary" id="cancel-dialog">Cancel</button>
-          <button type="submit" class="primary">Add my clips</button>
+          <button type="button" class="secondary" id="cancel-dialog">Cancelar</button>
+          <button type="submit" class="primary">Agregar mis clips</button>
         </div>
       </form>
     </dialog>
 
-    <script type="module" src="/app.js?v=28"></script>
+    <script type="module" src="/app.js?v=29"></script>
   </body>
 </html>

@@ -1,11 +1,18 @@
+/* Vlog Studio — UX Architecture v2.
+   Four workspaces (Historia / Edición / Metraje / Publicar) + Diagnóstico.
+   One AI editor input; pipeline internals live behind ⋯ → Diagnóstico. */
+
 const state = {
   status: null,
   projects: [],
   activeProjectId: null,
   activeProject: null,
   runs: [],
-  busy: null,        // {title, steps: [..], current: index}
-  forcePick: false,  // user asked to choose a different story
+  busy: null,            // {title, steps: [..], current: index}
+  pendingStory: null,
+  forcePick: false,
+  workspace: null,       // 'story' | 'edit' | 'media' | 'publish' | 'diagnostics'
+  mediaFilter: 'all',
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -25,7 +32,7 @@ async function api(path, options = {}) {
     headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
   });
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.detail || `Request failed (${response.status})`);
+  if (!response.ok) throw new Error(payload.detail || `La petición falló (${response.status})`);
   return payload;
 }
 
@@ -57,16 +64,29 @@ function pendingClaims() {
 }
 
 function phaseOf(project) {
-  if (state.forcePick && (project.concepts || []).length) return 'pick';
   if (project.plan) return 'result';
   if ((project.concepts || []).length) return 'pick';
   return 'start';
 }
 
+function defaultWorkspace(project) {
+  return phaseOf(project) === 'result' ? 'edit' : 'story';
+}
+
+function usedAssetIds(project) {
+  const ids = new Set();
+  for (const track of project.plan?.tracks || []) {
+    for (const event of track.events || []) {
+      if (event.asset_id) ids.add(event.asset_id);
+    }
+  }
+  return ids;
+}
+
 const PHASE_LABEL = {
-  start: 'Step 1 of 3 · Create',
-  pick: 'Step 2 of 3 · Pick a story',
-  result: 'Step 3 of 3 · Watch, tweak, export',
+  start: 'Paso 1 · Crear',
+  pick: 'Paso 2 · Elegir historia',
+  result: 'Listo para editar',
 };
 
 /* ------------------------------------------------------------------ */
@@ -78,7 +98,7 @@ function renderProjectList() {
       <span class="project-dot ${project.has_plan || project.status === 'ready' ? 'ready' : ''}"></span>
       <span class="project-copy">
         <strong>${escapeHtml(project.name)}</strong>
-        <span>${project.asset_count} clips${project.has_plan ? ' · edited' : ''}</span>
+        <span>${project.asset_count} clips${project.has_plan ? ' · editado' : ''}</span>
       </span>
     </button>
   `).join('');
@@ -87,27 +107,68 @@ function renderProjectList() {
   });
 }
 
-function renderCapabilities() {
+function renderSystemDot() {
   const capabilities = state.status?.capabilities;
-  if (!capabilities) return;
-  const visual = capabilities.visual.find((item) => item.id === 'owned-live-visual');
-  const speech = capabilities.speech.find((item) => item.id === 'faster-whisper');
-  const friendly = [
-    { ready: visual?.ready, label: 'Footage understanding', detail: visual?.ready ? 'Cloud model connected' : 'Add API keys to .env' },
-    { ready: speech?.ready, label: 'Speech transcription', detail: speech?.ready ? 'Runs on this machine' : 'Not installed' },
-    { ready: capabilities.render?.ready, label: 'Video rendering', detail: 'Runs on this machine' },
-    { ready: true, label: 'DaVinci Resolve export', detail: 'Verified import' },
-  ];
-  $('#capability-list').innerHTML = friendly.map((item) => `
-    <div class="capability ${item.ready ? 'ready' : ''}">
-      <i></i>
-      <div><strong>${escapeHtml(item.label)}</strong><span>${escapeHtml(item.detail)}</span></div>
-    </div>
-  `).join('');
+  const dot = $('#system-dot');
+  if (!capabilities || !dot) return;
+  const visual = capabilities.visual?.find((item) => item.id === 'owned-live-visual');
+  const speech = capabilities.speech?.find((item) => item.id === 'faster-whisper');
+  const ready = Boolean(visual?.ready && speech?.ready && capabilities.render?.ready);
+  dot.classList.toggle('ok', ready);
+  $('#system-dot-label').textContent = ready ? 'Sistema listo' : 'Revisar sistema';
 }
 
 /* ------------------------------------------------------------------ */
-/* Phase sections                                                      */
+/* Topbar: tabs + overflow                                             */
+
+const WORKSPACES = [
+  { id: 'story', label: 'Historia', needsPlan: false },
+  { id: 'edit', label: 'Edición', needsPlan: true },
+  { id: 'media', label: 'Metraje', needsPlan: false },
+  { id: 'publish', label: 'Publicar', needsPlan: true },
+];
+
+function renderTabs(project) {
+  const hasPlan = Boolean(project?.plan);
+  $('#workspace-tabs').innerHTML = WORKSPACES.map((ws) => `
+    <button class="tab ${state.workspace === ws.id ? 'active' : ''}"
+      data-workspace="${ws.id}" ${ws.needsPlan && !hasPlan ? 'disabled title="Primero crea un corte"' : ''}>
+      ${ws.label}
+    </button>
+  `).join('');
+  document.querySelectorAll('[data-workspace]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.workspace = button.dataset.workspace;
+      localStorage.setItem(`workspace:${state.activeProjectId}`, state.workspace);
+      renderProject();
+    });
+  });
+}
+
+function renderOverflow() {
+  const menu = $('#overflow-menu');
+  menu.innerHTML = `
+    <button data-overflow="clone">Duplicar vlog</button>
+    <button data-overflow="diagnostics">Diagnóstico</button>
+    <button data-overflow="reset-keep">Reiniciar (conserva análisis)</button>
+    <button data-overflow="reset-full">Reiniciar desde cero</button>
+    <button data-overflow="delete" class="danger">Eliminar vlog</button>
+  `;
+  menu.querySelectorAll('[data-overflow]').forEach((button) => {
+    button.addEventListener('click', () => {
+      menu.classList.add('hidden');
+      const action = button.dataset.overflow;
+      if (action === 'clone') cloneProject();
+      else if (action === 'diagnostics') { state.workspace = 'diagnostics'; renderProject(); }
+      else if (action === 'reset-keep') resetProject(true);
+      else if (action === 'reset-full') resetProject(false);
+      else if (action === 'delete') deleteProject();
+    });
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* Busy card                                                           */
 
 function busyCard() {
   const { title, steps, current } = state.busy;
@@ -121,27 +182,14 @@ function busyCard() {
           </li>
         `).join('')}
       </ol>
-      <p class="muted">You can leave this page open — nothing else to do here. Footage
-      analysis takes a few minutes the first time; results are cached afterwards.</p>
+      <p class="muted">Puedes dejar esta página abierta. El análisis del metraje toma
+      unos minutos la primera vez; después queda cacheado.</p>
     </section>
   `;
 }
 
-function startSection(project) {
-  const analyzed = hasRun('owned-live-visual');
-  return `
-    <section class="card start-card">
-      <span class="eyebrow">${escapeHtml(project.prompt || 'No prompt yet — the editor will aim for a concise daily vlog.')}</span>
-      <h2>${project.inventory?.assets?.length || 0} clips ready. Let's make a vlog.</h2>
-      <p>One click runs everything: the editor watches your footage, listens for speech,
-      and writes ${analyzed ? 'story ideas' : 'two story ideas'} grounded in what's actually
-      on film. You pick the story you like; nothing is invented.</p>
-      <p class="muted">Frames from your clips are sent to the configured cloud model for
-      visual analysis. Speech is transcribed locally and never leaves this machine.</p>
-      <button class="primary big" id="create-vlog">${analyzed ? 'Continue — write story ideas' : 'Create my vlog'}</button>
-    </section>
-  `;
-}
+/* ------------------------------------------------------------------ */
+/* HISTORIA                                                            */
 
 function keptStoryIds() {
   try {
@@ -157,7 +205,31 @@ function toggleKeptStory(conceptId) {
   renderProject();
 }
 
-function storyCard(concept) {
+function frameUrl(assetId, seconds) {
+  return `/api/projects/${escapeHtml(state.activeProjectId)}/frames/${escapeHtml(assetId)}?t=${seconds.toFixed(2)}`;
+}
+
+function conceptPendingClaims(concept) {
+  const pending = pendingClaims();
+  const hits = [];
+  for (const beat of concept.structure || []) {
+    for (const evidence of beat.evidence || []) {
+      for (const claim of pending) {
+        if (
+          claim.asset_id === evidence.asset_id
+          && claim.start_seconds < evidence.end_seconds
+          && claim.end_seconds > evidence.start_seconds
+          && !hits.some((item) => item.evidence_id === claim.evidence_id)
+        ) {
+          hits.push(claim);
+        }
+      }
+    }
+  }
+  return hits;
+}
+
+function storyCard(concept, isCurrent) {
   const missing = concept.missing_shots || [];
   const required = missing.filter((shot) => shot.priority === 'required').length;
   const beats = (concept.structure || []).length;
@@ -173,175 +245,77 @@ function storyCard(concept) {
     return `<img loading="lazy" src="${frameUrl(evidence.asset_id, mid)}" alt="" title="${escapeHtml(beat.purpose)}" />`;
   }).join('');
   return `
-    <article class="concept-card story-card ${kept ? 'kept' : ''}">
+    <article class="concept-card story-card ${kept ? 'kept' : ''} ${isCurrent ? 'current' : ''}">
       <div class="concept-top">
-        <span class="eyebrow">${concept.target_duration_seconds}s · ${beats} scenes${unchecked ? ` · asks about ${unchecked} unchecked moment${unchecked === 1 ? '' : 's'}` : ''}${dubious ? ` · ⚠ ${dubious} cita${dubious === 1 ? '' : 's'} que no coincide${dubious === 1 ? '' : 'n'} con lo observado` : ''}</span>
-        <button class="ghost keep-toggle" data-keep-story="${escapeHtml(concept.concept_id)}" title="Kept stories survive when you ask for new ideas">${kept ? '★ kept' : '☆ keep'}</button>
+        <span class="eyebrow">${concept.target_duration_seconds}s · ${beats} escenas${unchecked ? ` · pregunta por ${unchecked} momento${unchecked === 1 ? '' : 's'}` : ''}${dubious ? ` · ⚠ ${dubious} cita${dubious === 1 ? '' : 's'} por verificar` : ''}</span>
+        <button class="ghost keep-toggle" data-keep-story="${escapeHtml(concept.concept_id)}" title="Las historias marcadas ★ sobreviven cuando pides ideas nuevas">${kept ? '★' : '☆'}</button>
       </div>
       ${beatThumbs ? `<div class="beat-thumbs">${beatThumbs}</div>` : ''}
       <h3>${escapeHtml(concept.title)}</h3>
       <p class="hook">${escapeHtml(concept.hook)}</p>
-      ${(concept.weaknesses || []).length ? `<p class="muted">Honest caveat: ${escapeHtml(concept.weaknesses[0])}</p>` : ''}
+      ${(concept.weaknesses || []).length ? `<p class="muted">Con honestidad: ${escapeHtml(concept.weaknesses[0])}</p>` : ''}
       ${missing.length ? `
         <details>
-          <summary>${missing.length} shot${missing.length === 1 ? '' : 's'} worth filming${required ? ` (${required} important)` : ''}</summary>
+          <summary>${missing.length} toma${missing.length === 1 ? '' : 's'} que valdría grabar${required ? ` (${required} importante${required === 1 ? '' : 's'})` : ''}</summary>
           <ul>${missing.map((shot) => `
             <li class="missing-shot"><span class="priority ${escapeHtml(shot.priority)}">${escapeHtml(shot.priority)}</span> ${escapeHtml(shot.recording_instruction)}</li>
           `).join('')}</ul>
         </details>` : ''}
       <div class="concept-footer">
-        <button class="primary" data-make-story="${escapeHtml(concept.concept_id)}">Make this one</button>
+        ${isCurrent
+          ? '<span class="current-label">✓ Historia actual</span>'
+          : `<button class="primary" data-make-story="${escapeHtml(concept.concept_id)}">Hacer esta</button>`}
       </div>
     </article>
   `;
 }
 
-function pickSection(project) {
+function storyWorkspace(project) {
+  const phase = phaseOf(project);
+  if (phase === 'start') {
+    const analyzed = hasRun('owned-live-visual');
+    return `
+      <section class="card start-card">
+        <span class="eyebrow">${escapeHtml(project.prompt || 'Sin nota — el editor apuntará a un vlog diario conciso.')}</span>
+        <h2>${project.inventory?.assets?.length || 0} clips listos. Hagamos un vlog.</h2>
+        <p>Un click lo hace todo: el editor mira tu metraje, escucha el habla y escribe
+        ideas de historia basadas en lo que realmente hay en video. Tú eliges la
+        historia; nada se inventa.</p>
+        <p class="muted">Los cuadros de tus clips se envían al modelo visual en la nube.
+        El habla se transcribe localmente y nunca sale de esta máquina.</p>
+        <button class="primary big" id="create-vlog">${analyzed ? 'Continuar — escribir ideas' : 'Crear mi vlog'}</button>
+      </section>
+    `;
+  }
   const keptCount = keptStoryIds().size;
+  const currentId = project.plan?.concept_id;
   return `
     <section>
       <div class="section-header">
-        <div><span class="eyebrow">Pick a story</span><h2>The editor proposes, you decide</h2></div>
+        <div><span class="eyebrow">Historias</span><h2>El editor propone, tú decides</h2></div>
       </div>
-      <p class="muted">Every scene cites real moments in your clips. "Make this one" cuts the
-      video, renders a preview, and prepares editor files — all in one go. Not happy?
-      Mark what's worth keeping (★), tell the editor what you want, and ask for new ideas.</p>
-      <div class="concept-grid">${(project.concepts || []).map(storyCard).join('')}</div>
+      <p class="muted">Cada escena cita momentos reales de tus clips. «Hacer esta» corta el
+      video, renderiza la vista previa y prepara los archivos de editor. ¿No convence?
+      Marca lo que valga (★), di qué quieres y pide ideas nuevas.</p>
+      <div class="concept-grid">${(project.concepts || []).map((c) => storyCard(c, c.concept_id === currentId)).join('')}</div>
       <form id="more-ideas-form" class="revision-form">
         <textarea name="guidance" rows="2"
-          placeholder="What do you want instead? e.g. focus on the class project demo, more energy, under 40 seconds, skip the game footage…"></textarea>
-        <button type="submit" class="secondary">New ideas${keptCount ? ` (keeping ${keptCount} ★)` : ''}</button>
+          placeholder="¿Qué quieres en su lugar? p. ej. enfócate en la demo del proyecto, más energía, menos de 40 segundos…"></textarea>
+        <button type="submit" class="secondary">Ideas nuevas${keptCount ? ` (conservando ${keptCount} ★)` : ''}</button>
       </form>
-      ${project.plan ? '<button class="ghost" id="back-to-result">← Back to the current cut</button>' : ''}
     </section>
+    ${needsCheckSection()}
   `;
 }
 
-function frameUrl(assetId, seconds) {
-  return `/api/projects/${escapeHtml(state.activeProjectId)}/frames/${escapeHtml(assetId)}?t=${seconds.toFixed(2)}`;
-}
-
-function sceneStrip(project) {
-  const events = (project.plan?.tracks || []).find((track) => track.kind === 'video')?.events || [];
-  return events.map((event, index) => {
-    const mid = (event.source_start_seconds + event.source_end_seconds) / 2;
-    const asset = state.activeProject.inventory.assets.find((a) => a.asset_id === event.asset_id);
-    const playUrl = asset?.media_url
-      ? `${asset.media_url}#t=${event.source_start_seconds.toFixed(1)},${event.source_end_seconds.toFixed(1)}`
-      : null;
-    return `
-      <a class="scene-card" ${playUrl ? `href="${escapeHtml(playUrl)}" target="_blank" title="Ver este momento en el clip original"` : ''}>
-        <img loading="lazy" src="${frameUrl(event.asset_id, mid)}" alt="" />
-        <div class="scene-info">
-          <strong>${index + 1} · ${(event.source_end_seconds - event.source_start_seconds).toFixed(1)}s</strong>
-          <span>${escapeHtml(event.intent)}</span>
-        </div>
-      </a>
-    `;
-  }).join('');
-}
-
-function newIdeasBanner(project) {
-  // Story ideas newer than the current cut: the plan's concept no longer
-  // exists in the concepts list, so the cut predates the latest ideas.
-  const planConcept = project.plan?.concept_id;
-  if (!planConcept) return '';
-  const stillListed = (project.concepts || []).some((c) => c.concept_id === planConcept);
-  if (stillListed) return '';
-  return `
-    <div class="banner">
-      <span>Hay ideas de historia nuevas — este video es de una ronda anterior.</span>
-      <button class="primary compact" id="see-new-ideas">Ver ideas nuevas</button>
-    </div>
-  `;
-}
-
-function resultSection(project) {
-  const renderUrl = project.outputs?.render?.url;
-  const revision = project.plan?.revision || 1;
-  const proxyExport = project.outputs?.xmeml_proxies;
-  const duration = project.plan?.project?.duration_seconds;
-  return `
-    ${newIdeasBanner(project)}
-    <section class="result-hero">
-      <article class="card video-stage">
-        ${renderUrl
-          ? `<video controls preload="metadata" src="${escapeHtml(renderUrl)}"></video>`
-          : '<div class="video-placeholder">Rendering has not produced a preview yet — use "Make this one" on a story.</div>'}
-        <div class="video-caption">
-          <span>${escapeHtml(project.plan?.concept_id || '')} · cut ${revision}${duration ? ` · ${Number(duration).toFixed(0)}s` : ''}</span>
-        </div>
-      </article>
-      <article class="card chat-card">
-        <h3>Tell the editor what to change</h3>
-        <form id="revision-form" class="revision-form vertical">
-          <textarea name="instruction" rows="3" required minlength="3"
-            placeholder="shorten the intro… drop the fridge shot… end on the scooter…"></textarea>
-          <button type="submit" class="primary">Change it</button>
-        </form>
-        <p class="muted">Changes re-cut and re-render in about a minute. Your footage
-        analysis is cached, so this is fast and cheap. Every previous cut is kept.</p>
-        <button class="ghost" id="change-story">Choose a different story</button>
-      </article>
-    </section>
-    <section class="card export-card">
-      <div>
-        <h3>Take it into your editor</h3>
-        <p class="muted">Prepares a DaVinci Resolve timeline plus smooth-editing proxy media
-        (Resolve on Linux can't read phone H.264 directly).</p>
-        ${proxyExport ? `
-          <p>Ready: in Resolve use <strong>File → Import → Timeline</strong> and pick<br>
-          <code>runtime/projects/${escapeHtml(project.project_id)}/outputs/timeline-davinci-proxies.xml</code></p>` : ''}
-      </div>
-      <button class="secondary" id="prepare-export">${proxyExport ? 'Rebuild editor files' : 'Prepare DaVinci files'}</button>
-    </section>
-    ${resultRecommendations(project)}
-    <section id="clip-value">
-      <div class="section-header"><div><span class="eyebrow">Valor de cada clip</span>
-      <h2>Qué aporta cada clip a este vlog</h2></div>
-      <p class="muted">Puntaje transparente: segundos en el corte, citas en historias,
-      momentos destacados y tu voz. Los marcados «descartable» no aportan nada a esta
-      historia — puedes borrarlos de la carpeta con confianza.</p></div>
-      <div class="clip-score-list" id="clip-score-list">Cargando…</div>
-    </section>
-    <section>
-      <div class="section-header"><div><span class="eyebrow">Escena por escena</span>
-      <h2>Qué hay en este corte y por qué</h2></div>
-      <p class="muted">Cada tarjeta muestra el momento usado y la intención del editor.
-      Click abre el clip original en ese segundo. ¿Algo no encaja? Dilo en el chat de arriba.</p></div>
-      <div class="scene-strip">${sceneStrip(project)}</div>
-    </section>
-  `;
-}
-
-function resultRecommendations(project) {
-  const concept = (project.concepts || []).find(
-    (item) => item.concept_id === project.plan?.concept_id
-  );
-  const missing = concept?.missing_shots || [];
-  if (!missing.length) return '';
-  return `
-    <section class="card reco-card">
-      <h3>Para fortalecer este video — graba y agrega a la carpeta</h3>
-      <ul>${missing.map((shot) => `
-        <li class="missing-shot">
-          <span class="priority ${escapeHtml(shot.priority)}">${escapeHtml(shot.priority)}</span>
-          ${escapeHtml(shot.recording_instruction)}
-          ${shot.fallback ? `<div class="muted">Si no: ${escapeHtml(shot.fallback)}</div>` : ''}
-        </li>
-      `).join('')}</ul>
-      <p class="muted">Graba estos clips o voz en off, déjalos en la carpeta del proyecto,
-      re-analiza, y pide el cambio en el chat — el resto del análisis queda cacheado.</p>
-    </section>
-  `;
-}
+/* ---- claim review (contextual, lives under Historia) ---- */
 
 const FLAG_REASONS = {
-  brand_or_product_claim: 'names a brand or product — a classic AI-hallucination spot',
-  intent_or_emotion_inference: 'guesses feelings or intent, which frames cannot prove',
-  unverified_speech_claim: 'claims someone is speaking without a matching transcript',
-  identity_or_continuity_inference: 'assumes identity or continuity across shots',
-  low_confidence_transcription: 'the audio was unclear, so the transcript may be wrong',
+  brand_or_product_claim: 'menciona una marca o producto — punto clásico de alucinación',
+  intent_or_emotion_inference: 'adivina emociones o intención, que los cuadros no pueden probar',
+  unverified_speech_claim: 'afirma que alguien habla sin transcripción que lo respalde',
+  identity_or_continuity_inference: 'asume identidad o continuidad entre tomas',
+  low_confidence_transcription: 'el audio era poco claro; la transcripción puede fallar',
 };
 
 function claimReason(observation) {
@@ -350,14 +324,12 @@ function claimReason(observation) {
     .filter(Boolean);
   const confidence = observation.model_confidence;
   if (confidence != null && confidence < 0.75) {
-    reasons.push(`the model itself rated this only ${(confidence * 100).toFixed(0)}% sure (blurry/ambiguous footage)`);
+    reasons.push(`el propio modelo se dio solo ${(confidence * 100).toFixed(0)}% de certeza`);
   }
-  return reasons.join('; ') || 'held back by policy';
+  return reasons.join('; ') || 'retenida por política';
 }
 
 function knownContext(observation) {
-  // The approved shot caption covering this claim: what the editor already
-  // knows about the same footage, shown so the user judges the delta only.
   const midpoint = (Number(observation.start_seconds) + Number(observation.end_seconds)) / 2;
   for (const run of state.runs) {
     for (const other of run.observations || []) {
@@ -384,19 +356,19 @@ function claimCard(observation) {
   const known = knownContext(observation);
   return `
     <article class="evidence-item">
-      <a ${playUrl ? `href="${escapeHtml(playUrl)}" target="_blank" title="Open the clip at this moment"` : ''} class="claim-visual">
+      <a ${playUrl ? `href="${escapeHtml(playUrl)}" target="_blank" title="Abrir el clip en este momento"` : ''} class="claim-visual">
         <img loading="lazy" src="/api/projects/${escapeHtml(projectId)}/frames/${escapeHtml(observation.asset_id)}?t=${midpoint}" alt="" />
         <span class="play-hint">▶ ${Number(observation.start_seconds).toFixed(1)}–${Number(observation.end_seconds).toFixed(1)}s</span>
       </a>
       <div class="claim-body">
         <div class="evidence-meta"><span>${escapeHtml(observation.filename || observation.asset_id)}</span></div>
         <p>${escapeHtml(observation.caption)}</p>
-        ${known ? `<p class="muted known-context">Editor already knows: ${escapeHtml(known.slice(0, 160))}</p>` : ''}
-        <p class="muted why-flagged">Why it's flagged: ${escapeHtml(claimReason(observation))}.</p>
+        ${known ? `<p class="muted known-context">El editor ya sabe: ${escapeHtml(known.slice(0, 160))}</p>` : ''}
+        <p class="muted why-flagged">Por qué se marcó: ${escapeHtml(claimReason(observation))}.</p>
         <div class="review-actions">
-          <button class="ghost approve" data-review-run="${escapeHtml(observation.run_key)}" data-review-id="${escapeHtml(observation.evidence_id)}" data-review-action="approve">True — use it</button>
-          <button class="ghost" data-review-run="${escapeHtml(observation.run_key)}" data-review-id="${escapeHtml(observation.evidence_id)}" data-review-action="edit">Fix wording</button>
-          <button class="ghost reject" data-review-run="${escapeHtml(observation.run_key)}" data-review-id="${escapeHtml(observation.evidence_id)}" data-review-action="reject">Wrong — ignore it</button>
+          <button class="ghost approve" data-review-run="${escapeHtml(observation.run_key)}" data-review-id="${escapeHtml(observation.evidence_id)}" data-review-action="approve">Cierto — úsalo</button>
+          <button class="ghost" data-review-run="${escapeHtml(observation.run_key)}" data-review-id="${escapeHtml(observation.evidence_id)}" data-review-action="edit">Corregir texto</button>
+          <button class="ghost reject" data-review-run="${escapeHtml(observation.run_key)}" data-review-id="${escapeHtml(observation.evidence_id)}" data-review-action="reject">Falso — ignóralo</button>
         </div>
       </div>
     </article>
@@ -410,44 +382,24 @@ function needsCheckSection() {
   if (localStorage.getItem(`showClaims:${projectId}`) !== '1') {
     return `
       <section id="pending-review" class="card skipped-claims">
-        <span>${pending.length} unchecked claim${pending.length === 1 ? '' : 's'} set aside.
-        You don't need to review them — if a story wants one, you'll be asked about
-        just that one when you pick the story.</span>
-        <button class="ghost" id="unskip-claims">Review all anyway</button>
+        <span>${pending.length} afirmación${pending.length === 1 ? '' : 'es'} sin verificar, apartadas.
+        No hace falta revisarlas — si una historia necesita alguna, se te preguntará
+        solo por esa al elegirla.</span>
+        <button class="ghost" id="unskip-claims">Revisar todas</button>
       </section>
     `;
   }
   return `
     <section id="pending-review">
       <div class="section-header">
-        <div><span class="eyebrow">Unchecked claims (optional)</span><h2>${pending.length} claim${pending.length === 1 ? '' : 's'} the editor won't rely on unchecked</h2></div>
-        <p>Each tripped a specific safety rule (shown per card). Unchecked claims are
-        excluded from editing; ${approvedCount()} solid observations are already in use.</p>
-        <button class="secondary compact" id="skip-claims">Set aside</button>
+        <div><span class="eyebrow">Afirmaciones sin verificar (opcional)</span><h2>${pending.length} afirmación${pending.length === 1 ? '' : 'es'} que el editor no usará sin confirmar</h2></div>
+        <p>Cada una activó una regla de seguridad concreta (se muestra en su tarjeta);
+        ${approvedCount()} observaciones sólidas ya están en uso.</p>
+        <button class="secondary compact" id="skip-claims">Apartar</button>
       </div>
       <div class="pending-grid">${pending.map(claimCard).join('')}</div>
     </section>
   `;
-}
-
-function conceptPendingClaims(concept) {
-  const pending = pendingClaims();
-  const hits = [];
-  for (const beat of concept.structure || []) {
-    for (const evidence of beat.evidence || []) {
-      for (const claim of pending) {
-        if (
-          claim.asset_id === evidence.asset_id
-          && claim.start_seconds < evidence.end_seconds
-          && claim.end_seconds > evidence.start_seconds
-          && !hits.some((item) => item.evidence_id === claim.evidence_id)
-        ) {
-          hits.push(claim);
-        }
-      }
-    }
-  }
-  return hits;
 }
 
 function confirmStorySection(project) {
@@ -459,116 +411,453 @@ function confirmStorySection(project) {
   return `
     <section>
       <div class="section-header">
-        <div><span class="eyebrow">One quick check</span>
-        <h2>"${escapeHtml(concept.title)}" wants ${claims.length} unchecked moment${claims.length === 1 ? '' : 's'}</h2></div>
-        <p>Confirm the ones that are true; anything you reject or leave unchecked is
-        cut around automatically. Then continue.</p>
+        <div><span class="eyebrow">Una comprobación rápida</span>
+        <h2>«${escapeHtml(concept.title)}» quiere ${claims.length} momento${claims.length === 1 ? '' : 's'} sin verificar</h2></div>
+        <p>Confirma los que sean ciertos; lo que rechaces o dejes sin marcar se
+        recorta automáticamente. Luego continúa.</p>
       </div>
       <div class="pending-grid">${claims.map(claimCard).join('')}</div>
       <div class="confirm-actions">
-        <button class="ghost" id="cancel-confirm">← Back to stories</button>
-        <button class="primary" id="continue-story">Continue — make the video</button>
+        <button class="ghost" id="cancel-confirm">← Volver a las historias</button>
+        <button class="primary" id="continue-story">Continuar — hacer el video</button>
       </div>
     </section>
   `;
 }
 
-function advancedSection(project) {
-  const media = project.inventory?.assets || [];
-  const steps = [
-    { id: 'analyze-visual', label: 'Re-analyze footage' },
-    { id: 'analyze-speech', label: 'Re-transcribe speech' },
-    { id: 'generate-concepts', label: 'Regenerate story ideas' },
-    { id: 'render', label: 'Re-render preview' },
-    { id: 'render-captions', label: 'Re-render con subtítulos' },
-    { id: 'exports', label: 'Rebuild editor files' },
-  ];
+/* ------------------------------------------------------------------ */
+/* EDICIÓN                                                             */
+
+function sceneStrip(project) {
+  const events = (project.plan?.tracks || []).find((track) => track.kind === 'video')?.events || [];
+  return events.map((event, index) => {
+    const mid = (event.source_start_seconds + event.source_end_seconds) / 2;
+    const asset = state.activeProject.inventory.assets.find((a) => a.asset_id === event.asset_id);
+    const playUrl = asset?.media_url
+      ? `${asset.media_url}#t=${event.source_start_seconds.toFixed(1)},${event.source_end_seconds.toFixed(1)}`
+      : null;
+    return `
+      <a class="scene-card" ${playUrl ? `href="${escapeHtml(playUrl)}" target="_blank" title="Ver este momento en el clip original"` : ''}>
+        <img loading="lazy" src="${frameUrl(event.asset_id, mid)}" alt="" />
+        <div class="scene-info">
+          <strong>${index + 1} · ${(event.source_end_seconds - event.source_start_seconds).toFixed(1)}s</strong>
+          <span>${escapeHtml(event.intent)}</span>
+        </div>
+      </a>
+    `;
+  }).join('');
+}
+
+function newIdeasBanner(project) {
+  const planConcept = project.plan?.concept_id;
+  if (!planConcept) return '';
+  const stillListed = (project.concepts || []).some((c) => c.concept_id === planConcept);
+  if (stillListed) return '';
   return `
-    <details class="advanced">
-      <summary>Advanced — clips, evidence, and manual pipeline steps</summary>
-      <div class="pipeline-grid">
-        ${steps.map((step) => `
-          <button class="pipeline-step" data-pipeline="${step.id}">
-            <strong>${escapeHtml(step.label)}</strong>
-          </button>
-        `).join('')}
-      </div>
-      <div class="pipeline-grid">
-        <button class="pipeline-step" id="opentake-place">
-          <strong>Enviar a OpenTake</strong>
-          <span>Coloca el corte en la línea de tiempo abierta (la reemplaza)</span>
-        </button>
-        <button class="pipeline-step" id="opentake-sync">
-          <strong>Traer cambios de OpenTake</strong>
-          <span>Lee la línea de tiempo y muestra qué cambiaría en el plan</span>
-        </button>
-      </div>
-      <div class="pipeline-grid">
-        <button class="pipeline-step" id="opentake-cleanup">
-          <strong>Limpieza de diálogo</strong>
-          <span>Busca muletillas y silencios en la línea de tiempo de OpenTake</span>
-        </button>
-      </div>
-      <div id="opentake-cleanup-list"></div>
-      <div id="opentake-diff"></div>
-      <div class="command-row">
-        <input type="text" id="plan-command-input" maxlength="500"
-          placeholder="Instrucción de edición — p. ej. «quita la escena v05» o «baja el volumen de v03»" />
-        <button class="pipeline-step" id="plan-command-send">
-          <strong>Proponer edición</strong>
-          <span>Una instrucción → un cambio atómico al plan</span>
-        </button>
-      </div>
-      <div id="plan-command-result"></div>
-      <div class="pipeline-grid">
-        <button class="pipeline-step" id="plan-history">
-          <strong>Historial de revisiones</strong>
-          <span>Qué cambió en cada versión del corte y quién lo pidió</span>
-        </button>
-      </div>
-      <div id="plan-history-list"></div>
-      <div class="pipeline-grid">
-        <button class="pipeline-step" id="clone-project">
-          <strong>Duplicate vlog</strong>
-          <span>Same clips, shared analysis, fresh story</span>
-        </button>
-        <button class="pipeline-step" id="reset-keep">
-          <strong>Start over</strong>
-          <span>Back to step 1, analysis kept (fast, free)</span>
-        </button>
-        <button class="pipeline-step" id="reset-full">
-          <strong>Start from zero</strong>
-          <span>Also re-analyzes footage (slow, costs a bit)</span>
-        </button>
-        <button class="pipeline-step danger" id="delete-project">
-          <strong>Delete vlog</strong>
-          <span>Removes this project; your clips stay</span>
-        </button>
+    <div class="banner">
+      <span>Hay ideas de historia nuevas — este video es de una ronda anterior.</span>
+      <button class="primary compact" id="see-new-ideas">Ver ideas nuevas</button>
+    </div>
+  `;
+}
+
+function editWorkspace(project) {
+  const renderUrl = project.outputs?.render?.url;
+  const revision = project.plan?.revision || 1;
+  const duration = project.plan?.project?.duration_seconds;
+  return `
+    ${newIdeasBanner(project)}
+    <section class="edit-grid">
+      <article class="card video-stage">
+        ${renderUrl
+          ? `<video controls preload="metadata" src="${escapeHtml(renderUrl)}"></video>`
+          : '<div class="video-placeholder">Aún no hay vista previa — usa «Hacer esta» en una historia.</div>'}
+        <div class="video-caption">
+          <button class="ghost compact" id="revision-toggle">Corte ${revision} ▾</button>
+          <span>${duration ? `${Number(duration).toFixed(0)}s` : ''}</span>
+        </div>
+        <div id="revision-history" class="revision-history hidden"></div>
+      </article>
+      <article class="card editor-panel">
+        <h3>Editor IA</h3>
+        <form id="ai-edit-form" class="revision-form vertical">
+          <textarea name="instruction" rows="3" required minlength="3"
+            placeholder="quita la escena del refri… acorta el inicio… pon la comida mientras hablo… haz un J-cut en la escena 4…"></textarea>
+          <button type="submit" class="primary">Cambiarlo</button>
+        </form>
+        <div id="ai-edit-result"></div>
+        <div class="quick-actions">
+          <span class="eyebrow">Acciones rápidas</span>
+          <button class="quick" id="qa-cleanup">🧹 Afinar diálogo</button>
+          <button class="quick" id="qa-captions">💬 Subtítulos en el video</button>
+          <button class="quick" id="qa-story">📖 Cambiar de historia</button>
+        </div>
+        <div id="qa-panel"></div>
+      </article>
+    </section>
+    <section class="storyboard-section">
+      <div class="section-header"><div><span class="eyebrow">Escena por escena</span></div>
+      <p class="muted">Click abre el clip original en ese segundo. ¿Algo no encaja? Dilo arriba.</p></div>
+      <div class="scene-strip">${sceneStrip(project)}</div>
+    </section>
+  `;
+}
+
+/* Unified AI edit: try the atomic path first; offer a full rewrite when
+   the instruction doesn't map to one operation. */
+async function submitAiEdit(event) {
+  event.preventDefault();
+  const instruction = new FormData(event.currentTarget).get('instruction')?.toString().trim();
+  if (!instruction) return;
+  const box = $('#ai-edit-result');
+  box.innerHTML = '<p class="notice">Interpretando…</p>';
+  try {
+    const proposed = await api(`/api/projects/${state.activeProjectId}/plan/command`, {
+      method: 'POST', body: JSON.stringify({ instruction: instruction.slice(0, 500) }),
+    });
+    if (proposed.status === 'proposed') {
+      box.innerHTML = `
+        <div class="sync-diff">
+          <p><strong>Propuesta:</strong> ${escapeHtml(proposed.summary)}</p>
+          <div class="review-actions">
+            <button class="primary compact" id="ai-apply">Aplicar y renderizar</button>
+            <button class="ghost compact" id="ai-rewrite">Mejor reescribir el corte</button>
+          </div>
+        </div>`;
+      $('#ai-apply')?.addEventListener('click', async () => {
+        try {
+          setBusy('Cambiando tu vlog', ['Aplicando el cambio', 'Renderizando'], 0);
+          await api(`/api/projects/${state.activeProjectId}/plan/command/apply?proposal_id=${proposed.proposal_id}`, { method: 'POST' });
+          setBusy('Cambiando tu vlog', ['Aplicando el cambio', 'Renderizando'], 1);
+          await runStep('render');
+          state.busy = null;
+          notice('Listo — nuevo corte arriba.');
+          await loadProject(state.activeProjectId);
+        } catch (error) { state.busy = null; notice(error.message, true); await loadProject(state.activeProjectId); }
+      });
+      $('#ai-rewrite')?.addEventListener('click', () => rewriteCut(instruction));
+      return;
+    }
+    // Atomic path declined: offer the full rewrite with the reason shown.
+    box.innerHTML = `
+      <div class="sync-diff">
+        <p class="muted">${escapeHtml(proposed.reason || 'La instrucción pide más de un cambio.')}</p>
+        <button class="primary compact" id="ai-rewrite">Reescribir el corte con esta instrucción</button>
+      </div>`;
+    $('#ai-rewrite')?.addEventListener('click', () => rewriteCut(instruction));
+  } catch (error) {
+    box.innerHTML = `<p class="notice error">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+async function rewriteCut(instruction) {
+  try {
+    setBusy('Cambiando tu vlog', ['Recortando según tu instrucción', 'Renderizando la vista previa'], 0);
+    const revision = await runStep('plan/revise', { instruction });
+    setBusy('Cambiando tu vlog', ['Recortando según tu instrucción', 'Renderizando la vista previa'], 1);
+    await runStep('render');
+    state.busy = null;
+    notice(revision.result?.revision_note || 'Listo — nuevo corte arriba.');
+    await loadProject(state.activeProjectId);
+  } catch (error) {
+    state.busy = null;
+    notice(error.message, true);
+    await loadProject(state.activeProjectId);
+  }
+}
+
+async function toggleRevisionHistory() {
+  const box = $('#revision-history');
+  if (!box.classList.contains('hidden')) { box.classList.add('hidden'); return; }
+  box.classList.remove('hidden');
+  box.innerHTML = '<p class="muted">Cargando…</p>';
+  try {
+    const log = await api(`/api/projects/${state.activeProjectId}/plan/revisions`);
+    const current = state.activeProject?.plan?.revision || 1;
+    if (!log.entries?.length) {
+      box.innerHTML = '<p class="muted">Sin revisiones — el corte sigue en su versión original.</p>';
+      return;
+    }
+    box.innerHTML = [...log.entries].reverse().map((entry) => `
+      <div class="revision-row">
+        <strong>Corte ${entry.revision}${entry.revision === current ? ' · actual' : ''}</strong>
+        <span>${escapeHtml(entry.note || entry.instruction || '')}</span>
+        ${entry.revision !== current
+          ? `<button class="ghost compact" data-restore="${entry.revision - 1}" title="Vuelve al corte anterior a este cambio">↶ Volver antes de esto</button>`
+          : ''}
+      </div>`).join('');
+    box.querySelectorAll('[data-restore]').forEach((button) => {
+      button.addEventListener('click', () => restoreRevision(Number(button.dataset.restore)));
+    });
+  } catch (error) { box.innerHTML = `<p class="muted">${escapeHtml(error.message)}</p>`; }
+}
+
+async function restoreRevision(revision) {
+  if (!window.confirm(`¿Volver al corte ${revision}? Se crea una nueva revisión — nada se pierde.`)) return;
+  try {
+    setBusy('Restaurando el corte', ['Instalando la revisión', 'Renderizando'], 0);
+    await api(`/api/projects/${state.activeProjectId}/plan/revisions/${revision}/restore`, { method: 'POST' });
+    setBusy('Restaurando el corte', ['Instalando la revisión', 'Renderizando'], 1);
+    await runStep('render');
+    state.busy = null;
+    notice(`Corte ${revision} restaurado.`);
+    await loadProject(state.activeProjectId);
+  } catch (error) {
+    state.busy = null;
+    notice(error.message, true);
+    await loadProject(state.activeProjectId);
+  }
+}
+
+/* ---- quick actions ---- */
+
+async function quickCleanup() {
+  const box = $('#qa-panel');
+  box.innerHTML = '<p class="notice">Buscando muletillas y silencios en OpenTake…</p>';
+  try {
+    const found = await api(`/api/projects/${state.activeProjectId}/opentake/cleanup`, { method: 'POST' });
+    if (!found.candidates.length) {
+      box.innerHTML = '<p class="notice">Sin candidatos — el habla está limpia. (Los «eh» puros no aparecen en la transcripción, así que esto es normal en discurso preparado.)</p>';
+      return;
+    }
+    box.innerHTML = `
+      <div class="sync-diff">
+        <p><strong>${found.candidates.length}</strong> sugerencia(s) · quita ${found.total_seconds}s. Marca las que quieras:</p>
+        ${found.candidates.map((c, i) => `
+          <label class="cleanup-item">
+            <input type="checkbox" data-cleanup-index="${i}" checked />
+            <span>${escapeHtml(c.reason)} — <em>${escapeHtml(c.context)}</em> (${((c.frames[1] - c.frames[0]) / 30).toFixed(1)}s)</span>
+          </label>`).join('')}
+        <button class="primary compact" id="cleanup-apply">Aplicar seleccionados</button>
+      </div>`;
+    $('#cleanup-apply')?.addEventListener('click', async () => {
+      const indices = [...document.querySelectorAll('[data-cleanup-index]')]
+        .filter((el) => el.checked).map((el) => Number(el.dataset.cleanupIndex));
+      if (!indices.length) { notice('Nada seleccionado.', true); return; }
+      try {
+        setBusy('Afinando el diálogo', ['Cortando en OpenTake', 'Actualizando el plan', 'Renderizando'], 0);
+        await api(`/api/projects/${state.activeProjectId}/opentake/cleanup/apply`, {
+          method: 'POST', body: JSON.stringify({ indices }),
+        });
+        setBusy('Afinando el diálogo', ['Cortando en OpenTake', 'Actualizando el plan', 'Renderizando'], 1);
+        await api(`/api/projects/${state.activeProjectId}/opentake/sync`, { method: 'POST' });
+        await api(`/api/projects/${state.activeProjectId}/opentake/sync/apply`, { method: 'POST' });
+        setBusy('Afinando el diálogo', ['Cortando en OpenTake', 'Actualizando el plan', 'Renderizando'], 2);
+        await runStep('render');
+        state.busy = null;
+        notice('Diálogo afinado y corte re-renderizado.');
+        await loadProject(state.activeProjectId);
+      } catch (error) {
+        state.busy = null;
+        notice(error.message, true);
+        await loadProject(state.activeProjectId);
+      }
+    });
+  } catch (error) { box.innerHTML = `<p class="notice error">${escapeHtml(error.message)}</p>`; }
+}
+
+async function quickCaptions() {
+  try {
+    setBusy('Subtítulos', ['Renderizando con subtítulos incrustados'], 0);
+    await runStep('render?burn_captions=true');
+    state.busy = null;
+    notice('Vista previa con subtítulos lista.');
+    await loadProject(state.activeProjectId);
+  } catch (error) {
+    state.busy = null;
+    notice(error.message, true);
+    await loadProject(state.activeProjectId);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* METRAJE                                                             */
+
+function mediaWorkspace(project) {
+  const media = project.inventory?.assets || [];
+  const used = usedAssetIds(project);
+  const filter = state.mediaFilter;
+  const visible = media.filter((asset) => {
+    if (filter === 'used') return used.has(asset.asset_id);
+    if (filter === 'unused') return !used.has(asset.asset_id);
+    if (filter === 'audio') return asset.media_type === 'audio';
+    return true;
+  });
+  return `
+    <section>
+      <div class="section-header">
+        <div><span class="eyebrow">Metraje</span><h2>${media.length} archivos en este vlog</h2></div>
       </div>
       <label class="add-clips">
-        Add clips or voiceover recordings to this vlog
+        + Agregar clips o notas de voz
         <input type="file" id="add-clips-input" multiple accept="video/*,image/*,audio/*" />
       </label>
+      <div class="media-filters">
+        ${[['all', 'Todos'], ['used', 'Usados'], ['unused', 'Sin usar'], ['audio', 'Audio']]
+          .map(([id, label]) => `<button class="tab small ${filter === id ? 'active' : ''}" data-media-filter="${id}">${label}</button>`).join('')}
+      </div>
       <div class="media-grid">
-        ${media.map((asset) => {
+        ${visible.map((asset) => {
           const thumbnail = asset.thumbnail_url
             ? `<img loading="lazy" src="${escapeHtml(asset.thumbnail_url)}" alt="" />`
-            : '<div class="video-placeholder">No preview</div>';
+            : '<div class="video-placeholder">Sin vista previa</div>';
+          const isUsed = used.has(asset.asset_id);
           return `
-            <article class="media-card">
+            <article class="media-card ${isUsed ? 'used' : ''}">
               <div class="media-thumb">${thumbnail}
+                ${isUsed ? '<span class="used-badge">en el corte</span>' : ''}
                 <button class="remove-asset" data-remove-asset="${escapeHtml(asset.asset_id)}" title="Quitar del proyecto y borrar el archivo de la laptop">✕</button>
               </div>
               <div class="media-info">
                 <strong title="${escapeHtml(asset.filename)}">${escapeHtml(asset.filename)}</strong>
-                <span>${asset.duration_seconds ? `${Number(asset.duration_seconds).toFixed(0)}s` : 'still'}</span>
+                <span>${asset.duration_seconds ? `${Number(asset.duration_seconds).toFixed(0)}s` : 'foto'}</span>
               </div>
             </article>
           `;
-        }).join('')}
+        }).join('') || '<p class="muted">Nada con este filtro.</p>'}
       </div>
-    </details>
+      ${project.plan ? `
+        <div class="section-header" style="margin-top:1.5rem"><div><span class="eyebrow">Valor de cada clip</span>
+        <h2>Qué aporta cada clip a este vlog</h2></div>
+        <p class="muted">Segundos en el corte, citas en historias y momentos destacados.
+        Los «descartables» no aportan a esta historia — puedes borrarlos con confianza.</p></div>
+        <div class="clip-score-list" id="clip-score-list">Cargando…</div>` : ''}
+    </section>
   `;
+}
+
+async function loadClipScores() {
+  try {
+    const payload = await api(`/api/projects/${state.activeProjectId}/clip-scores`);
+    const container = $('#clip-score-list');
+    if (!container) return;
+    container.innerHTML = payload.clips.map((clip) => `
+      <div class="clip-score verdict-${escapeHtml(clip.verdict.replaceAll(' ', '-'))}">
+        <img loading="lazy" src="${frameUrl(clip.asset_id, clip.duration_seconds / 2)}" alt="" />
+        <div class="clip-score-body">
+          <div class="clip-score-head">
+            <strong>${escapeHtml(clip.filename)}</strong>
+            <span class="score-badge">${clip.score}</span>
+          </div>
+          <span class="verdict-label">${escapeHtml(clip.verdict)}</span>
+          <span class="muted">${escapeHtml(clip.reason)}</span>
+        </div>
+      </div>
+    `).join('');
+  } catch (error) {
+    const container = $('#clip-score-list');
+    if (container) container.textContent = error.message;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* PUBLICAR                                                            */
+
+function publishWorkspace(project) {
+  const renderUrl = project.outputs?.render?.url;
+  const proxyExport = project.outputs?.xmeml_proxies;
+  const duration = project.plan?.project?.duration_seconds;
+  const concept = (project.concepts || []).find((c) => c.concept_id === project.plan?.concept_id);
+  const missing = concept?.missing_shots || [];
+  return `
+    <section class="publish-grid">
+      <article class="card">
+        <h3>Video final</h3>
+        ${renderUrl ? `
+          <p class="muted">✓ ${duration ? `${Number(duration).toFixed(0)} segundos` : 'renderizado'} · corte ${project.plan?.revision || 1}</p>
+          <a class="primary button-link" href="${escapeHtml(renderUrl)}" download="vlog.mp4">Descargar MP4</a>` : `
+          <p class="muted">Aún no hay render — vuelve a Edición.</p>`}
+      </article>
+      <article class="card">
+        <h3>Seguir editando en OpenTake</h3>
+        <p class="muted">Coloca este corte en la línea de tiempo abierta de OpenTake
+        (reemplaza lo que haya allí), edita a mano, y trae los cambios de vuelta.</p>
+        <div class="review-actions">
+          <button class="secondary compact" id="opentake-place">Colocar en OpenTake</button>
+          <button class="secondary compact" id="opentake-sync">Traer cambios</button>
+        </div>
+        <div id="opentake-diff"></div>
+      </article>
+      <article class="card">
+        <h3>Seguir editando en DaVinci Resolve</h3>
+        <p class="muted">Prepara la línea de tiempo más proxies (Resolve en Linux no
+        lee el H.264 del teléfono directamente).</p>
+        ${proxyExport ? `
+          <p>Listo: en Resolve usa <strong>File → Import → Timeline</strong> y elige<br>
+          <code>runtime/projects/${escapeHtml(project.project_id)}/outputs/timeline-davinci-proxies.xml</code></p>` : ''}
+        <button class="secondary compact" id="prepare-export">${proxyExport ? 'Reconstruir archivos' : 'Preparar archivos'}</button>
+      </article>
+      ${missing.length ? `
+      <article class="card reco-card">
+        <h3>Para fortalecer este video</h3>
+        <ul>${missing.map((shot) => `
+          <li class="missing-shot">
+            <span class="priority ${escapeHtml(shot.priority)}">${escapeHtml(shot.priority)}</span>
+            ${escapeHtml(shot.recording_instruction)}
+            ${shot.fallback ? `<div class="muted">Si no: ${escapeHtml(shot.fallback)}</div>` : ''}
+          </li>`).join('')}</ul>
+        <p class="muted">Graba estos clips o una voz en off, agrégalos en Metraje y
+        pide el cambio en Edición.</p>
+      </article>` : ''}
+    </section>
+  `;
+}
+
+/* ------------------------------------------------------------------ */
+/* DIAGNÓSTICO                                                         */
+
+function diagnosticsWorkspace() {
+  const capabilities = state.status?.capabilities;
+  const visual = capabilities?.visual?.find((item) => item.id === 'owned-live-visual');
+  const speech = capabilities?.speech?.find((item) => item.id === 'faster-whisper');
+  const rows = [
+    ['Comprensión visual', visual?.ready, visual?.ready ? 'Modelo en la nube conectado' : 'Faltan llaves API en .env'],
+    ['Transcripción de habla', speech?.ready, speech?.ready ? 'Local, en esta máquina' : 'No instalado'],
+    ['Render de video', capabilities?.render?.ready, 'Local, en esta máquina'],
+    ['Export DaVinci', true, 'Importación verificada'],
+  ];
+  const steps = [
+    { id: 'analyze-visual', label: 'Re-analizar metraje (forzado)' },
+    { id: 'analyze-speech', label: 'Re-transcribir habla (forzado)' },
+    { id: 'generate-concepts', label: 'Regenerar ideas' },
+    { id: 'render', label: 'Re-renderizar' },
+    { id: 'render-captions', label: 'Re-renderizar con subtítulos' },
+    { id: 'exports', label: 'Reconstruir exports' },
+  ];
+  return `
+    <section>
+      <div class="section-header"><div><span class="eyebrow">Diagnóstico</span>
+      <h2>Estado del sistema y controles manuales</h2></div>
+      <button class="ghost compact" id="diagnostics-back">← Volver</button></div>
+      <div class="capability-list">
+        ${rows.map(([label, ready, detail]) => `
+          <div class="capability ${ready ? 'ready' : ''}"><i></i>
+            <div><strong>${escapeHtml(label)}</strong><span>${escapeHtml(detail)}</span></div>
+          </div>`).join('')}
+      </div>
+      <div class="pipeline-grid" style="margin-top:1rem">
+        ${steps.map((step) => `
+          <button class="pipeline-step" data-pipeline="${step.id}">
+            <strong>${escapeHtml(step.label)}</strong>
+          </button>`).join('')}
+      </div>
+      <div id="jobs-panel" class="sync-diff" style="margin-top:1rem">Cargando trabajos…</div>
+    </section>
+  `;
+}
+
+async function loadJobsPanel() {
+  const box = $('#jobs-panel');
+  if (!box) return;
+  try {
+    const payload = await api('/api/jobs');
+    const jobs = (payload.jobs || [])
+      .filter((job) => job.project_id === state.activeProjectId)
+      .slice(-12).reverse();
+    box.innerHTML = jobs.length
+      ? jobs.map((job) => `<p><code>${escapeHtml(job.kind)}</code> · ${escapeHtml(job.status)}${job.error ? ` — ${escapeHtml(job.error.slice(0, 120))}` : ''}</p>`).join('')
+      : '<p class="muted">Sin trabajos registrados para este proyecto.</p>';
+  } catch (error) { box.textContent = error.message; }
 }
 
 /* ------------------------------------------------------------------ */
@@ -578,26 +867,41 @@ function renderProject() {
   const project = state.activeProject;
   if (!project) return;
   const phase = phaseOf(project);
+  if (!state.workspace) {
+    state.workspace = localStorage.getItem(`workspace:${state.activeProjectId}`) || defaultWorkspace(project);
+  }
+  if ((state.workspace === 'edit' || state.workspace === 'publish') && !project.plan) {
+    state.workspace = 'story';
+  }
   $('#project-title').textContent = project.name;
-  $('#project-status').textContent = state.busy ? 'Working…' : (PHASE_LABEL[phase] || project.status.replaceAll('_', ' '));
+  $('#project-status').textContent = state.busy ? 'Trabajando…' : (PHASE_LABEL[phase] || project.status.replaceAll('_', ' '));
   renderProjectList();
+  renderTabs(project);
+  renderOverflow();
 
   let main;
   if (state.busy) {
     main = busyCard();
   } else if (state.pendingStory) {
-    main = confirmStorySection(project) + advancedSection(project);
+    main = confirmStorySection(project);
+  } else if (state.workspace === 'diagnostics') {
+    main = diagnosticsWorkspace();
+  } else if (state.workspace === 'edit') {
+    main = editWorkspace(project);
+  } else if (state.workspace === 'media') {
+    main = mediaWorkspace(project);
+  } else if (state.workspace === 'publish') {
+    main = publishWorkspace(project);
   } else {
-    main = phase === 'start' ? startSection(project)
-      : phase === 'pick' ? pickSection(project)
-      : resultSection(project);
-    main += needsCheckSection();
-    main += advancedSection(project);
+    main = storyWorkspace(project);
   }
 
   $('#project-view').classList.remove('loading');
   $('#project-view').innerHTML = main;
+  wireHandlers();
+}
 
+function wireHandlers() {
   $('#create-vlog')?.addEventListener('click', createVlog);
   $('#more-ideas-form')?.addEventListener('submit', regenerateIdeas);
   document.querySelectorAll('[data-keep-story]').forEach((button) => {
@@ -606,18 +910,10 @@ function renderProject() {
       toggleKeptStory(button.dataset.keepStory);
     });
   });
-  $('#back-to-result')?.addEventListener('click', () => { state.forcePick = false; renderProject(); });
-  $('#change-story')?.addEventListener('click', () => { state.forcePick = true; renderProject(); });
-  $('#prepare-export')?.addEventListener('click', prepareExport);
-  $('#revision-form')?.addEventListener('submit', submitRevision);
-  if ($('#clip-score-list')) loadClipScores();
   document.querySelectorAll('[data-make-story]').forEach((button) => {
     button.addEventListener('click', () => startStory(button.dataset.makeStory));
   });
-  $('#cancel-confirm')?.addEventListener('click', () => {
-    state.pendingStory = null;
-    renderProject();
-  });
+  $('#cancel-confirm')?.addEventListener('click', () => { state.pendingStory = null; renderProject(); });
   $('#continue-story')?.addEventListener('click', () => {
     const conceptId = state.pendingStory;
     state.pendingStory = null;
@@ -625,29 +921,6 @@ function renderProject() {
   });
   document.querySelectorAll('[data-review-action]').forEach((button) => {
     button.addEventListener('click', () => reviewClaim(button));
-  });
-  document.querySelectorAll('[data-pipeline]').forEach((button) => {
-    button.addEventListener('click', () => runAdvancedStep(button.dataset.pipeline, button));
-  });
-  $('#opentake-place')?.addEventListener('click', openTakePlace);
-  $('#opentake-sync')?.addEventListener('click', openTakeSyncPreview);
-  $('#opentake-cleanup')?.addEventListener('click', openTakeCleanup);
-  $('#plan-command-send')?.addEventListener('click', planCommandPropose);
-  $('#plan-history')?.addEventListener('click', showPlanHistory);
-  $('#delete-project')?.addEventListener('click', deleteProject);
-  $('#clone-project')?.addEventListener('click', cloneProject);
-  $('#add-clips-input')?.addEventListener('change', addClipsToProject);
-  document.querySelectorAll('[data-remove-asset]').forEach((button) => {
-    button.addEventListener('click', (event) => {
-      event.stopPropagation();
-      removeAsset(button.dataset.removeAsset);
-    });
-  });
-  $('#reset-keep')?.addEventListener('click', () => resetProject(true));
-  $('#reset-full')?.addEventListener('click', () => resetProject(false));
-  $('#see-new-ideas')?.addEventListener('click', () => {
-    state.forcePick = true;
-    renderProject();
   });
   $('#skip-claims')?.addEventListener('click', () => {
     localStorage.removeItem(`showClaims:${state.activeProjectId}`);
@@ -657,7 +930,46 @@ function renderProject() {
     localStorage.setItem(`showClaims:${state.activeProjectId}`, '1');
     renderProject();
   });
+  $('#see-new-ideas')?.addEventListener('click', () => { state.workspace = 'story'; renderProject(); });
+
+  // Edición
+  $('#ai-edit-form')?.addEventListener('submit', submitAiEdit);
+  $('#revision-toggle')?.addEventListener('click', toggleRevisionHistory);
+  $('#qa-cleanup')?.addEventListener('click', quickCleanup);
+  $('#qa-captions')?.addEventListener('click', quickCaptions);
+  $('#qa-story')?.addEventListener('click', () => { state.workspace = 'story'; renderProject(); });
+
+  // Metraje
+  document.querySelectorAll('[data-media-filter]').forEach((button) => {
+    button.addEventListener('click', () => { state.mediaFilter = button.dataset.mediaFilter; renderProject(); });
+  });
+  $('#add-clips-input')?.addEventListener('change', addClipsToProject);
+  document.querySelectorAll('[data-remove-asset]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      removeAsset(button.dataset.removeAsset);
+    });
+  });
+  if ($('#clip-score-list')) loadClipScores();
+
+  // Publicar
+  $('#prepare-export')?.addEventListener('click', prepareExport);
+  $('#opentake-place')?.addEventListener('click', openTakePlace);
+  $('#opentake-sync')?.addEventListener('click', openTakeSyncPreview);
+
+  // Diagnóstico
+  document.querySelectorAll('[data-pipeline]').forEach((button) => {
+    button.addEventListener('click', () => runAdvancedStep(button.dataset.pipeline, button));
+  });
+  $('#diagnostics-back')?.addEventListener('click', () => {
+    state.workspace = defaultWorkspace(state.activeProject);
+    renderProject();
+  });
+  if ($('#jobs-panel')) loadJobsPanel();
 }
+
+/* ------------------------------------------------------------------ */
+/* Media actions                                                       */
 
 async function addClipsToProject(event) {
   const files = [...event.currentTarget.files].filter((file) => file.size > 0);
@@ -670,8 +982,8 @@ async function addClipsToProject(event) {
       method: 'POST', body,
     });
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.detail || `Upload failed (${response.status})`);
-    notice(`${payload.added.length} archivo(s) agregados. Re-analiza para incluirlos en historias.`);
+    if (!response.ok) throw new Error(payload.detail || `La subida falló (${response.status})`);
+    notice(`${payload.added.length} archivo(s) agregados. Re-analiza (Diagnóstico) para usarlos en historias.`);
     await loadProject(state.activeProjectId);
   } catch (error) {
     notice(error.message, true);
@@ -691,6 +1003,9 @@ async function removeAsset(assetId) {
     notice(error.message, true);
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* Project lifecycle                                                   */
 
 async function cloneProject() {
   const name = window.prompt(
@@ -723,7 +1038,7 @@ async function resetProject(keepAnalysis) {
       method: 'POST',
       body: JSON.stringify({ keep_analysis: keepAnalysis }),
     });
-    state.forcePick = false;
+    state.workspace = 'story';
     localStorage.removeItem(`keptStories:${state.activeProjectId}`);
     notice('Proyecto reiniciado — paso 1.');
     await loadProject(state.activeProjectId);
@@ -736,17 +1051,17 @@ async function deleteProject() {
   const project = state.activeProject;
   if (!project) return;
   const confirmed = window.confirm(
-    `Delete "${project.name}"? The AI analysis, cut, and renders are removed. ` +
-    'Your original clips are NOT touched.'
+    `¿Eliminar «${project.name}»? Se borran el análisis, el corte y los renders. ` +
+    'Tus clips originales NO se tocan.'
   );
   if (!confirmed) return;
   try {
     await api(`/api/projects/${project.project_id}`, { method: 'DELETE' });
-    notice('Vlog deleted. Your clips are untouched.');
+    notice('Vlog eliminado. Tus clips siguen intactos.');
     await refreshProjects();
     const next = state.projects[0];
     if (next) await loadProject(next.project_id);
-    else $('#project-view').innerHTML = '<div class="empty-state">No vlogs yet — add your clips.</div>';
+    else $('#project-view').innerHTML = '<div class="empty-state">Aún no hay vlogs — agrega tus clips.</div>';
   } catch (error) {
     notice(error.message, true);
   }
@@ -762,15 +1077,15 @@ async function browseTo(path) {
     container.innerHTML = `
       <div class="browser-head">
         <span>/${escapeHtml(listing.path)}</span>
-        <span class="muted">${listing.media_count ? `${listing.media_count} media file${listing.media_count === 1 ? '' : 's'} here` : ''}</span>
+        <span class="muted">${listing.media_count ? `${listing.media_count} archivo${listing.media_count === 1 ? '' : 's'} aquí` : ''}</span>
       </div>
-      ${listing.parent !== null ? `<button type="button" class="browser-item up" data-browse="${escapeHtml(listing.parent)}">← back</button>` : ''}
+      ${listing.parent !== null ? `<button type="button" class="browser-item up" data-browse="${escapeHtml(listing.parent)}">← atrás</button>` : ''}
       ${listing.directories.map((dir) => `
         <button type="button" class="browser-item" data-browse="${escapeHtml(dir.path)}">
           📁 ${escapeHtml(dir.name)}
           ${dir.media_count ? `<span class="count">${dir.media_count} clips</span>` : ''}
         </button>
-      `).join('') || '<p class="muted">No subfolders.</p>'}
+      `).join('') || '<p class="muted">Sin subcarpetas.</p>'}
     `;
     container.querySelectorAll('[data-browse]').forEach((button) => {
       button.addEventListener('click', () => browseTo(button.dataset.browse));
@@ -781,7 +1096,7 @@ async function browseTo(path) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Actions                                                             */
+/* Pipeline actions                                                    */
 
 function setBusy(title, steps, current) {
   state.busy = { title, steps, current };
@@ -792,7 +1107,7 @@ async function pollJob(jobId) {
   for (;;) {
     const job = await api(`/api/jobs/${jobId}`);
     if (job.status === 'completed') return job;
-    if (job.status === 'failed') throw new Error(job.error || 'Something went wrong');
+    if (job.status === 'failed') throw new Error(job.error || 'Algo salió mal');
     await new Promise((resolve) => setTimeout(resolve, 1500));
   }
 }
@@ -808,17 +1123,17 @@ async function runStep(path, body) {
 
 async function createVlog() {
   const steps = [];
-  if (!hasRun('owned-live-visual')) steps.push({ label: 'Watching your footage (a few minutes)', path: 'analysis/visual' });
-  if (!hasRun('local-asr')) steps.push({ label: 'Listening for speech (stays local)', path: 'analysis/speech' });
-  steps.push({ label: 'Writing story ideas', path: 'concepts' });
+  if (!hasRun('owned-live-visual')) steps.push({ label: 'Mirando tu metraje (unos minutos)', path: 'analysis/visual' });
+  if (!hasRun('local-asr')) steps.push({ label: 'Escuchando el habla (local)', path: 'analysis/speech' });
+  steps.push({ label: 'Escribiendo ideas de historia', path: 'concepts' });
   try {
     for (let index = 0; index < steps.length; index += 1) {
-      setBusy('Creating your vlog', steps.map((step) => step.label), index);
+      setBusy('Creando tu vlog', steps.map((step) => step.label), index);
       await runStep(steps[index].path);
     }
     state.busy = null;
-    state.forcePick = false;
-    notice('Story ideas are ready — pick one.');
+    state.workspace = 'story';
+    notice('Ideas listas — elige una.');
     await loadProject(state.activeProjectId);
   } catch (error) {
     state.busy = null;
@@ -840,23 +1155,24 @@ function startStory(conceptId) {
 }
 
 async function makeStory(conceptId) {
-  const steps = ['Locking in the story', 'Cutting the video', 'Rendering the preview', 'Preparing editor files'];
+  const steps = ['Fijando la historia', 'Cortando el video', 'Renderizando la vista previa', 'Preparando archivos de editor'];
   try {
-    setBusy('Making your vlog', steps, 0);
+    setBusy('Haciendo tu vlog', steps, 0);
     await api(`/api/projects/${state.activeProjectId}/selection`, {
       method: 'POST', body: JSON.stringify({ concept_id: conceptId }),
     });
-    setBusy('Making your vlog', steps, 1);
+    setBusy('Haciendo tu vlog', steps, 1);
     await api(`/api/projects/${state.activeProjectId}/plan`, {
       method: 'POST', body: JSON.stringify({ concept_id: conceptId }),
     });
-    setBusy('Making your vlog', steps, 2);
+    setBusy('Haciendo tu vlog', steps, 2);
     await runStep('render');
-    setBusy('Making your vlog', steps, 3);
+    setBusy('Haciendo tu vlog', steps, 3);
     await runStep('exports', { include_proxies: true });
     state.busy = null;
-    state.forcePick = false;
-    notice('Your vlog is ready — watch it below.');
+    state.workspace = 'edit';
+    localStorage.setItem(`workspace:${state.activeProjectId}`, 'edit');
+    notice('Tu vlog está listo.');
     await loadProject(state.activeProjectId);
   } catch (error) {
     state.busy = null;
@@ -872,56 +1188,13 @@ async function regenerateIdeas(event) {
     : '';
   const kept = [...keptStoryIds()];
   try {
-    setBusy('Thinking of new angles', ['Writing story ideas'], 0);
+    setBusy('Pensando ángulos nuevos', ['Escribiendo ideas de historia'], 0);
     await runStep('concepts', {
       guidance: guidance || null,
       keep_concept_ids: kept.length ? kept : null,
     });
     state.busy = null;
-    notice(kept.length ? `Fresh ideas below (kept ${kept.length}).` : 'Fresh ideas below.');
-    await loadProject(state.activeProjectId);
-  } catch (error) {
-    state.busy = null;
-    notice(error.message, true);
-    await loadProject(state.activeProjectId);
-  }
-}
-
-async function loadClipScores() {
-  try {
-    const payload = await api(`/api/projects/${state.activeProjectId}/clip-scores`);
-    const container = $('#clip-score-list');
-    if (!container) return;
-    container.innerHTML = payload.clips.map((clip) => `
-      <div class="clip-score verdict-${escapeHtml(clip.verdict.replaceAll(' ', '-'))}">
-        <img loading="lazy" src="${frameUrl(clip.asset_id, clip.duration_seconds / 2)}" alt="" />
-        <div class="clip-score-body">
-          <div class="clip-score-head">
-            <strong>${escapeHtml(clip.filename)}</strong>
-            <span class="score-badge">${clip.score}</span>
-          </div>
-          <span class="verdict-label">${escapeHtml(clip.verdict)}</span>
-          <span class="muted">${escapeHtml(clip.reason)}</span>
-        </div>
-      </div>
-    `).join('');
-  } catch (error) {
-    const container = $('#clip-score-list');
-    if (container) container.textContent = error.message;
-  }
-}
-
-async function submitRevision(event) {
-  event.preventDefault();
-  const instruction = new FormData(event.currentTarget).get('instruction')?.toString().trim();
-  if (!instruction) return;
-  try {
-    setBusy('Changing your vlog', ['Re-cutting to your instruction', 'Rendering the new preview'], 0);
-    const revision = await runStep('plan/revise', { instruction });
-    setBusy('Changing your vlog', ['Re-cutting to your instruction', 'Rendering the new preview'], 1);
-    await runStep('render');
-    state.busy = null;
-    notice(revision.result?.revision_note || 'Done — new cut below.');
+    notice(kept.length ? `Ideas nuevas (conservando ${kept.length}).` : 'Ideas nuevas abajo.');
     await loadProject(state.activeProjectId);
   } catch (error) {
     state.busy = null;
@@ -932,10 +1205,10 @@ async function submitRevision(event) {
 
 async function prepareExport() {
   try {
-    setBusy('Preparing editor files', ['Exporting timeline + transcoding proxies'], 0);
+    setBusy('Preparando archivos de editor', ['Exportando línea de tiempo + proxies'], 0);
     await runStep('exports', { include_proxies: true });
     state.busy = null;
-    notice('DaVinci files are ready.');
+    notice('Archivos de DaVinci listos.');
     await loadProject(state.activeProjectId);
   } catch (error) {
     state.busy = null;
@@ -952,7 +1225,7 @@ async function reviewClaim(button) {
   if (action === 'edit') {
     const run = state.runs.find((item) => item.run_key === runKey);
     const observation = run?.observations.find((item) => item.evidence_id === evidenceId);
-    caption = window.prompt('Correct the description:', observation?.caption || '');
+    caption = window.prompt('Corrige la descripción:', observation?.caption || '');
     if (caption === null) return;
     action = 'approve';
   }
@@ -978,6 +1251,27 @@ const ADVANCED_CALLS = {
   exports: 'exports',
 };
 
+async function runAdvancedStep(stepId, button) {
+  const path = ADVANCED_CALLS[stepId];
+  if (!path) return;
+  button.disabled = true;
+  try {
+    notice('Ejecutando…');
+    const body = (stepId === 'analyze-visual' || stepId === 'analyze-speech')
+      ? { force: true }
+      : path === 'exports' ? { include_proxies: true } : {};
+    await runStep(path, body);
+    notice('Listo.');
+    await loadProject(state.activeProjectId);
+  } catch (error) {
+    notice(error.message, true);
+    button.disabled = false;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* OpenTake (Publicar)                                                 */
+
 async function openTakePlace() {
   const project = state.activeProject;
   if (!project) return;
@@ -987,7 +1281,10 @@ async function openTakePlace() {
   if (!sure) return;
   try {
     const summary = await api(`/api/projects/${project.project_id}/opentake/place`, { method: 'POST' });
-    notice(`Colocado en OpenTake: ${summary.placed_clips} clips (${summary.total_frames} frames).`);
+    const extras = [];
+    if (summary.placed_broll_clips) extras.push(`${summary.placed_broll_clips} B-roll`);
+    if (summary.placed_voiceover_clips) extras.push(`${summary.placed_voiceover_clips} voz en off`);
+    notice(`Colocado en OpenTake: ${summary.placed_clips} clips${extras.length ? ` + ${extras.join(' + ')}` : ''}.`);
   } catch (error) {
     notice(error.message, true);
   }
@@ -1011,17 +1308,21 @@ async function openTakeSyncPreview() {
         <p><strong>${preview.changes.length}</strong> cambio(s) en OpenTake — nueva duración ${preview.duration_seconds}s
         (${preview.unchanged_count} escenas sin cambios):</p>
         <ul>${preview.changes.map((c) => `<li><code>${escapeHtml(c.kind)}</code> ${escapeHtml(c.event_id || '')} — ${escapeHtml(c.detail || '')}</li>`).join('')}</ul>
-        <button class="pipeline-step" id="opentake-sync-apply"><strong>Aplicar al plan</strong>
-        <span>Archiva la revisión actual y usa estos cambios al renderizar</span></button>
+        <button class="primary compact" id="opentake-sync-apply">Aplicar al corte y renderizar</button>
       </div>`;
     $('#opentake-sync-apply')?.addEventListener('click', async () => {
       try {
-        const applied = await api(`/api/projects/${project.project_id}/opentake/sync/apply`, { method: 'POST' });
-        notice(`Plan actualizado a la revisión ${applied.revision}. Re-renderiza para ver el resultado.`);
-        box.innerHTML = '';
+        setBusy('Trayendo tus cambios', ['Aplicando al plan', 'Renderizando'], 0);
+        await api(`/api/projects/${project.project_id}/opentake/sync/apply`, { method: 'POST' });
+        setBusy('Trayendo tus cambios', ['Aplicando al plan', 'Renderizando'], 1);
+        await runStep('render');
+        state.busy = null;
+        notice('Cambios aplicados y corte re-renderizado.');
         await loadProject(project.project_id);
       } catch (error) {
+        state.busy = null;
         notice(error.message, true);
+        await loadProject(project.project_id);
       }
     });
   } catch (error) {
@@ -1029,137 +1330,27 @@ async function openTakeSyncPreview() {
   }
 }
 
-async function openTakeCleanup() {
-  const project = state.activeProject;
-  if (!project) return;
-  const box = $('#opentake-cleanup-list');
-  try {
-    const found = await api(`/api/projects/${project.project_id}/opentake/cleanup`, { method: 'POST' });
-    if (!found.candidates.length) {
-      box.innerHTML = '<p class="notice">Sin candidatos — el habla está limpia (nota: Whisper omite los «eh» puros, así que esto es normal en discurso preparado).</p>';
-      return;
-    }
-    box.innerHTML = `
-      <div class="sync-diff">
-        <p><strong>${found.candidates.length}</strong> candidato(s), ${found.total_seconds}s en total. Marca los que quieras cortar:</p>
-        ${found.candidates.map((c, i) => `
-          <label class="cleanup-item">
-            <input type="checkbox" data-cleanup-index="${i}" checked />
-            <span>${escapeHtml(c.reason)} — <em>${escapeHtml(c.context)}</em> (${((c.frames[1] - c.frames[0]) / 30).toFixed(1)}s)</span>
-          </label>`).join('')}
-        <button class="pipeline-step" id="opentake-cleanup-apply"><strong>Cortar seleccionados en OpenTake</strong>
-        <span>Un solo corte atómico; luego usa «Traer cambios» para llevarlo al plan</span></button>
-      </div>`;
-    $('#opentake-cleanup-apply')?.addEventListener('click', async () => {
-      const indices = [...document.querySelectorAll('[data-cleanup-index]')]
-        .filter((el) => el.checked).map((el) => Number(el.dataset.cleanupIndex));
-      if (!indices.length) { notice('Nada seleccionado.', true); return; }
-      try {
-        const applied = await api(`/api/projects/${project.project_id}/opentake/cleanup/apply`, {
-          method: 'POST', body: JSON.stringify({ indices }),
-        });
-        notice(`${applied.applied} corte(s) aplicados en OpenTake (${applied.detail}). Ahora «Traer cambios de OpenTake» para actualizar el plan.`);
-        box.innerHTML = '';
-      } catch (error) { notice(error.message, true); }
-    });
-  } catch (error) { notice(error.message, true); }
-}
-
-async function planCommandPropose() {
-  const project = state.activeProject;
-  if (!project) return;
-  const box = $('#plan-command-result');
-  const instruction = ($('#plan-command-input')?.value || '').trim();
-  if (instruction.length < 2) {
-    box.innerHTML = '<p class="notice">Escribe una instrucción primero.</p>';
-    return;
-  }
-  box.innerHTML = '<p class="notice">Interpretando la instrucción…</p>';
-  try {
-    const proposed = await api(`/api/projects/${project.project_id}/plan/command`, {
-      method: 'POST', body: JSON.stringify({ instruction }),
-    });
-    if (proposed.status === 'rejected') {
-      box.innerHTML = `<p class="notice">No se pudo mapear a un cambio: ${escapeHtml(proposed.reason)}</p>`;
-      return;
-    }
-    box.innerHTML = `
-      <div class="sync-diff">
-        <p><strong>Propuesta:</strong> ${escapeHtml(proposed.summary)}</p>
-        <button class="pipeline-step" id="plan-command-apply">
-          <strong>Aplicar (revisión ${proposed.revision_preview})</strong>
-          <span>Un cambio atómico, con la revisión anterior archivada</span>
-        </button>
-      </div>`;
-    $('#plan-command-apply')?.addEventListener('click', async () => {
-      try {
-        const applied = await api(`/api/projects/${project.project_id}/plan/command/apply?proposal_id=${proposed.proposal_id}`, { method: 'POST' });
-        notice(`${applied.summary} (revisión ${applied.revision}). Re-renderiza, y «Enviar a OpenTake» si quieres seguir editando allí.`);
-        box.innerHTML = '';
-        $('#plan-command-input').value = '';
-        await loadProject(project.project_id);
-      } catch (error) { notice(error.message, true); }
-    });
-  } catch (error) {
-    box.innerHTML = `<p class="notice">${escapeHtml(error.message)}</p>`;
-  }
-}
-
-async function showPlanHistory() {
-  const project = state.activeProject;
-  if (!project) return;
-  const box = $('#plan-history-list');
-  try {
-    const log = await api(`/api/projects/${project.project_id}/plan/revisions`);
-    if (!log.entries?.length) {
-      box.innerHTML = '<p class="notice">Sin revisiones todavía — el corte sigue en su versión original.</p>';
-      return;
-    }
-    box.innerHTML = `
-      <div class="sync-diff">
-        ${[...log.entries].reverse().map((entry) => `
-          <p><strong>rev ${entry.revision}</strong> · ${escapeHtml(entry.provider || '')}
-          — ${escapeHtml(entry.note || entry.instruction || '')}</p>`).join('')}
-      </div>`;
-  } catch (error) { notice(error.message, true); }
-}
-
-async function runAdvancedStep(stepId, button) {
-  const path = ADVANCED_CALLS[stepId];
-  if (!path) return;
-  button.disabled = true;
-  try {
-    notice('Running…');
-    // An explicit "Re-analyze" click means re-run even if nothing changed.
-    const body = (stepId === 'analyze-visual' || stepId === 'analyze-speech')
-      ? { force: true }
-      : path === 'exports' ? { include_proxies: true } : {};
-    await runStep(path, body);
-    notice('Done.');
-    await loadProject(state.activeProjectId);
-  } catch (error) {
-    notice(error.message, true);
-    button.disabled = false;
-  }
-}
-
 /* ------------------------------------------------------------------ */
 /* Loading                                                             */
 
 const JOB_LABELS = {
-  visual_analysis: 'Watching your footage',
-  speech_analysis: 'Listening for speech',
-  concept_generation: 'Writing story ideas',
-  render: 'Rendering the preview',
-  editable_exports: 'Preparing editor files',
-  plan_revision: 'Re-cutting to your instruction',
+  visual_analysis: 'Mirando tu metraje',
+  speech_analysis: 'Escuchando el habla',
+  concept_generation: 'Escribiendo ideas',
+  render: 'Renderizando la vista previa',
+  editable_exports: 'Preparando archivos de editor',
+  plan_revision: 'Recortando según tu instrucción',
 };
 
 async function loadProject(projectId) {
+  if (state.activeProjectId !== projectId) {
+    state.workspace = null;
+    state.mediaFilter = 'all';
+  }
   state.activeProjectId = projectId;
   state.runs = [];
   renderProjectList();
-  if (!state.busy) $('#project-view').innerHTML = '<div class="empty-state">Loading…</div>';
+  if (!state.busy) $('#project-view').innerHTML = '<div class="empty-state">Cargando…</div>';
   try {
     state.activeProject = await api(`/api/projects/${projectId}`);
     state.runs = await Promise.all(
@@ -1168,21 +1359,19 @@ async function loadProject(projectId) {
         run_key: run.run_key,
       }))
     );
-    // Reconnect to jobs still running server-side (e.g. after a reload)
-    // so the working state is visible and buttons are not double-clicked.
     if (!state.busy) {
       const jobs = (await api('/api/jobs')).jobs.filter(
         (job) => job.project_id === projectId && ['queued', 'running'].includes(job.status)
       );
       if (jobs.length) {
         setBusy(
-          'Still working — picking up where it left off',
+          'Todavía trabajando — retomando donde iba',
           jobs.map((job) => JOB_LABELS[job.kind] || job.kind),
           0,
         );
         Promise.allSettled(jobs.map((job) => pollJob(job.job_id))).then(async () => {
           state.busy = null;
-          notice('Done.');
+          notice('Listo.');
           await loadProject(projectId);
         });
         return;
@@ -1223,7 +1412,7 @@ async function refreshDriveInbox() {
     banner.querySelectorAll('[data-drive-import]').forEach((button) => {
       button.addEventListener('click', () => importFromDrive(button.dataset.driveImport));
     });
-  } catch { banner?.remove(); /* rclone not configured or offline */ }
+  } catch { banner?.remove(); /* rclone no configurado u offline */ }
 }
 
 async function importFromDrive(folder) {
@@ -1276,15 +1465,15 @@ async function createProject(event) {
             submit.textContent = 'Indexando…';
             resolve(payload);
           } else {
-            reject(new Error(payload.detail || `Upload failed (${xhr.status})`));
+            reject(new Error(payload.detail || `La subida falló (${xhr.status})`));
           }
         };
-        xhr.onerror = () => reject(new Error('Upload failed — check the WiFi connection'));
+        xhr.onerror = () => reject(new Error('La subida falló — revisa el WiFi'));
         xhr.send(body);
       });
     } else {
-      if (!form.get('source_directory')) throw new Error('Upload files or pick a folder.');
-      submit.textContent = 'Indexing…';
+      if (!form.get('source_directory')) throw new Error('Sube archivos o elige una carpeta.');
+      submit.textContent = 'Indexando…';
       project = await api('/api/projects', {
         method: 'POST',
         body: JSON.stringify({
@@ -1297,12 +1486,12 @@ async function createProject(event) {
     $('#new-project-dialog').close();
     await refreshProjects();
     await loadProject(project.project_id);
-    notice('Clips indexed. Hit "Create my vlog" when ready.');
+    notice('Clips indexados. Pulsa «Crear mi vlog» cuando quieras.');
   } catch (error) {
     notice(error.message, true);
   } finally {
     submit.disabled = false;
-    submit.textContent = 'Add my clips';
+    submit.textContent = 'Agregar mis clips';
   }
 }
 
@@ -1311,16 +1500,16 @@ async function initialize() {
     const [status, projects] = await Promise.all([api('/api/status'), api('/api/projects')]);
     state.status = status;
     state.projects = projects.projects;
-    renderCapabilities();
+    renderSystemDot();
     if (state.projects[0]) await loadProject(state.projects[0].project_id);
-    else $('#project-view').innerHTML = '<div class="empty-state">No vlogs yet — add your clips.</div>';
+    else $('#project-view').innerHTML = '<div class="empty-state">Aún no hay vlogs — agrega tus clips.</div>';
   } catch (error) {
     notice(error.message, true);
   }
 }
 
-/* Receiver-side upload visibility: when a phone (or the Shortcut) is
-   sending media, every open browser shows the incoming transfer live. */
+/* Receiver-side upload visibility: when the phone is sending media, every
+   open browser shows the incoming transfer live. */
 let uploadsWereActive = false;
 window.setInterval(async () => {
   try {
@@ -1348,7 +1537,7 @@ window.setInterval(async () => {
         await refreshProjects();
       }
     }
-  } catch { /* app may be restarting; ignore */ }
+  } catch { /* la app puede estar reiniciando; ignorar */ }
 }, 3000);
 
 const dialog = $('#new-project-dialog');
@@ -1360,11 +1549,23 @@ $('#upload-files')?.addEventListener('change', (event) => {
   const files = [...event.currentTarget.files];
   const totalMb = files.reduce((sum, file) => sum + file.size, 0) / 1e6;
   notice(files.length
-    ? `${files.length} archivo(s) listos (${totalMb.toFixed(0)} MB) — pon nombre y pulsa "Add my clips".`
+    ? `${files.length} archivo(s) listos (${totalMb.toFixed(0)} MB) — pon nombre y pulsa «Agregar mis clips».`
     : 'Selección vacía.');
 });
 $('#close-dialog').addEventListener('click', () => dialog.close());
 $('#cancel-dialog').addEventListener('click', () => dialog.close());
 $('#new-project-form').addEventListener('submit', createProject);
+$('#overflow-button').addEventListener('click', (event) => {
+  event.stopPropagation();
+  $('#overflow-menu').classList.toggle('hidden');
+});
+document.addEventListener('click', (event) => {
+  if (!event.target.closest('.overflow-wrap')) $('#overflow-menu')?.classList.add('hidden');
+});
+$('#system-dot').addEventListener('click', () => {
+  if (!state.activeProject) return;
+  state.workspace = 'diagnostics';
+  renderProject();
+});
 
 initialize();
