@@ -506,3 +506,90 @@ class TestVisualProvenance:
             [{"input_mode": "video+audio"}, {"input_mode": "keyframes"}]
         )
         assert "audio" in note and "keyframes" in note
+
+
+class TestClaimLevelGrounding:
+    """Design-review blocker: time overlap with unrelated approved evidence
+    must never authorize a claim — grounding is per CLAIM, not per second."""
+
+    CAPTIONS = {"clip_0": [(0.0, 10.0, "una persona camina por el campus con mochila")]}
+
+    def _span(self, content, needs_review=False):
+        span = {"asset_id": "clip_0", "source_start_seconds": 2.0,
+                "source_end_seconds": 6.0, "observed_content": content}
+        if needs_review:
+            span["needs_review"] = True
+        return span
+
+    def test_overlapping_but_unrelated_claim_is_dropped(self) -> None:
+        from video_app.planning import claim_supported
+
+        # pixels approved (0-10s), but the CLAIM is about something else
+        assert claim_supported(
+            self._span("camina por el campus con su mochila"), self.CAPTIONS
+        ) is True
+        assert claim_supported(
+            self._span("celebra que ganó la carrera universitaria"), self.CAPTIONS
+        ) is False
+
+    def test_needs_review_never_compiles_unconfirmed(self) -> None:
+        from video_app.planning import claim_supported
+
+        assert claim_supported(
+            self._span("camina por el campus con su mochila", needs_review=True),
+            self.CAPTIONS,
+        ) is False
+
+    def test_short_claims_keep_benefit_of_doubt(self) -> None:
+        from video_app.planning import claim_supported
+
+        assert claim_supported(self._span("la mañana"), self.CAPTIONS) is True
+
+    def test_fabricated_title_blocks_compilation(self) -> None:
+        from video_app.planning import PlanningError, compile_edit_plan
+
+        document = {
+            "concepts": [{
+                "concept_id": "c1",
+                "title": "El día que ganó el campeonato nacional de robótica",
+                "structure": [{
+                    "beat_id": "b1", "purpose": "p",
+                    "target_duration_seconds": 4,
+                    "evidence": [{
+                        "asset_id": "clip_0", "start_seconds": 2.0,
+                        "end_seconds": 6.0,
+                        "observed_content": "una persona camina por el campus",
+                        "confidence": 0.9,
+                    }],
+                }],
+            }],
+        }
+        project = {"project_id": "p", "inventory": {"assets": [
+            {"asset_id": "clip_0", "media_type": "video",
+             "duration_seconds": 30, "source_path": "x.mp4",
+             "filename": "x.mp4",
+             "video": {"width": 1080, "height": 1920}},
+        ]}}
+        with pytest.raises(PlanningError, match="título"):
+            compile_edit_plan(
+                project, document, "c1",
+                approved_ranges={"clip_0": [(0.0, 10.0)]},
+                approved_captions=self.CAPTIONS,
+            )
+
+
+class TestScopedCorroboration:
+    """ASR overlap proves speech HAPPENS — reported content stays human."""
+
+    def test_reported_speech_content_is_not_auto_approved(self) -> None:
+        import re as _re
+        # the guard pattern used in _corroborate_run
+        pattern = _re.compile(
+            r"(dice(?:n)? que|explica(?:n)? que|comenta(?:n)? que|"
+            r"cuenta(?:n)? que|pregunta(?:n)? (?:si|por)|responde(?:n)? que|"
+            r"says? that|explains? that|tells? .* that|"
+            "[\"«»“”])"
+        )
+        assert pattern.search("ella explica que renunció por frustración".lower())
+        assert pattern.search('the man says that he "won the race"'.lower())
+        assert not pattern.search("dos personas hablando frente a la cámara")

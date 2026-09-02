@@ -717,12 +717,26 @@ class ProjectService:
             confidence = observation.get("model_confidence") or 0.0
             if confidence < AUTO_APPROVE_MIN_CONFIDENCE:
                 continue
-            asset_words = words.get(observation["asset_id"]) or []
-            if not any(
-                word["start_seconds"] < observation["end_seconds"]
-                and word["end_seconds"] > observation["start_seconds"]
-                for word in asset_words
+            # ASR overlap establishes that speech HAPPENS — never what was
+            # said. A caption reporting speech CONTENT ("explica que
+            # renunció…") must stay with a human even if words overlap.
+            caption = (observation.get("caption") or "").lower()
+            if re.search(
+                r"(dice(?:n)? que|explica(?:n)? que|comenta(?:n)? que|"
+                r"cuenta(?:n)? que|pregunta(?:n)? (?:si|por)|responde(?:n)? que|"
+                r"says? that|explains? that|tells? .* that|"
+                "[\"\u00ab\u00bb\u201c\u201d])",
+                caption,
             ):
+                continue
+            asset_words = words.get(observation["asset_id"]) or []
+            overlapping = sum(
+                1 for word in asset_words
+                if word["start_seconds"] < observation["end_seconds"]
+                and word["end_seconds"] > observation["start_seconds"]
+            )
+            # one stray recognized word is noise, not corroboration
+            if overlapping < 3:
                 continue
             event = {
                 "event_id": uuid.uuid4().hex[:12],
@@ -778,6 +792,22 @@ class ProjectService:
                 (item["start_seconds"], item["end_seconds"])
             )
         return ranges
+
+    def _approved_captions(
+        self, project_id: str
+    ) -> dict[str, list[tuple[float, float, str]]]:
+        """Approved observation CAPTIONS per asset — the semantic half of
+        the grounding gate. Time overlap alone must never authorize a
+        claim: the design-review blocker showed a pending 'ganó la
+        carrera' compiling into a title because approved speech merely
+        overlapped its seconds."""
+        captions: dict[str, list[tuple[float, float, str]]] = {}
+        for item in self.approved_evidence(project_id):
+            captions.setdefault(item["asset_id"], []).append(
+                (item["start_seconds"], item["end_seconds"],
+                 str(item.get("caption") or ""))
+            )
+        return captions
 
     def _latest_asr_transcripts(self, project_id: str) -> dict | None:
         """Transcripts of the newest ASR run by import time. Run directories
@@ -1068,6 +1098,7 @@ class ProjectService:
                 speech_words=self._speech_words(project_id),
                 approved_ranges=approved_ranges,
                 style_application=compile_application,
+                approved_captions=self._approved_captions(project_id),
             )
             validate_edit_plan(
                 plan,
@@ -1155,6 +1186,7 @@ class ProjectService:
                 speech_words=self._speech_words(project_id),
                 footage_language=self._footage_language(project_id),
                 approved_ranges=self._approved_ranges(project_id),
+                approved_captions=self._approved_captions(project_id),
             )
             validate_edit_plan(
                 new_plan,

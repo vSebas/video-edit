@@ -689,3 +689,44 @@ the weakest-axis penalty working on real variance, exactly as designed.
 Live matches show every honesty signal at once: coverage 0.35
 (pre-editorial concepts), template confidence beside the score, and the
 "regenera las ideas" hint. Run #1's style arm is now fully unblocked.
+
+## Trust-system design review (2026-09-02): REVISE
+
+Codex reviewed the afirmaciones system's purpose and implementation.
+Purpose ratified; implementation verdict REVISE with a BLOCKER:
+**authorization is by TIME RANGE, not by CLAIM** — a pending claim can
+reach a rendered title if any approved observation overlaps its seconds.
+CORRECTION to earlier entries: the pipeline should NOT be described as
+fail-closed until claim-level lineage gates both pixels and editorial
+language. Fix rounds follow; UI copy softened same day.
+
+## Trust-system fixes, round one (2026-09-02)
+
+Against the REVISE verdict (suite 198→203):
+
+- **Claim-level grounding at compile AND revise**: besides the pixel/time
+  gate, every citation's stated content must now be supported by APPROVED
+  captions overlapping its range (`claim_supported`); `needs_review`
+  citations never compile unconfirmed; unsupported cutaways drop. Proven:
+  "celebra que ganó la carrera" over an approved walking-scene range is
+  dropped while the honest claim passes.
+- **Titles are gated as rendered language**: a title asserting what no
+  approved observation supports refuses to compile with an actionable
+  Spanish error (fabricated-championship title test).
+- **Corroboration scoped to speech-presence**: captions reporting speech
+  CONTENT ("explica que…", quotes) are excluded from ASR auto-approval,
+  and ≥3 overlapping recognized words are required (one stray word is
+  noise).
+- **Risk lexicon broadened** (es+en): quiere/intenta/disfruta/orgulloso/
+  se siente; explica/pregunta/responde/cuenta/susurra/voz; la misma
+  mujer/continúa/regresa/más tarde; NEW outcome/causality category
+  (ganó/perdió/renunció/porque/logró).
+- **UI copy honest**: "el corte nunca las usa sin confirmar: si una
+  historia depende de una, la escena se omite o se te pedirá confirmarla."
+
+Accepted limitations, documented deliberately: the semantic gate uses the
+lexical-overlap heuristic as a fail-CLOSED authorizer (errs toward
+dropping scenes; shared-noun false-passes remain possible until claim-ID
+lineage from writer citations exists); auto-approval still keys on
+self-reported confidence — a user-ratified product policy (post-Phase-2A)
+whose blast radius the new claim/title gates now bound.

@@ -1032,6 +1032,25 @@ def refresh_style_application(plan: dict) -> None:
         )
 
 
+def claim_supported(
+    span: dict,
+    approved_captions: dict[str, list[tuple[float, float, str]]],
+) -> bool:
+    """Semantic half of grounding: the citation's stated content must be
+    supported by APPROVED captions overlapping its range, and a citation
+    the sanitizer flagged needs_review never compiles unconfirmed."""
+    if span.get("needs_review"):
+        return False
+    supporting = " ".join(
+        caption
+        for start, end, caption in approved_captions.get(span["asset_id"], [])
+        if start < span["source_end_seconds"]
+        and end > span["source_start_seconds"]
+    )
+    claim = str(span.get("observed_content") or "")
+    return not _claim_unsupported(claim, supporting)
+
+
 def span_supported(span: dict, approved_ranges: dict[str, list[tuple[float, float]]]) -> bool:
     """A cut is grounded when most of what it shows was actually observed.
 
@@ -1068,8 +1087,16 @@ def compile_edit_plan(
     speech_words: dict[str, list[dict]] | None = None,
     approved_ranges: dict[str, list[tuple[float, float]]] | None = None,
     style_application: dict | None = None,
+    approved_captions: dict[str, list[tuple[float, float, str]]] | None = None,
 ) -> dict:
-    """Deterministically compile a sanitized concept into edit-plan.v1."""
+    """Deterministically compile a sanitized concept into edit-plan.v1.
+
+    Two grounding gates, both fail-closed:
+    - PIXELS: approved observation ranges must cover each cut (time gate);
+    - CLAIMS: each citation's stated content must be supported by APPROVED
+      captions in its range, and citations flagged needs_review are
+      dropped — time overlap with unrelated approved evidence must never
+      launder an unverified claim into the cut or its title."""
     concept = next(
         (
             item
@@ -1118,6 +1145,31 @@ def compile_edit_plan(
         spans = supported
         # cutaways are decoration, not story: unsupported ones just drop
         cutaways = [c for c in cutaways if span_supported(c, approved_ranges)]
+    if approved_captions is not None:
+        spans = [s for s in spans if claim_supported(s, approved_captions)]
+        if not spans:
+            raise PlanningError(
+                "Ninguna escena de esta historia tiene su AFIRMACIÓN "
+                "confirmada por observaciones aprobadas — confirma las "
+                "afirmaciones marcadas y vuelve a compilar"
+            )
+        cutaways = [c for c in cutaways if claim_supported(c, approved_captions)]
+        # the TITLE is rendered language: it must not assert what no
+        # approved observation supports
+        title_support = " ".join(
+            caption
+            for span in spans
+            for start, end, caption in approved_captions.get(span["asset_id"], [])
+            if start < span["source_end_seconds"]
+            and end > span["source_start_seconds"]
+        )
+        title = str(concept.get("title") or "")
+        if title and _claim_unsupported(title, title_support):
+            raise PlanningError(
+                f"El título «{title}» afirma algo que ninguna observación "
+                "aprobada respalda — confirma la evidencia correspondiente "
+                "o cambia el título antes de compilar"
+            )
     try:
         return build_plan(
             project,
@@ -1157,6 +1209,7 @@ def revise_plan(
     speech_words: dict[str, list[dict]] | None = None,
     footage_language: str | None = None,
     approved_ranges: dict[str, list[tuple[float, float]]] | None = None,
+    approved_captions: dict[str, list[tuple[float, float, str]]] | None = None,
 ) -> tuple[dict, str]:
     """Revise the current plan per a natural-language instruction, keeping
     media analysis untouched. Returns (new plan, revision note)."""
@@ -1235,6 +1288,13 @@ events. Every range must stay at least {MIN_EVENT_SECONDS}s long."""
                 "the plan was left unchanged"
             )
         spans = supported
+    if approved_captions is not None:
+        spans = [s for s in spans if claim_supported(s, approved_captions)]
+        if not spans:
+            raise PlanningError(
+                "La revisión introdujo afirmaciones que ninguna observación "
+                "aprobada respalda; el plan quedó sin cambios"
+            )
     new_plan = build_plan(
         project,
         spans,

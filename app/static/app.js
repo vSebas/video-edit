@@ -529,8 +529,8 @@ function needsCheckSection() {
     return `
       <section id="pending-review" class="card skipped-claims">
         <span>${pending.length} afirmación${pending.length === 1 ? '' : 'es'} sin verificar, apartadas.
-        No hace falta revisarlas — si una historia necesita alguna, se te preguntará
-        solo por esa al elegirla.</span>
+        El corte nunca las usa sin confirmar: si una historia depende de una,
+        la escena se omite o se te pedirá confirmarla.</span>
         <button class="ghost" id="unskip-claims">Revisar todas</button>
       </section>
     `;
