@@ -725,6 +725,24 @@ def build_plan(
     budget = (
         target_ratio * timeline if target_ratio is not None else None
     )
+    # each beat's fair share of the budget, proportional to its window —
+    # allocation order must not decide which beats get coverage
+    beat_quota: dict[str, float] = {}
+    if budget is not None:
+        covered = [
+            label for label in beat_windows
+            if any(c["label"] == label for c in cutaways or [])
+        ]
+        total_window = sum(
+            beat_windows[label][1] - beat_windows[label][0] for label in covered
+        )
+        if total_window > 0:
+            beat_quota = {
+                label: budget
+                * (beat_windows[label][1] - beat_windows[label][0])
+                / total_window
+                for label in covered
+            }
     if cutaways and (budget is None or budget >= 0.8):
         cursor_by_beat: dict[str, float] = {}
         for shot in cutaways:
@@ -738,9 +756,11 @@ def build_plan(
             if budget is not None:
                 if budget < 0.8:
                     break  # budget spent — stop, don't approximate
-                # one clip may take at most 70% of its beat window, so the
-                # budget spreads instead of landing in the first beat
-                cap = min(budget, 0.7 * (beat_end - beat_start))
+                quota = beat_quota.get(shot["label"], 0.0)
+                # a beat spends its fair share (bounded by its window and
+                # the global remainder); leftover quota returns to the
+                # pool via `budget` for later beats
+                cap = min(budget, quota, 0.7 * (beat_end - beat_start))
             else:
                 cap = 4.0
             duration = round(min(span_length, cap, available), 6)
@@ -779,6 +799,9 @@ def build_plan(
             cursor_by_beat[shot["label"]] = round(position + duration + 0.3, 6)
             if budget is not None:
                 budget -= duration
+                beat_quota[shot["label"]] = max(
+                    0.0, beat_quota.get(shot["label"], 0.0) - duration
+                )
 
     title_events = [
         {
@@ -804,12 +827,10 @@ def build_plan(
         # unsupported, not just two numbers
         style_block = {
             **style_application,
-            "achieved_plan": None,  # filled below from the finished tracks
-            # unmet B-roll budget = the style wants more coverage than the
-            # approved cutaways can honestly give — a fact, not a failure
-            "broll_shortfall_seconds": (
-                round(max(0.0, budget), 2) if budget is not None else None
-            ),
+            # achieved_plan and broll_shortfall_seconds are derived state,
+            # owned by refresh_style_application (called on every mutation)
+            "achieved_plan": None,
+            "broll_shortfall_seconds": None,
         }
 
     plan = {
@@ -868,9 +889,12 @@ def compute_achieved_plan(plan: dict) -> dict | None:
     def hidden(t: float) -> bool:
         return any(start < t < end for start, end in broll_windows)
 
+    ordered = sorted(
+        primary_events, key=lambda e: e["timeline_start_seconds"]
+    )
     boundaries = {
         round(e["timeline_start_seconds"], 3)
-        for e in primary_events
+        for e in ordered
         if e["timeline_start_seconds"] > 0
         and not hidden(e["timeline_start_seconds"])
     } | {
@@ -879,6 +903,17 @@ def compute_achieved_plan(plan: dict) -> dict | None:
         for edge in (start, end)
         if 0 < edge < duration
     }
+    # a clip END followed by a gap (black) is a visible transition too —
+    # pixel scene detection will count it, so the plan metric must
+    for event, following in zip(ordered, ordered[1:] + [None]):
+        end = round(
+            event["timeline_start_seconds"] + event["duration_seconds"], 3
+        )
+        next_start = (
+            following["timeline_start_seconds"] if following else duration
+        )
+        if end < round(next_start, 3) - 1e-3 and end < duration and not hidden(end):
+            boundaries.add(end)
     broll_seconds = sum(e["duration_seconds"] for e in broll_events)
     return {
         "cuts_per_minute": round(len(boundaries) / (duration / 60), 1),
@@ -887,12 +922,28 @@ def compute_achieved_plan(plan: dict) -> dict | None:
 
 
 def refresh_style_application(plan: dict) -> None:
-    """Recompute the derived grammar on a plan that carries a style block.
-    Every plan mutation path must call this — a stored achieved_plan that
-    survives an edit unchanged is a lie."""
+    """Recompute EVERY derived style number on a plan that carries a
+    style block. Each plan mutation path must call this — a stored
+    achieved_plan or shortfall that survives an edit unchanged is a lie."""
     block = plan.get("style_application")
-    if block:
-        block["achieved_plan"] = compute_achieved_plan(plan)
+    if not block:
+        return
+    achieved = compute_achieved_plan(plan)
+    block["achieved_plan"] = achieved
+    targets = block.get("targets") or {}
+    owners = block.get("owners") or {}
+    target_ratio = targets.get("broll_ratio")
+    duration = float((plan.get("project") or {}).get("duration_seconds") or 0)
+    if (
+        owners.get("broll_ratio") == "compiler"
+        and target_ratio is not None
+        and achieved is not None
+        and duration
+    ):
+        broll_seconds = achieved["broll_ratio"] * duration
+        block["broll_shortfall_seconds"] = round(
+            max(0.0, target_ratio * duration - broll_seconds), 2
+        )
 
 
 def span_supported(span: dict, approved_ranges: dict[str, list[tuple[float, float]]]) -> bool:

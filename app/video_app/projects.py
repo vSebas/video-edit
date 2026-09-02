@@ -92,6 +92,8 @@ class ProjectError(RuntimeError):
 
 class ProjectService:
     def __init__(self, settings: Settings) -> None:
+        self._render_locks: dict[str, threading.Lock] = {}
+        self._render_locks_guard = threading.Lock()
         self.settings = settings
         self.settings.runtime.mkdir(parents=True, exist_ok=True)
         self._semantic_review_lock = threading.Lock()
@@ -972,32 +974,51 @@ class ProjectService:
             (c for c in concepts_doc_concepts(document)
              if c.get("concept_id") == selected), {}
         )
+        doc_style = (document.get("style_application") or {}).get("style_id")
+        # lineage comes from the SELECTED concept, not the document: kept
+        # and regenerated concepts in one document can differ. A legacy
+        # concept (no provenance field) in a styled document is treated as
+        # conditioned — fail closed, never assume it is a clean baseline.
+        if "style_provenance" in selected_concept:
+            concept_style = selected_concept["style_provenance"]
+        else:
+            concept_style = doc_style  # legacy: inherit the doc's claim
+
+        def resolve_template(wanted: str) -> dict:
+            template = next(
+                (t for t in self.list_styles() if t["style_id"] == wanted),
+                None,
+            )
+            if template is None:
+                raise ProjectError(
+                    f"Estilo desconocido o borrado: {wanted} — regenera las "
+                    "ideas o elige otro estilo"
+                )
+            return template
+
         if style_mode == "none":
             compile_application = None
         elif style_id:
             from .style_intelligence import style_targets as resolve_targets
 
-            template = next(
-                (t for t in self.list_styles() if t["style_id"] == style_id),
-                None,
-            )
-            if template is None:
-                raise ProjectError(f"Estilo desconocido: {style_id}")
+            template = resolve_template(style_id)
             # the A/B arm is only unconfounded over an UNCONDITIONED story
-            if selected_concept.get("style_provenance") and not allow_conditioned:
+            if concept_style and not allow_conditioned:
                 raise ProjectError(
                     "Esta historia se generó con el estilo "
-                    f"{selected_concept['style_provenance']} — compilarla con "
-                    "un estilo explícito confunde el experimento. Regenera "
-                    "ideas sin estilo, o pasa allow_conditioned=true a "
-                    "sabiendas."
+                    f"{concept_style} — compilarla con un estilo explícito "
+                    "confunde el experimento. Regenera ideas sin estilo, o "
+                    "pasa allow_conditioned=true a sabiendas."
                 )
             compile_application = resolve_targets(template)
+        elif concept_style:
+            from .style_intelligence import style_targets as resolve_targets
+
+            # inherited: THIS concept's style — which may not be the
+            # document's newest one
+            compile_application = resolve_targets(resolve_template(concept_style))
         else:
-            compile_application = (
-                (document.get("style_application") or {}).get("application")
-                or None
-            )
+            compile_application = None
         try:
             plan = compile_edit_plan(
                 project,
@@ -1704,24 +1725,46 @@ class ProjectService:
             raise ProjectError("Combina al menos dos estilos DISTINTOS")
         observations = []
         seen_sources: set[str] = set()
+        excluded: list[dict] = []
         for style_id in unique_ids:
             if not re.fullmatch(r"style-[a-f0-9]{8}", style_id):
                 raise ProjectError(f"Identificador inválido: {style_id}")
             path = self._styles_dir() / f"{style_id}.json"
             if not path.is_file():
                 raise ProjectError(f"No existe el estilo {style_id}")
-            for obs in load_json(path).get("observations") or []:
+            stored = load_json(path)
+            recorded = set(
+                (stored.get("template") or {}).get("source_observations") or []
+            )
+            for obs in stored.get("observations") or []:
                 # stored observations are data from disk — validate before
-                # they can poison an aggregation
+                # they can poison an aggregation, and only accept the ones
+                # the template itself recorded as sources
                 self._validate_schema(
                     obs, SCHEMA_DIR / "style-observation.schema.json",
                     "style observation",
                 )
+                if obs.get("observation_id") not in recorded:
+                    excluded.append({
+                        "style_id": style_id,
+                        "reason": "observación no registrada por su template",
+                    })
+                    continue
                 # confidence rises with INDEPENDENT references: the same
                 # source (by content hash) must never count twice, even
                 # via a previously combined style
                 source = (obs.get("source") or {}).get("sha256")
-                if not source or source in seen_sources:
+                if not source:
+                    excluded.append({
+                        "style_id": style_id,
+                        "reason": "sin identidad de contenido (sha256)",
+                    })
+                    continue
+                if source in seen_sources:
+                    excluded.append({
+                        "style_id": style_id,
+                        "reason": "misma referencia ya incluida",
+                    })
                     continue
                 seen_sources.add(source)
                 observations.append(obs)
@@ -1742,7 +1785,12 @@ class ProjectService:
             self._styles_dir() / f"{template['style_id']}.json",
             {"template": template, "observations": observations},
         )
-        return {"style_id": template["style_id"], "template": template}
+        return {
+            "style_id": template["style_id"],
+            "template": template,
+            "included_references": len(observations),
+            "excluded": excluded,
+        }
 
     def delete_style(self, style_id: str) -> None:
         if not re.fullmatch(r"style-[a-f0-9]{8}", style_id):
@@ -2457,6 +2505,16 @@ class ProjectService:
         return self.semantic_run(project_id, run_key)
 
     def render(self, project_id: str, burn_captions: bool = False) -> dict:
+        # captioned and uncaptioned renders share review.mp4 and its state
+        # file; concurrent jobs must not interleave artifact and cache key
+        with self._render_lock(project_id):
+            return self._render_locked(project_id, burn_captions)
+
+    def _render_lock(self, project_id: str):
+        with self._render_locks_guard:
+            return self._render_locks.setdefault(project_id, threading.Lock())
+
+    def _render_locked(self, project_id: str, burn_captions: bool = False) -> dict:
         project = self.get_project(project_id)
         plan = project.get("plan")
         if not plan:
@@ -2490,23 +2548,30 @@ class ProjectService:
             ),
         }
         state_path = output_dir / "review.render-state.json"
-        from .style_intelligence import STYLE_PROMPT_VERSION as MEASURE_VERSION
+        from .style_intelligence import STYLE_MEASURE_VERSION as MEASURE_VERSION
         if output.is_file() and state_path.is_file():
             prior = load_json(state_path)
             if {k: prior.get(k) for k in render_key} == render_key:
                 # a cached RENDER can still need fresh MEASUREMENT: the
-                # analyzers version independently of the renderer
+                # analyzer versions independently of the renderer. The
+                # version is only stamped on SUCCESS — a failure logs,
+                # keeps no stale claim, and retries on the next hit.
                 if prior.get("measure_version") != MEASURE_VERSION:
+                    measured = None
                     try:
                         from .style_intelligence import measure_rendered_grammar
 
-                        prior["achieved_render_grammar"] = (
-                            measure_rendered_grammar(output)
-                        )
+                        measured = measure_rendered_grammar(output)
+                    except Exception as exc:  # noqa: BLE001
+                        LOGGER.warning("render re-measurement failed: %s", exc)
+                    if measured is not None:
+                        prior["achieved_render_grammar"] = measured
                         prior["measure_version"] = MEASURE_VERSION
-                        write_json(state_path, prior)
-                    except Exception:  # noqa: BLE001
-                        pass
+                        prior.pop("measurement_error", None)
+                    else:
+                        prior.pop("achieved_render_grammar", None)
+                        prior["measurement_error"] = utc_now()
+                    write_json(state_path, prior)
                 return {
                     "output": f"/api/projects/{project_id}/outputs/render",
                     "path": str(output),
@@ -2544,17 +2609,19 @@ class ProjectService:
             from .style_intelligence import measure_rendered_grammar
 
             achieved_render = measure_rendered_grammar(output)
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("render measurement failed: %s", exc)
             achieved_render = None
         write_json(
             state_path,
             {
                 **render_key,
                 "rendered_at": utc_now(),
-                "measure_version": MEASURE_VERSION,
                 **(
-                    {"achieved_render_grammar": achieved_render}
-                    if achieved_render is not None else {}
+                    {"achieved_render_grammar": achieved_render,
+                     "measure_version": MEASURE_VERSION}
+                    if achieved_render is not None
+                    else {"measurement_error": utc_now()}
                 ),
                 **(
                     {"style_targets": plan["style_application"].get("targets")}

@@ -30,6 +30,8 @@ from .semantic import utc_now
 from .visual import SCENE_THRESHOLD, extract_segment
 
 STYLE_PROMPT_VERSION = "style-v2"
+# versioned separately: measurement can improve without re-prompting
+STYLE_MEASURE_VERSION = "measure-v1"
 
 HOOK_TYPES = [
     "unexpected_result", "question", "bold_claim", "in_media_res",
@@ -559,14 +561,16 @@ def aggregate_template(name: str, observations: list[dict]) -> dict:
             categorical_agreement(lambda o: o["semantic"].get("uses_voiceover")),
         ) if a is not None
     ]
-    # agreement is no better than the weakest axis: identical labels with
-    # wildly different pacing must not average up to "agreeing"
-    overall_agreement = round(
-        min(
-            shape_agreement,
-            statistics.mean(other_agreements) if other_agreements else 1.0,
-        ), 2,
+    # agreement is no better than the WEAKEST supported axis: identical
+    # labels with wildly different pacing must not average up. And few
+    # observed axes cannot claim strong agreement at all.
+    supported = (
+        [shape_agreement] + other_agreements
+        if candidates else other_agreements
     )
+    overall_agreement = round(min(supported), 2) if supported else 1.0
+    if len(observations) > 1 and len(supported) < 4:
+        overall_agreement = min(overall_agreement, 0.75)
     confidence = round(
         min(
             statistics.median(

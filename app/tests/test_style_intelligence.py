@@ -494,6 +494,26 @@ class TestConsensus:
         # than silently strengthening the other one
         assert template["confidence"] <= 0.5
 
+    def test_identical_labels_different_pacing_disagree(self, reference) -> None:
+        # weakest-axis: same narrative labels with wildly different
+        # measured pacing must NOT count as an agreeing style
+        deterministic, source = deterministic_observation(reference)
+        fast = dict(deterministic, median_shot_seconds=0.5,
+                    cuts_per_minute=60.0)
+        slow = dict(deterministic, median_shot_seconds=6.0,
+                    cuts_per_minute=4.0)
+        semantic = semantic_observation(FakeVlm(SEMANTIC), reference, 12.0)
+        a = build_observation(fast, dict(source, sha256="a" * 16), semantic)
+        b = build_observation(slow, dict(source, sha256="b" * 16), semantic)
+        agreeing = aggregate_template("same", [
+            build_observation(deterministic, dict(source, sha256="c" * 16),
+                              semantic),
+            build_observation(deterministic, dict(source, sha256="d" * 16),
+                              semantic),
+        ])
+        clashing = aggregate_template("clash", [a, b])
+        assert clashing["confidence"] < agreeing["confidence"] - 0.1
+
     def test_categorical_tie_is_unknown(self, reference) -> None:
         a = self._obs(reference, ["hook", "payoff"], voiceover=True)
         b = self._obs(reference, ["hook", "payoff"], voiceover=False)
@@ -659,6 +679,24 @@ class TestCompilerBinding:
         )
         after = candidate["style_application"]["achieved_plan"]["broll_ratio"]
         assert before > 0 and after == 0.0
+        # the SHORTFALL follows the mutation too: with no B-roll left the
+        # whole target is unmet
+        assert candidate["style_application"]["broll_shortfall_seconds"] == (
+            pytest.approx(0.5 * 16.0, abs=0.5)
+        )
+
+    def test_gap_between_clips_is_a_visible_boundary(self) -> None:
+        from video_app.planning import compute_achieved_plan
+
+        plan = {
+            "project": {"duration_seconds": 30.0},
+            "tracks": [{"kind": "video", "events": [
+                {"timeline_start_seconds": 0.0, "duration_seconds": 10.0},
+                {"timeline_start_seconds": 20.0, "duration_seconds": 10.0},
+            ]}],
+        }
+        # clip end at 10 (into black) AND clip start at 20 are both cuts
+        assert compute_achieved_plan(plan)["cuts_per_minute"] == 4.0
 
     def test_single_long_take_measures_zero_cuts(self) -> None:
         from video_app.planning import compute_achieved_plan
@@ -744,6 +782,8 @@ class TestMultiReferenceCombine:
             )
             stored_ids.append(template["style_id"])
         combined = service.combine_styles(stored_ids, "combinado")
+        assert combined["included_references"] == 2
+        assert combined["excluded"] == []
         template = combined["template"]
         assert len(template["source_observations"]) == 2
         # two agreeing references escape the 0.55 single-reference cap

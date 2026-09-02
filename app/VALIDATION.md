@@ -614,3 +614,26 @@ RESERVATIONS, "genuine vertical slice" but partially discharged) produced
   the analyzer version changes (without re-rendering); the concepts
   document is validated AS PERSISTED (after provenance/application
   attach); match schema requires coverage and template_confidence.
+
+## Fourth round (2026-09-02): remaining partials closed
+
+Codex's re-verification (6/11 discharged) left 5 majors + 3 minors; all
+implemented (suite 195→197):
+
+- lineage resolves from the SELECTED concept (kept style-A concept no
+  longer compiles under document-level style B); legacy concepts in a
+  styled document fail closed as conditioned
+- agreement = MINIMUM over supported axes (one clashing axis can't be
+  averaged away — proven: identical labels + opposite pacing score well
+  below true agreement), and <4 supported axes cap agreement at 0.75
+- broll_shortfall_seconds is derived state owned by
+  refresh_style_application — recomputed on every mutation
+- render measurement: dedicated STYLE_MEASURE_VERSION, success-only
+  stamping, logged failures with measurement_error, retry until a valid
+  current-version result exists
+- renders serialized per project (captioned/uncaptioned share artifacts)
+- achieved cuts/min counts clip→gap→clip transitions (both edges)
+- B-roll budget distributed by proportional per-beat quota, not
+  first-come order
+- combine_styles reports included/excluded references WITH reasons and
+  only accepts observations its template actually recorded
