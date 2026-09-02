@@ -806,11 +806,13 @@ class ProjectService:
         approved = sets["approved"]
         rejected = sets["rejected"]
         envelopes = sets.get("envelopes") or {}
+        from .planning import envelopes_cover
+
         for track in plan.get("tracks", []):
             if track.get("kind") != "video":
                 continue
             for event in track.get("events", []):
-                supporting = 0
+                qualifying: list[tuple] = []
                 for eid in event.get("evidence_ids") or []:
                     if eid in rejected:
                         raise ProjectError(
@@ -827,14 +829,14 @@ class ProjectService:
                             "vuelve a intentarlo"
                         )
                     envelope = envelopes.get(eid)
-                    if (
-                        envelope is not None
-                        and envelope[0] == event.get("asset_id")
-                        and envelope[1] < event["source_end_seconds"]
-                        and envelope[2] > event["source_start_seconds"]
-                    ):
-                        supporting += 1
-                if supporting == 0:
+                    if envelope is not None:
+                        qualifying.append(envelope)
+                if not envelopes_cover(
+                    qualifying,
+                    event.get("asset_id") or "",
+                    event["source_start_seconds"],
+                    event["source_end_seconds"],
+                ):
                     # the invariant: a contract event must be supported by
                     # at least one currently approved id whose OWN
                     # envelope covers it — an id-less or mis-attributed

@@ -830,3 +830,13 @@ own asset/time envelope covers that event. Implemented (suite 218→220):
 - revision inheritance validates each inherited id's envelope against
   the NEW range — a sliver of overlap with an old event cannot launder
   all its ids onto a mostly-different cut
+
+## Trust-system round six (2026-09-02): coverage, not overlap
+
+The sole remaining hole: both envelope predicates tested overlap, so an
+approved 0-10s id could authorize a 9.99-30s event. Both now require
+UNION COVERAGE at the same standard as the pixel gate
+(MIN_SUPPORTED_FRACTION 0.6 with edge tolerance) via a shared
+`envelopes_cover` predicate — at revision inheritance AND at
+render/restore. Sliver-overlap test added (fails); genuinely covered
+event passes. Suite 220→221.

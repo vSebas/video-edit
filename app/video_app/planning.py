@@ -1005,6 +1005,34 @@ def build_plan(
     return plan
 
 
+def envelopes_cover(
+    envelopes: list[tuple[str, float, float]],
+    asset_id: str,
+    start: float,
+    end: float,
+) -> bool:
+    """Do these observation envelopes jointly COVER the range — same
+    standard as span_supported (union coverage >= MIN_SUPPORTED_FRACTION
+    with edge tolerance)? Mere overlap is not authorization: an approved
+    0-10s id must not authorize a 9.99-30s event."""
+    length = end - start
+    if length <= 0:
+        return False
+    covered = 0.0
+    cursor = start
+    for env_start, env_end in sorted(
+        (s0, e0) for a, s0, e0 in envelopes if a == asset_id
+    ):
+        low = max(cursor, env_start - SUPPORT_EDGE_TOLERANCE)
+        high = min(end, env_end + SUPPORT_EDGE_TOLERANCE)
+        if high > low:
+            covered += high - low
+            cursor = high
+        if cursor >= end:
+            break
+    return covered / length >= MIN_SUPPORTED_FRACTION
+
+
 def compute_achieved_plan(plan: dict) -> dict | None:
     """Planned visual grammar from the plan's CURRENT tracks — the same
     quantities the reference was measured with. Recomputable after any
@@ -1436,17 +1464,26 @@ events. Every range must stay at least {MIN_EVENT_SECONDS}s long."""
                 and event["source_end_seconds"] > span["source_start_seconds"]
             ):
                 inherited.extend(event["evidence_ids"])
-        # an id transfers only if ITS OWN observed envelope covers the new
-        # range — overlap with the old event is not identity for the new one
-        validated = [
+        # ids transfer only when their envelopes jointly COVER the new
+        # range (union >= MIN_SUPPORTED_FRACTION) — a sliver of overlap
+        # with the old cut is not identity for the new one
+        candidates = [
             eid for eid in sorted(set(inherited))
             if (env := envelopes.get(eid)) is not None
             and env[0] == span["asset_id"]
             and env[1] < span["source_end_seconds"]
             and env[2] > span["source_start_seconds"]
         ] if envelopes else sorted(set(inherited))
-        if validated:
-            span["evidence_ids"] = validated
+        if candidates and envelopes:
+            if not envelopes_cover(
+                [envelopes[eid] for eid in candidates],
+                span["asset_id"],
+                span["source_start_seconds"],
+                span["source_end_seconds"],
+            ):
+                candidates = []  # insufficient coverage: no identity
+        if candidates:
+            span["evidence_ids"] = candidates
     if plan.get("lineage_contract"):
         # a cut moved to footage the current plan never covered has no
         # inheritable identity — under the contract that fails closed

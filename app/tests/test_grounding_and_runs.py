@@ -812,6 +812,21 @@ class TestLiveLineageAtExits:
                 "p", self._plan_with(["ev-ok"], start=20.0, end=25.0)
             )
 
+    def test_sliver_overlap_is_not_coverage(self, tmp_path) -> None:
+        from video_app.projects import ProjectError
+
+        service = self._service(tmp_path)
+        # approved envelope 0-10s: a 9.99-30s event overlaps by a sliver
+        # but is nowhere near covered — must fail
+        with pytest.raises(ProjectError, match="ninguna afirmación aprobada"):
+            service._verify_plan_lineage(
+                "p", self._plan_with(["ev-ok"], start=9.99, end=30.0)
+            )
+        # while an event genuinely covered (2-9s inside 0-10s) passes
+        service._verify_plan_lineage(
+            "p", self._plan_with(["ev-ok"], start=2.0, end=9.0)
+        )
+
 
 class TestTitleGate:
     SUPPORT = "una persona camina por el campus y saluda a sus amigos"
