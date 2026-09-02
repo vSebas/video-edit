@@ -493,13 +493,30 @@ class TestCleanupEndpoints:
             body = listed.json()
             # the 13.2-15.2s gap inside v01 (source 13.0-15.3s) -> dead air
             assert any("silencio" in c["reason"] for c in body["candidates"])
-            # apply against a MUTATED timeline must be refused (fingerprint)
+            # apply always verifies against a LIVE readback fetched on the
+            # mutation session — a caller-supplied readback is ignored
+            # (cross-review BLOCKER 1). Simulate a GUI edit via a fake MCP.
+            import video_app.opentake_mcp as mcp_module
+
             mutated = _json.loads(_json.dumps(readback))
             mutated["tracks"][0]["clips"][0]["durationFrames"] += 1
-            stale = client.post(
-                f"/api/projects/{pid}/opentake/cleanup/apply",
-                json={"indices": [0], "readback": mutated},
-            )
+
+            class FakeMcp:
+                def __init__(self, *a, **k): ...
+                def get_timeline(self):
+                    return mutated
+                def tool(self, *a, **k):
+                    raise AssertionError("must refuse before mutating")
+
+            original = mcp_module.OpenTakeMcp
+            mcp_module.OpenTakeMcp = FakeMcp
+            try:
+                stale = client.post(
+                    f"/api/projects/{pid}/opentake/cleanup/apply",
+                    json={"indices": [0], "readback": readback},
+                )
+            finally:
+                mcp_module.OpenTakeMcp = original
             assert stale.status_code == 400
             assert "changed" in stale.json()["detail"]
 

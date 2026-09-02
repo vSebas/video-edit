@@ -78,6 +78,16 @@ def _readback_tracks(readback: dict, kind: str) -> list[dict]:
     for match in matches:
         if not isinstance(match.get("clips"), list):
             raise SyncError(f"readback {kind} clips must be a list")
+    if len(matches) > 1 and kind == "video":
+        # Which track is the A-roll decides which grounding rules apply;
+        # that must never be settled by array order (cross-review 3).
+        indices = [track.get("trackIndex") for track in matches]
+        if any(not isinstance(index, int) for index in indices):
+            raise SyncError(
+                "readback video tracks must carry integer trackIndex values"
+            )
+        if len(set(indices)) != len(indices):
+            raise SyncError("readback video tracks have duplicate trackIndex")
     return sorted(
         matches,
         key=lambda track: (
@@ -736,6 +746,7 @@ def timeline_to_candidate_plan(
     )
     broll_diff = []
     rebuilt_broll = []
+    used_broll_ids = set(broll_by_id)  # never reuse an existing identity
     added_count = 0
     surviving_broll_ids = set()
     for clip in sorted(
@@ -784,6 +795,9 @@ def timeline_to_candidate_plan(
                     )
         else:
             added_count += 1
+            while f"bro-{added_count:02d}" in used_broll_ids:
+                added_count += 1
+            used_broll_ids.add(f"bro-{added_count:02d}")
             source_start = _seconds(clip["trim_start"], fps)
             duration = _seconds(clip["duration"], fps)
             event = {
@@ -845,6 +859,9 @@ def timeline_to_candidate_plan(
         if track.get("kind") == "audio":
             track["events"] = rebuilt_audio
     candidate["revision"] = plan_revision + 1
-    candidate["project"]["duration_seconds"] = _seconds(total_frames, fps)
+    # Duration follows the primary story, not the canvas: an empty tail
+    # after the last A-roll clip must not become black/silent seconds
+    # (cross-review 4). totalFrames stays a bound check via _normalize_clip.
+    candidate["project"]["duration_seconds"] = _seconds(primary_end, fps)
     diff = _build_diff(infos, descendants) + volume_notes + broll_diff + broll_notes
     return candidate, diff

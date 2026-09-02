@@ -111,13 +111,18 @@ def candidates_for(words: dict, clips: list[dict], fps: int) -> list[dict]:
 
 
 def timeline_fingerprint(readback: dict) -> str:
-    """Binds a candidate list to the exact timeline it was computed from."""
+    """Binds a candidate list to the exact timeline it was computed from —
+    media identity and track placement included, not just geometry."""
     clips = [
-        (t.get("type"), c.get("clipId"), c.get("startFrame"),
+        (t.get("type"), t.get("trackIndex"), c.get("clipId"),
+         c.get("mediaRef"), c.get("startFrame"),
          c.get("durationFrames"), c.get("trimStartFrame", 0))
         for t in readback.get("tracks", []) for c in t.get("clips", [])
     ]
-    return hashlib.sha256(json.dumps(sorted(clips)).encode()).hexdigest()[:16]
+    header = (readback.get("fps"), readback.get("width"), readback.get("height"))
+    return hashlib.sha256(
+        json.dumps([header, sorted(clips, key=str)]).encode()
+    ).hexdigest()[:16]
 
 
 def transcript_words(runs_dir: Path) -> dict[str, list[dict]]:

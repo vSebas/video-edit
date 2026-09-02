@@ -1085,8 +1085,13 @@ class ProjectService:
     def opentake_cleanup_apply(
         self, project_id: str, indices: list[int], readback: dict | None = None
     ) -> dict:
-        """Apply the approved candidate subset in one atomic ripple. The
-        stored fingerprint must still match the live timeline."""
+        """Apply the approved candidate subset in one atomic ripple.
+
+        The fingerprint is ALWAYS checked against a live readback fetched on
+        the same MCP session that performs the ripple — a caller-supplied
+        readback is never trusted for a mutation (cross-review BLOCKER 1:
+        a stale caller document could otherwise delete the wrong frames).
+        The shared OpenTake mutation lock serializes concurrent applies."""
         from .cleanup import timeline_fingerprint
         from .opentake_mcp import OpenTakeMcp, OpenTakeMcpError
 
@@ -1100,19 +1105,19 @@ class ProjectService:
             raise ProjectError("Unknown candidate selection") from exc
         if not chosen:
             raise ProjectError("Nothing selected")
+        if not self._opentake_place_lock.acquire(blocking=False):
+            raise ProjectError(
+                "Another OpenTake operation is in progress — retry in a moment"
+            )
         try:
-            client = None
-            live = readback
-            if live is None:
-                client = OpenTakeMcp()
-                live = client.get_timeline()
+            client = OpenTakeMcp()
+            live = client.get_timeline()
             if timeline_fingerprint(live) != stored["fingerprint"]:
                 stored_path.unlink(missing_ok=True)
                 raise ProjectError(
                     "The OpenTake timeline changed since the candidates were "
                     "computed — list them again"
                 )
-            client = client or OpenTakeMcp()
             result = client.tool("ripple_delete_ranges", {
                 "trackIndex": 0,
                 "units": "frames",
@@ -1120,6 +1125,8 @@ class ProjectService:
             })
         except OpenTakeMcpError as exc:
             raise ProjectError(str(exc)) from exc
+        finally:
+            self._opentake_place_lock.release()
         stored_path.unlink(missing_ok=True)
         removed = sum(b - a for a, b in (c["frames"] for c in chosen))
         return {
@@ -1164,6 +1171,24 @@ class ProjectService:
             candidate, diff = timeline_to_candidate_plan(plan, bridge, readback)
         except SyncError as exc:
             raise ProjectError(f"Sync rejected: {exc}") from exc
+        # GUI-added B-roll of a known sideways asset must not lose its
+        # detected rotation (cross-review 16): the sync module has no
+        # inventory access, so enrichment happens here.
+        rotations = {
+            a["asset_id"]: int(a.get("suggested_rotation_degrees") or 0)
+            for a in project.get("inventory", {}).get("assets", [])
+        }
+        for track in candidate.get("tracks", []):
+            if track.get("role") != "broll":
+                continue
+            for event in track["events"]:
+                degrees = rotations.get(event.get("asset_id"), 0)
+                if degrees and event.get("reframe") is None:
+                    event["reframe"] = {
+                        "mode": "fit", "center_x": 0.5, "center_y": 0.5,
+                        "scale": 1.0, "rotation_degrees": degrees,
+                        "manual_review": True,
+                    }
         try:
             validate_edit_plan(
                 candidate, SCHEMA_DIR / "edit-plan.schema.json", project

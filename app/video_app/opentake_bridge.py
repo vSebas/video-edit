@@ -63,7 +63,14 @@ def map_media(client: OpenTakeMcp, inventory: dict, needed: list[str]) -> dict[s
     ambiguous stems are skipped unless needed, keeping the bridge's
     ref→asset reverse map unambiguous."""
     assets = {a["asset_id"]: a for a in inventory["assets"]}
-    by_stem = {e["name"]: e for e in client.tool("get_media").get("entries", [])}
+    entries = client.tool("get_media").get("entries", [])
+    seen: dict[str, int] = {}
+    for entry in entries:
+        seen[entry["name"]] = seen.get(entry["name"], 0) + 1
+    # A stem appearing twice in the LIBRARY is ambiguous — last-wins would
+    # silently place the wrong source and self-consistently "verify" it.
+    by_stem = {e["name"]: e for e in entries if seen[e["name"]] == 1}
+    ambiguous_library = {name for name, count in seen.items() if count > 1}
     stem_owners: dict[str, list[str]] = {}
     for asset_id, asset in assets.items():
         stem_owners.setdefault(Path(asset["filename"]).stem, []).append(asset_id)
@@ -71,12 +78,14 @@ def map_media(client: OpenTakeMcp, inventory: dict, needed: list[str]) -> dict[s
     for asset_id, asset in assets.items():
         stem = Path(asset["filename"]).stem
         hit = by_stem.get(stem)
-        ambiguous = len(stem_owners[stem]) > 1
+        ambiguous = len(stem_owners[stem]) > 1 or stem in ambiguous_library
         if hit and not ambiguous:
             ref_for[asset_id] = hit["id"]
         elif asset_id in needed:
             missing.append(
-                asset["filename"] + (" (duplicate filename)" if ambiguous else "")
+                asset["filename"]
+                + (" (ambiguous duplicate name — rename one copy)"
+                   if ambiguous else "")
             )
     if missing:
         raise BridgeError(
@@ -243,6 +252,16 @@ def place_plan(
             "OpenTake cannot represent. Remove the voiceover (instrucción: "
             "'quita la voz en off') before sending, or render directly."
         )
+    for event in audio_events:
+        db = event.get("volume_db")
+        if db is not None and db > 0:
+            # OpenTake volume caps at unity; silently clamping a +gain
+            # would misrepresent the plan (cross-review 26).
+            raise BridgeError(
+                f"{event['event_id']} has +{db:g}dB gain, which OpenTake "
+                "cannot represent (volume caps at 0dB). Keep positive gain "
+                "as render-side polish, or lower it."
+            )
     entries = plan_entries(plan)
     broll = broll_entries(plan)
     needed = sorted({e["asset_id"] for e in entries + broll})
@@ -250,10 +269,22 @@ def place_plan(
 
     try:
         before = client.get_timeline()
-        existing = [c["clipId"] for t in before.get("tracks", [])
-                    for c in t.get("clips", [])]
-        if existing:
-            client.tool("remove_clips", {"clipIds": existing})
+        # ALL preflight happens before anything is removed (cross-review
+        # BLOCKER 2: a failed check after removal left an empty timeline).
+        fps = plan["project"]["fps"]
+        if before.get("fps") not in (None, fps):
+            raise BridgeError(
+                f"OpenTake project runs at {before.get('fps')} fps but the "
+                f"plan is {fps} fps — align the project settings first"
+            )
+        dims = (before.get("width"), before.get("height"))
+        want = (plan["project"]["width"], plan["project"]["height"])
+        if all(dims) and dims != want:
+            raise BridgeError(
+                f"OpenTake canvas is {dims[0]}x{dims[1]} but the plan is "
+                f"{want[0]}x{want[1]} — align the project settings first"
+            )
+        broll_index = None
         if broll:
             # The MCP surface cannot create tracks; overlays need an
             # existing second video track (added once in the OpenTake GUI).
@@ -265,6 +296,10 @@ def place_plan(
                     "OpenTake (right-click the track area), then send again."
                 )
             broll_index = before_videos[1].get("trackIndex")
+        existing = [c["clipId"] for t in before.get("tracks", [])
+                    for c in t.get("clips", [])]
+        if existing:
+            client.tool("remove_clips", {"clipIds": existing})
         client.tool("add_clips", {"entries": [
             {
                 "mediaRef": ref_for[e["asset_id"]],
@@ -307,7 +342,7 @@ def place_plan(
             partner = partner_for_group.get(clip.get("linkGroupId"))
             if partner:
                 volume_for.setdefault(
-                    round(min(1.0, max(0.0, 10 ** (db / 20))), 4), []
+                    round(max(0.0, 10 ** (db / 20)), 4), []
                 ).append(partner)
         for volume, clip_ids in volume_for.items():
             client.tool(
@@ -316,7 +351,36 @@ def place_plan(
         if volume_for:
             readback = client.get_timeline()
     except OpenTakeMcpError as exc:
-        raise BridgeError(str(exc)) from exc
+        # Preflight passed but a mutation failed mid-flight: best-effort
+        # restore of the pre-placement primary clips so the user is not
+        # left staring at an empty timeline. (Linked audio re-creates
+        # automatically; a restore failure is reported, never hidden.)
+        restore_note = ""
+        if existing:
+            try:
+                current = client.get_timeline()
+                current_ids = [c["clipId"] for t in current.get("tracks", [])
+                               for c in t.get("clips", [])]
+                if current_ids:
+                    client.tool("remove_clips", {"clipIds": current_ids})
+                previous_videos = _video_tracks(before)
+                client.tool("add_clips", {"entries": [
+                    {
+                        "mediaRef": c["mediaRef"],
+                        "startFrame": c["startFrame"],
+                        "durationFrames": c["durationFrames"],
+                        "trimStartFrame": c.get("trimStartFrame", 0),
+                    }
+                    for c in (previous_videos[0].get("clips", [])
+                              if previous_videos else [])
+                ]})
+                restore_note = " The previous timeline was restored."
+            except OpenTakeMcpError:
+                restore_note = (
+                    " Restoring the previous timeline ALSO failed — "
+                    "re-send the plan or undo in OpenTake."
+                )
+        raise BridgeError(f"{exc}{restore_note}") from exc
 
     failures = verify_placement(entries, ref_for, readback)
     if broll:
