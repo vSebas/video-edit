@@ -660,6 +660,41 @@ class TestCompilerBinding:
         assert partial["coverage"] == 0.9
 
 
+class TestMultiReferenceCombine:
+    def test_combine_lifts_the_single_reference_cap(self, reference, tmp_path) -> None:
+        from video_app.config import Settings
+        from video_app.projects import ProjectService
+        from video_app.style_intelligence import (
+            aggregate_template, build_observation,
+        )
+
+        service = ProjectService(
+            Settings(root=tmp_path, runtime=tmp_path / "runtime")
+        )
+        deterministic, source = deterministic_observation(reference)
+        stored_ids = []
+        for i in range(2):
+            semantic = semantic_observation(FakeVlm(SEMANTIC), reference, 12.0)
+            obs = build_observation(
+                deterministic, dict(source, sha256=f"{i:016x}"), semantic
+            )
+            template = aggregate_template(f"ref{i}", [obs])
+            (service._styles_dir() / f"{template['style_id']}.json").write_text(
+                json.dumps({"template": template, "observations": [obs]})
+            )
+            stored_ids.append(template["style_id"])
+        combined = service.combine_styles(stored_ids, "combinado")
+        template = combined["template"]
+        assert len(template["source_observations"]) == 2
+        # two agreeing references escape the 0.55 single-reference cap
+        assert template["confidence"] > 0.55
+        assert template["style_id"] in {
+            s["style_id"] for s in service.list_styles()
+        }
+        with pytest.raises(Exception):
+            service.combine_styles([stored_ids[0]], "solo")
+
+
 class TestGuidance:
     def test_guidance_carries_the_grammar_not_content(self) -> None:
         text = style_guidance(_template())

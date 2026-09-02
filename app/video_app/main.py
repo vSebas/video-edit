@@ -72,6 +72,13 @@ class CompilePlanRequest(BaseModel):
     width: int = Field(default=1080, ge=16, le=7680)
     height: int = Field(default=1920, ge=16, le=7680)
     fps: int = Field(default=30, ge=1, le=120)
+    # styled compilation of a FIXED concept (the unconfounded A/B arm)
+    style_id: str | None = Field(default=None, max_length=64)
+
+
+class CombineStylesRequest(BaseModel):
+    style_ids: list[str] = Field(min_length=2, max_length=8)
+    name: str = Field(min_length=1, max_length=80)
 
 
 class ExportsRequest(BaseModel):
@@ -389,6 +396,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         project_call(lambda: projects.delete_style(style_id))
         return {"deleted": style_id}
 
+    @application.post("/api/styles/combine", status_code=201)
+    def combine_styles(request: CombineStylesRequest):
+        return project_call(
+            lambda: projects.combine_styles(request.style_ids, request.name)
+        )
+
     @application.get("/api/styles/references")
     def list_style_references():
         return {"references": projects.list_style_references()}
@@ -581,6 +594,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 options.width,
                 options.height,
                 options.fps,
+                style_id=options.style_id,
             )
         )
 

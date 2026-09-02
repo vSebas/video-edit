@@ -936,6 +936,7 @@ class ProjectService:
         width: int = 1080,
         height: int = 1920,
         fps: int = 30,
+        style_id: str | None = None,
     ) -> dict:
         """Deterministically compile the selected concept into a validated
         edit-plan.v1 and persist it with a matching media inventory."""
@@ -949,12 +950,26 @@ class ProjectService:
         if not selected:
             raise ProjectError("Select a concept before compiling the edit plan")
         approved_ranges = self._approved_ranges(project_id)
-        # concepts generated with a style carry the resolved application
-        # contract; its measured targets bind the compiler
-        compile_targets = (
-            ((document.get("style_application") or {}).get("application") or {})
-            .get("targets") or None
-        )
+        # Styled compilation from a FIXED concept: an explicit style_id
+        # resolves that style's measured targets regardless of how the
+        # concepts were generated — this is the unconfounded arm of the
+        # application-validity A/B (baseline story, styled plan). Without
+        # it, falling back to the style that conditioned the concepts.
+        if style_id:
+            from .style_intelligence import style_targets as resolve_targets
+
+            template = next(
+                (t for t in self.list_styles() if t["style_id"] == style_id),
+                None,
+            )
+            if template is None:
+                raise ProjectError(f"Estilo desconocido: {style_id}")
+            compile_targets = resolve_targets(template).get("targets") or None
+        else:
+            compile_targets = (
+                ((document.get("style_application") or {}).get("application") or {})
+                .get("targets") or None
+            )
         try:
             plan = compile_edit_plan(
                 project,
@@ -1648,6 +1663,41 @@ class ProjectService:
                     })
                 continue
         return styles
+
+    def combine_styles(self, style_ids: list[str], name: str) -> dict:
+        """Aggregate the stored observations of several single-reference
+        styles into ONE multi-reference template — the design's actual
+        reusable-grammar unit (3-5 references; single references are
+        confidence-capped hints). Source styles are kept."""
+        from .style_intelligence import StyleError, aggregate_template
+
+        if len(style_ids) < 2:
+            raise ProjectError("Combina al menos dos estilos")
+        observations = []
+        for style_id in style_ids:
+            if not re.fullmatch(r"style-[a-f0-9]{8}", style_id):
+                raise ProjectError(f"Identificador inválido: {style_id}")
+            path = self._styles_dir() / f"{style_id}.json"
+            if not path.is_file():
+                raise ProjectError(f"No existe el estilo {style_id}")
+            observations.extend(load_json(path).get("observations") or [])
+        if len(observations) < 2:
+            raise ProjectError(
+                "Los estilos elegidos no conservan observaciones suficientes"
+            )
+        try:
+            template = aggregate_template(name, observations)
+        except StyleError as exc:
+            raise ProjectError(str(exc)) from exc
+        self._validate_schema(
+            template, SCHEMA_DIR / "style-template.schema.json",
+            "style template",
+        )
+        write_json(
+            self._styles_dir() / f"{template['style_id']}.json",
+            {"template": template, "observations": observations},
+        )
+        return {"style_id": template["style_id"], "template": template}
 
     def delete_style(self, style_id: str) -> None:
         if not re.fullmatch(r"style-[a-f0-9]{8}", style_id):
@@ -2412,23 +2462,24 @@ class ProjectService:
         if result.returncode:
             detail = (result.stderr or result.stdout).strip()
             raise ProjectError(f"Render failed: {detail[-1000:]}")
-        # close the style loop at the pixels: measure what was actually
-        # rendered with the same instruments used on the reference, so a
-        # styled cut can be judged by achieved grammar, not by prompts
-        achieved_render = None
-        if plan.get("style_application"):
-            from .style_intelligence import measure_rendered_grammar
+        # close the loop at the pixels for EVERY fresh render: the styled
+        # arm of an A/B is only meaningful against a measured baseline,
+        # so both arms get the same instruments the reference was read with
+        from .style_intelligence import measure_rendered_grammar
 
-            achieved_render = measure_rendered_grammar(output)
+        achieved_render = measure_rendered_grammar(output)
         write_json(
             state_path,
             {
                 **render_key,
                 "rendered_at": utc_now(),
                 **(
-                    {"achieved_render_grammar": achieved_render,
-                     "style_targets": plan["style_application"].get("targets")}
+                    {"achieved_render_grammar": achieved_render}
                     if achieved_render is not None else {}
+                ),
+                **(
+                    {"style_targets": plan["style_application"].get("targets")}
+                    if plan.get("style_application") else {}
                 ),
             },
         )

@@ -1061,7 +1061,22 @@ async function loadReferencePanel() {
             ${analyzed.has(ref.filename.replace(/\.[^.]+$/, '')) ? 'Re-analizar' : 'Analizar estilo'}
           </button>
         </div>`).join('') : '<p class="muted">La carpeta references/ está vacía.</p>'}
-      ${styles.length ? `<p class="muted">${styles.length} estilo(s) en la biblioteca.</p>` : ''}`;
+      ${styles.length ? `<p class="muted">${styles.length} estilo(s) en la biblioteca.</p>` : ''}
+      ${styles.filter((s) => !s.invalid).length >= 2 ? `
+        <button class="secondary compact" id="combine-styles">Combinar todos en un estilo multi-referencia</button>` : ''}`;
+    $('#combine-styles')?.addEventListener('click', async () => {
+      const name = window.prompt('Nombre del estilo combinado:', 'mi estilo');
+      if (!name) return;
+      try {
+        const valid = styles.filter((s) => !s.invalid).map((s) => s.style_id);
+        await api('/api/styles/combine', {
+          method: 'POST',
+          body: JSON.stringify({ style_ids: valid, name }),
+        });
+        notice('Estilo multi-referencia creado — más referencias, más confianza.');
+        loadReferencePanel();
+      } catch (error) { notice(error.message, true); }
+    });
     box.querySelectorAll('[data-analyze-ref]').forEach((button) => {
       button.addEventListener('click', async () => {
         button.disabled = true;
