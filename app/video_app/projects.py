@@ -1632,10 +1632,18 @@ class ProjectService:
             from .planning import title_blocked
 
             captions_map = self._approved_captions(project_id)
+            plan_video_events = [
+                event
+                for track in restored.get("tracks", [])
+                if track.get("kind") == "video"
+                for event in track.get("events", [])
+            ]
             supporting = " ".join(
                 caption
-                for items in captions_map.values()
-                for _s, _e, caption in items
+                for event in plan_video_events
+                for _s, _e, caption in captions_map.get(event["asset_id"], [])
+                if _s < event["source_end_seconds"]
+                and _e > event["source_start_seconds"]
             )
             for track in restored.get("tracks", []):
                 if track.get("kind") != "title":
@@ -2931,6 +2939,39 @@ class ProjectService:
         plan = project.get("plan")
         if not plan:
             raise ProjectError("This project does not have an approved edit plan")
+        # rendered-language gate at the LAST exit: even a plan compiled
+        # before the claim gates cannot burn a risky unsupported model
+        # title into pixels (user-typed titles exempt)
+        from .planning import title_blocked
+
+        captions_map = self._approved_captions(project_id)
+        plan_video_events = [
+            event
+            for track in plan.get("tracks", [])
+            if track.get("kind") == "video"
+            for event in track.get("events", [])
+        ]
+        supporting = " ".join(
+            caption
+            for event in plan_video_events
+            for _s, _e, caption in captions_map.get(event["asset_id"], [])
+            if _s < event["source_end_seconds"]
+            and _e > event["source_start_seconds"]
+        )
+        for track in plan.get("tracks", []):
+            if track.get("kind") != "title":
+                continue
+            for event in track.get("events", []):
+                if title_blocked(
+                    str(event.get("text") or ""), supporting,
+                    user_authored=bool(event.get("user_authored")),
+                ):
+                    raise ProjectError(
+                        f"El título «{event.get('text')}» afirma algo sin "
+                        "respaldo aprobado — cámbialo (di, p. ej., «cambia "
+                        "el título a …») o confirma la evidencia antes de "
+                        "renderizar"
+                    )
         captions_path = None
         if burn_captions:
             captions_path = self.export_captions(project_id)

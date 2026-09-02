@@ -110,8 +110,10 @@ def evidence_pack(
     ordered = sorted(evidence, key=lambda item: (item["asset_id"], item["start_seconds"]))
     for item in ordered:
         marker = "" if item.get("verified", True) else "[UNVERIFIED] "
+        eid = item.get("evidence_id")
+        eid_tag = f"(id {eid}) " if eid else ""
         lines.append(
-            f"- {marker}{item['asset_id']} [{item['start_seconds']:.2f}-{item['end_seconds']:.2f}] "
+            f"- {marker}{eid_tag}{item['asset_id']} [{item['start_seconds']:.2f}-{item['end_seconds']:.2f}] "
             f"{item['evidence_type']} {item['confidence']:.2f}: {item['caption']}"
         )
     return "\n".join(lines)
@@ -368,6 +370,19 @@ def _sanitize_concepts(
                     item["asset_id"], item["start_seconds"],
                     item["end_seconds"],
                 )
+    # a document where ANY citation carries ids was written under the
+    # lineage contract — for those, missing ids on a citation fail closed
+    document_has_lineage = any(
+        isinstance(evidence_item, dict) and evidence_item.get("evidence_ids")
+        for concept_item in document.get("concepts") or []
+        if isinstance(concept_item, dict)
+        for beat_item in concept_item.get("structure") or []
+        if isinstance(beat_item, dict)
+        for evidence_item in (
+            list(beat_item.get("evidence") or [])
+            + list(beat_item.get("cutaways") or [])
+        )
+    )
     valid_concepts = []
     used_ids: set[str] = set()
     for concept in document["concepts"]:
@@ -479,9 +494,14 @@ def _sanitize_concepts(
                     and id_index[eid][1] < end and id_index[eid][2] > start
                 ]
                 if not valid_ids and id_index:
-                    # writer omitted or fabricated ids — attach the real
-                    # observations this range overlaps (identity recovered
-                    # deterministically, never trusted from the model)
+                    if document_has_lineage:
+                        # a FRESH document whose writer omitted or invented
+                        # ids for this citation: fail closed — attach-all
+                        # over/under-authorizes (review 'decisive gap')
+                        continue
+                    # legacy document (predates lineage): recover identity
+                    # deterministically by overlap; the risky-strict checks
+                    # still bound what this can authorize
                     valid_ids = [
                         eid for eid, (aid, ostart, oend) in id_index.items()
                         if aid == asset["asset_id"]
@@ -712,6 +732,12 @@ def build_plan(
             "confidence": span["confidence"],
             "transition_out": {"type": "cut", "duration_seconds": 0.0},
             "text": None,
+            # claim lineage persists into the canonical plan so revisions
+            # and restores can authorize by identity, not text similarity
+            **(
+                {"evidence_ids": span["evidence_ids"]}
+                if span.get("evidence_ids") else {}
+            ),
         }
         rotation = detected_rotation(span["asset_id"])
         video_events.append(
@@ -1066,6 +1092,16 @@ def _claim_is_risky(text: str) -> bool:
     return any(pattern.search(text) for _, pattern in RISK_PATTERNS)
 
 
+def _risky_claim_supported(claim: str, supporting: str) -> bool:
+    """Strict support test for RISKY claims: no brevity benefit-of-doubt
+    anywhere ('ganó la carrera' must find real support or fail)."""
+    content = [
+        w for w in re.findall(r"[\wáéíóúñü]+", claim.lower()) if len(w) > 3
+    ]
+    support_words = set(re.findall(r"[\wáéíóúñü]+", supporting.lower()))
+    return bool(content) and bool(support_words.intersection(content))
+
+
 def claim_supported(
     span: dict,
     approved_captions: dict[str, list[tuple[float, float, str]]],
@@ -1091,7 +1127,9 @@ def claim_supported(
         if not all(eid in approved_ids for eid in ids):
             return False  # pending lineage: confirm it, then compile
         supporting = " ".join(approved_ids[eid] for eid in ids)
-        if _claim_is_risky(claim) and _claim_unsupported(claim, supporting):
+        if _claim_is_risky(claim) and not _risky_claim_supported(
+            claim, supporting
+        ):
             return False  # approved footage, embellished claim
         return True
     supporting = " ".join(
@@ -1101,12 +1139,9 @@ def claim_supported(
         and end > span["source_start_seconds"]
     )
     if _claim_is_risky(claim):
-        # risky claims never pass on brevity or empty support
-        content = [w for w in re.findall(r"[\wáéíóúñü]+", claim.lower()) if len(w) > 3]
-        support_words = set(re.findall(r"[\wáéíóúñü]+", supporting.lower()))
-        return bool(content) and bool(
-            support_words.intersection(content)
-        ) and not _claim_unsupported(claim, supporting)
+        return _risky_claim_supported(claim, supporting) and not (
+            _claim_unsupported(claim, supporting)
+        )
     return not _claim_unsupported(claim, supporting)
 
 
@@ -1367,6 +1402,26 @@ events. Every range must stay at least {MIN_EVENT_SECONDS}s long."""
         raise PlanningError(f"Revision response was not valid JSON: {exc}") from exc
 
     spans = sanitize_spans(project, parsed.get("video_events") or [])
+    # lineage is inherited deterministically from the current plan — the
+    # revision model is never trusted to assert identity
+    plan_events = [
+        event
+        for track in plan.get("tracks", [])
+        if track.get("kind") == "video" and track.get("role") != "broll"
+        for event in track.get("events", [])
+        if event.get("evidence_ids")
+    ]
+    for span in spans:
+        inherited: list[str] = []
+        for event in plan_events:
+            if (
+                event["asset_id"] == span["asset_id"]
+                and event["source_start_seconds"] < span["source_end_seconds"]
+                and event["source_end_seconds"] > span["source_start_seconds"]
+            ):
+                inherited.extend(event["evidence_ids"])
+        if inherited:
+            span["evidence_ids"] = sorted(set(inherited))
     if not spans:
         raise PlanningError(
             "The revision produced no valid cuts; the plan was left unchanged"
@@ -1399,7 +1454,20 @@ events. Every range must stay at least {MIN_EVENT_SECONDS}s long."""
             if start < span["source_end_seconds"]
             and end > span["source_start_seconds"]
         )
-        if title_blocked(revised_title, title_support):
+        current_title_event = next(
+            (
+                event
+                for track in plan.get("tracks", [])
+                if track.get("kind") == "title"
+                for event in track.get("events", [])
+            ),
+            {},
+        )
+        unchanged_user_title = (
+            revised_title.strip() == str(current_title_event.get("text") or "").strip()
+            and bool(current_title_event.get("user_authored"))
+        )
+        if not unchanged_user_title and title_blocked(revised_title, title_support):
             raise PlanningError(
                 f"La revisión propuso el título «{revised_title}», que "
                 "afirma algo sin respaldo en observaciones aprobadas; el "
@@ -1423,6 +1491,12 @@ events. Every range must stay at least {MIN_EVENT_SECONDS}s long."""
             if k not in ("achieved_plan",)
         } or None,
     )
+    if approved_captions is not None and unchanged_user_title:
+        # the user's own title keeps its exemption across revisions
+        for track in new_plan.get("tracks", []):
+            if track.get("kind") == "title":
+                for event in track.get("events", []):
+                    event["user_authored"] = True
     note = str(parsed.get("revision_note", "")).strip() or "Plan revised."
     return new_plan, note
 

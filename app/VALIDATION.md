@@ -768,3 +768,30 @@ necessary to fix it." The architecture Codex prescribed is now built
 Remaining honest limits: legacy concepts without lineage use the
 risk-gated lexical fallback; auto-approve confidence policy unchanged
 (ratified routing policy).
+
+## Trust-system round three (2026-09-02): the minimum remaining list
+
+Codex's second verification caught that the evidence-pack ID edit had
+been silently lost to a failed script assertion — the prompt demanded
+ids the writer could not see, so everything ran on the attach-all
+fallback. All five items of its minimum list are now implemented
+(suite 210→213):
+
+- evidence pack PRINTS ids (verified in-file this time); fresh documents
+  whose writer omits/invents ids on a citation FAIL CLOSED (attach-by-
+  overlap is reserved for legacy documents with no lineage anywhere)
+- risky claims get the strict support test in BOTH branches — no brevity
+  benefit-of-doubt against an unrelated approved id
+- lineage persists into plan events (schema'd) and revisions inherit it
+  deterministically from the current plan's overlapping events — never
+  from the revision model
+- restored revisions' title support is scoped to the restored plan's own
+  cited material (an unused clip can no longer launder a title), and
+  RENDER is the last-exit gate: legacy plans' risky unsupported model
+  titles refuse to render (user-typed titles exempt, and that exemption
+  survives revisions when the text is unchanged)
+
+Known cost, accepted: legacy concepts (pre-lineage) compile via the
+risk-gated fallback and shrink conservatively (23-29-abril's current
+stories drop 8→3 / 6→2 scenes) — regenerating ideas restores full
+coverage WITH lineage.

@@ -628,6 +628,77 @@ class TestClaimIdLineage:
         assert claim_supported(span, self.CAPTIONS, None) is False
 
 
+class TestFreshVsLegacyLineage:
+    def test_fresh_document_missing_ids_fails_closed(self) -> None:
+        from video_app.planning import _sanitize_concepts
+
+        evidence = [
+            {"evidence_id": "ev-1", "asset_id": "clip_0",
+             "start_seconds": 0.0, "end_seconds": 10.0, "caption": "camina"},
+        ]
+        beats = [
+            {"beat_id": f"b{i}", "purpose": "p", "target_duration_seconds": 2,
+             "evidence": [{
+                 "asset_id": "clip_0", "start_seconds": i * 2.0,
+                 "end_seconds": i * 2.0 + 1.0, "observed_content": "camina",
+                 "confidence": 0.9,
+                 # only beat 0 cites ids -> the document is under the
+                 # lineage contract; the others fail closed
+                 **({"evidence_ids": ["ev-1"]} if i == 0 else {}),
+             }]}
+            for i in range(3)
+        ]
+        document = {"footage_summary": "x", "concepts": [{
+            "concept_id": "c1", "title": "t", "structure": beats,
+        }]}
+        project = {"inventory": {"assets": [
+            {"asset_id": "clip_0", "media_type": "video",
+             "duration_seconds": 30},
+        ]}}
+        _sanitize_concepts(document, project, evidence)
+        # citations without valid ids were dropped -> <3 beats -> concept out
+        assert document["concepts"] == []
+
+    def test_legacy_document_recovers_identity_by_overlap(self) -> None:
+        from video_app.planning import _sanitize_concepts
+
+        evidence = [
+            {"evidence_id": "ev-1", "asset_id": "clip_0",
+             "start_seconds": 0.0, "end_seconds": 10.0, "caption": "camina"},
+        ]
+        beats = [
+            {"beat_id": f"b{i}", "purpose": "p", "target_duration_seconds": 2,
+             "evidence": [{
+                 "asset_id": "clip_0", "start_seconds": i * 2.0,
+                 "end_seconds": i * 2.0 + 1.0, "observed_content": "camina",
+                 "confidence": 0.9,
+             }]}
+            for i in range(3)
+        ]
+        document = {"footage_summary": "x", "concepts": [{
+            "concept_id": "c1", "title": "t", "structure": beats,
+        }]}
+        project = {"inventory": {"assets": [
+            {"asset_id": "clip_0", "media_type": "video",
+             "duration_seconds": 30},
+        ]}}
+        _sanitize_concepts(document, project, evidence)
+        concept = document["concepts"][0]
+        assert len(concept["structure"]) == 3
+        assert concept["structure"][0]["evidence"][0]["evidence_ids"] == ["ev-1"]
+
+    def test_risky_claim_with_unrelated_approved_id_fails(self) -> None:
+        from video_app.planning import claim_supported
+
+        sets = {"approved": {"ev-1": "una persona camina por el campus"},
+                "pending": set(), "rejected": set()}
+        span = {"asset_id": "clip_0", "source_start_seconds": 2.0,
+                "source_end_seconds": 6.0,
+                "observed_content": "ganó la carrera",
+                "evidence_ids": ["ev-1"]}
+        assert claim_supported(span, {}, sets) is False
+
+
 class TestTitleGate:
     SUPPORT = "una persona camina por el campus y saluda a sus amigos"
 

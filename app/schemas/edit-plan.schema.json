@@ -385,6 +385,14 @@
             "boolean",
             "null"
           ]
+        },
+        "evidence_ids": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "string",
+            "maxLength": 64
+          }
         }
       }
     }
