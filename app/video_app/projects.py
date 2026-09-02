@@ -990,9 +990,14 @@ class ProjectService:
                     item for item in existing if item["concept_id"] in keep_concept_ids
                 ]
         try:
-            client = ChatClient(resolve_provider(
-                provider, model or PLANNER_DEFAULT_MODELS.get(provider)
-            ))
+            client = ChatClient(
+                resolve_provider(
+                    provider, model or PLANNER_DEFAULT_MODELS.get(provider)
+                ),
+                # big evidence packs put deepseek generations near the old
+                # 360s edge; on slow provider days every attempt clipped
+                timeout_seconds=600.0,
+            )
             document = generate_concepts(
                 client,
                 project,
@@ -1204,9 +1209,14 @@ class ProjectService:
         plan = load_json(plan_path)
         evidence = self.approved_evidence(project_id)
         try:
-            client = ChatClient(resolve_provider(
-                provider, model or PLANNER_DEFAULT_MODELS.get(provider)
-            ))
+            client = ChatClient(
+                resolve_provider(
+                    provider, model or PLANNER_DEFAULT_MODELS.get(provider)
+                ),
+                # big evidence packs put deepseek generations near the old
+                # 360s edge; on slow provider days every attempt clipped
+                timeout_seconds=600.0,
+            )
             new_plan, note = revise_plan(
                 client,
                 project,
