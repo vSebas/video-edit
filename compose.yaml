@@ -53,7 +53,8 @@ services:
       - -c
       - >
         BIND="${VIDEO_EDITING_BIND:-127.0.0.1}";
-        if [ "$$BIND" != "127.0.0.1" ] && [ -z "${VIDEO_EDITING_TOKEN:-}" ];
+        TOKEN_TRIMMED="$$(printf %s "${VIDEO_EDITING_TOKEN:-}" | tr -d "[:space:]")";
+        if [ "$$BIND" != "127.0.0.1" ] && [ -z "$$TOKEN_TRIMMED" ];
         then echo "REFUSING to bind $$BIND without VIDEO_EDITING_TOKEN" >&2; exit 1; fi;
         mkdir -p /tmp/rclone &&
         { cp /rclone-ro/rclone.conf /tmp/rclone/rclone.conf 2>/dev/null || true; } &&

@@ -74,6 +74,22 @@ def _r(value: float) -> float:
     return round(value, 6)
 
 
+def _grid(value: float, fps: float) -> float:
+    """Quantize seconds to the plan's frame grid — atomic edits must never
+    introduce fractional-frame boundaries (cross-review 8)."""
+    return round(round(value * fps) / fps, 6)
+
+
+def _op_number(op: dict, key: str) -> float:
+    try:
+        value = float(op[key])
+    except (TypeError, ValueError) as exc:
+        raise PlanOpError(f"{key} must be a number") from exc
+    if value != value or value in (float("inf"), float("-inf")):
+        raise PlanOpError(f"{key} must be finite")
+    return value
+
+
 def _ripple(plan: dict, from_seconds: float, delta: float) -> None:
     """Shift everything at/after a timeline position; overlays and titles
     ride along so they stay glued to their content."""
@@ -119,6 +135,20 @@ def _check_overlays_fit(plan: dict) -> None:
                 f"This edit would push voiceover {event['event_id']} past "
                 "the end of the video — remove it first"
             )
+    for label, events in (
+        ("B-roll", _broll_events(plan)),
+        ("voiceover", voiceover["events"] if voiceover else []),
+    ):
+        ordered = sorted(events, key=lambda e: e["timeline_start_seconds"])
+        for previous, current in zip(ordered, ordered[1:]):
+            if (current["timeline_start_seconds"]
+                    < previous["timeline_start_seconds"]
+                    + previous["duration_seconds"] - 1e-6):
+                raise PlanOpError(
+                    f"This edit would overlap {label} events "
+                    f"{previous['event_id']} and {current['event_id']} — "
+                    "remove or move one first"
+                )
 
 
 def _apply_delete(plan: dict, op: dict, assets: dict) -> str:
@@ -141,7 +171,8 @@ def _apply_trim(plan: dict, op: dict, assets: dict) -> str:
     index = _index_of(video_events, op["event_id"])
     video = video_events[index]
     audio = audio_events[index]
-    seconds = float(op["seconds"])
+    fps = plan["project"]["fps"]
+    seconds = _grid(_op_number(op, "seconds"), fps)
     if not 0 < seconds <= 60:
         raise PlanOpError("Trim seconds must be within (0, 60]")
     edge, direction = op["edge"], op["direction"]
@@ -197,7 +228,7 @@ def _apply_volume(plan: dict, op: dict, assets: dict) -> str:
         index = _index_of(video_track["events"], event_id)
         if index >= len(events):
             raise PlanOpError(f"No audio partner for {event_id!r}")
-    db = float(op["volume_db"])
+    db = _op_number(op, "volume_db")
     if not -96 <= db <= 12:
         raise PlanOpError("volume_db must be within [-96, 12]")
     events[index]["volume_db"] = db
@@ -210,7 +241,7 @@ def _apply_jl(plan: dict, op: dict, assets: dict) -> str:
     index = _index_of(video_events, op["event_id"])
     if index == 0:
         raise PlanOpError("The first scene has nothing before it to J/L into")
-    lead = float(op["lead_seconds"])
+    lead = _grid(_op_number(op, "lead_seconds"), plan["project"]["fps"])
     if not 0.1 <= abs(lead) <= 5:
         raise PlanOpError("lead_seconds must be 0.1-5s (either sign)")
     previous = audio_events[index - 1]
@@ -292,7 +323,7 @@ def _apply_add_voiceover(plan: dict, op: dict, assets: dict) -> str:
             f"{op['asset_id']} is not an audio asset — voiceovers come from "
             "recorded audio files in the footage folder"
         )
-    start = float(op["timeline_start_seconds"])
+    start = _grid(_op_number(op, "timeline_start_seconds"), plan["project"]["fps"])
     total = plan["project"]["duration_seconds"]
     if not 0 <= start <= total - 0.5:
         raise PlanOpError(
@@ -301,9 +332,13 @@ def _apply_add_voiceover(plan: dict, op: dict, assets: dict) -> str:
     available = float(asset.get("duration_seconds") or 0.0)
     if available < 0.5:
         raise PlanOpError(f"{op['asset_id']} is shorter than 0.5s")
-    duration = _r(min(available, total - start))
+    duration = _grid(min(available, total - start), plan["project"]["fps"])
     track = _voiceover_track(plan, create=True)
-    event_id = f"vo-{len(track['events']) + 1:02d}"
+    used = {e["event_id"] for e in track["events"]}
+    number = 1
+    while f"vo-{number:02d}" in used:
+        number += 1
+    event_id = f"vo-{number:02d}"
     for existing in track["events"]:
         a, b = existing["timeline_start_seconds"], (
             existing["timeline_start_seconds"] + existing["duration_seconds"]
@@ -333,6 +368,9 @@ def _apply_remove_voiceover(plan: dict, op: dict, assets: dict) -> str:
         raise PlanOpError("This plan has no voiceover track")
     index = _index_of(track["events"], op["event_id"])
     removed = track["events"].pop(index)
+    if not track["events"]:
+        # an empty A2 would place fine but be rejected by sync later
+        plan["tracks"].remove(track)
     return f"Voz en off {removed['event_id']} eliminada"
 
 
@@ -355,13 +393,14 @@ def apply_op(plan: dict, op: dict, inventory: dict) -> tuple[dict, str]:
     if kind not in _APPLIERS:
         raise PlanOpError(f"Unknown operation {kind!r}")
     applier, required = _APPLIERS[kind]
-    missing = required - set(op)
+    missing = required - {k for k, v in op.items() if v is not None}
     if missing:
         raise PlanOpError(f"{kind} is missing {', '.join(sorted(missing))}")
-    if op.get("edge") not in (None, "start", "end"):
-        raise PlanOpError("edge must be 'start' or 'end'")
-    if op.get("direction") not in (None, "shorten", "extend"):
-        raise PlanOpError("direction must be 'shorten' or 'extend'")
+    if kind == "trim_event":
+        if op["edge"] not in ("start", "end"):
+            raise PlanOpError("edge must be 'start' or 'end'")
+        if op["direction"] not in ("shorten", "extend"):
+            raise PlanOpError("direction must be 'shorten' or 'extend'")
     assets = {a["asset_id"]: a for a in inventory.get("assets", [])}
     candidate = deepcopy(plan)
     summary = applier(candidate, op, assets)

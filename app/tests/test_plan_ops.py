@@ -433,8 +433,9 @@ class TestVoiceoverOps:
         removed, _ = apply_op(with_vo, {
             "op": "remove_voiceover", "event_id": "vo-01",
         }, self._inventory())
+        # an empty A2 would break the later sync round-trip — it must go
         audios = [t for t in removed["tracks"] if t["kind"] == "audio"]
-        assert audios[1]["events"] == []
+        assert len(audios) == 1
 
     def test_delete_pushing_voiceover_past_end_is_refused(self) -> None:
         with_vo, _ = apply_op(_plan(), {

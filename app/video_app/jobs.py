@@ -65,12 +65,22 @@ class JobManager:
         except OSError:
             pass  # durability is best-effort; the in-memory view stays correct
 
-    def submit(self, kind: str, project_id: str, operation: Callable[[], Any]) -> dict:
+    def submit(
+        self,
+        kind: str,
+        project_id: str,
+        operation: Callable[[], Any],
+        fingerprint: str | None = None,
+    ) -> dict:
+        """fingerprint distinguishes materially different requests of the
+        same kind (captioned vs plain render, different models) so dedup
+        never hands back a job that will not do what was asked."""
         with self._lock:
             for job in self._jobs.values():
                 if (
                     job["project_id"] == project_id
                     and job["kind"] == kind
+                    and job.get("fingerprint") == fingerprint
                     and job["status"] in ("queued", "running")
                 ):
                     duplicate = dict(job)
@@ -81,6 +91,7 @@ class JobManager:
                 "job_id": job_id,
                 "project_id": project_id,
                 "kind": kind,
+                "fingerprint": fingerprint,
                 "status": "queued",
                 "created_at": utc_now(),
                 "started_at": None,

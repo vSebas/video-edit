@@ -89,11 +89,13 @@ def main() -> None:
 
     # Video and audio are independent timelines (J/L cuts move the audio
     # boundary without moving the picture boundary). Overlaps are errors;
-    # gaps are rendered as black/silence by segments() below.
+    # gaps are rendered as black/silence by segments() below. Tolerance is
+    # half a frame so legitimate one-frame gaps survive at any fps.
+    epsilon = 0.5 / plan["project"]["fps"]
     for kind, events in (("video", video_events), ("audio", audio_events)):
         cursor = 0.0
         for event in sorted(events, key=lambda e: e["timeline_start_seconds"]):
-            if event["timeline_start_seconds"] < cursor - 0.02:
+            if event["timeline_start_seconds"] < cursor - epsilon:
                 raise ValueError(
                     f"{kind} track overlaps itself at "
                     f"{event['timeline_start_seconds']}s"
@@ -127,10 +129,10 @@ def main() -> None:
         holes = []
         cursor = 0.0
         for event in sorted(events, key=lambda e: e["timeline_start_seconds"]):
-            if event["timeline_start_seconds"] > cursor + 0.02:
+            if event["timeline_start_seconds"] > cursor + epsilon:
                 holes.append((cursor, event["timeline_start_seconds"] - cursor))
             cursor = event["timeline_start_seconds"] + event["duration_seconds"]
-        if duration > cursor + 0.02:
+        if duration > cursor + epsilon:
             holes.append((cursor, duration - cursor))
         return holes
 
@@ -250,7 +252,7 @@ def main() -> None:
         y = 220 if hook else 190
         text = ffmpeg_text(event["text"])
         filters.append(
-            f"[{current_video}]drawtext=fontfile='{font_path}':text='{text}':"
+            f"[{current_video}]drawtext=expansion=none:fontfile='{font_path}':text='{text}':"
             f"fontsize={font_size}:fontcolor=white:borderw=3:bordercolor=black@0.85:"
             f"box=1:boxcolor=black@0.42:boxborderw=24:"
             f"x=(w-text_w)/2:y={y}:fix_bounds=true:"
@@ -276,10 +278,16 @@ def main() -> None:
             end = event["source_end_seconds"] or (start + event["duration_seconds"])
             gain = event.get("volume_db") or 0
             delay_ms = int(round(event["timeline_start_seconds"] * 1000))
+            length = end - start
+            fades = (
+                f",afade=t=in:st=0:d=0.012,"
+                f"afade=t=out:st={round(length - 0.012, 6)}:d=0.012"
+                if length > 0.1 else ""
+            )
             filters.append(
                 f"[{vo_input_base + index}:a:0]"
                 f"atrim=start={start}:end={end},asetpts=PTS-STARTPTS,"
-                f"volume={gain}dB,aresample=48000,"
+                f"volume={gain}dB{fades},aresample=48000,"
                 f"aformat=sample_fmts=fltp:channel_layouts=stereo,"
                 f"adelay={delay_ms}|{delay_ms}[vo{index}]"
             )

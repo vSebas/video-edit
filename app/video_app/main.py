@@ -48,6 +48,7 @@ class AnalyzeSpeechRequest(BaseModel):
 
 class AnalyzeContextRequest(BaseModel):
     model: str | None = Field(default=None, max_length=160)
+    force: bool = False
 
 
 class GenerateConceptsRequest(BaseModel):
@@ -364,6 +365,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return jobs.submit(
             "render", project_id,
             lambda: projects.render(project_id, burn_captions=burn_captions),
+            fingerprint=f"captions={burn_captions}",
         )
 
     @application.get("/api/projects/{project_id}/plan/revisions")
@@ -389,8 +391,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     @application.post("/api/projects/{project_id}/plan/command/apply")
-    def plan_command_apply(project_id: str):
-        return project_call(lambda: projects.plan_command_apply(project_id))
+    def plan_command_apply(project_id: str, proposal_id: str | None = None):
+        return project_call(
+            lambda: projects.plan_command_apply(project_id, proposal_id)
+        )
 
     @application.post("/api/projects/{project_id}/opentake/place")
     def opentake_place(project_id: str):
@@ -443,6 +447,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 project_id, options.provider, options.model,
                 force=options.force,
             ),
+            fingerprint=f"{options.provider}:{options.model}:{options.force}",
         )
 
     @application.post("/api/projects/{project_id}/analysis/speech", status_code=202)
@@ -455,6 +460,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             lambda: projects.analyze_speech(
                 project_id, options.model_size, force=options.force,
             ),
+            fingerprint=f"{options.model_size}:{options.force}",
         )
 
     @application.post("/api/projects/{project_id}/analysis/context", status_code=202)
@@ -464,7 +470,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return jobs.submit(
             "source_context_analysis",
             project_id,
-            lambda: projects.analyze_context(project_id, options.model),
+            lambda: projects.analyze_context(
+                project_id, options.model, force=options.force,
+            ),
+            fingerprint=f"{options.model}:{options.force}",
         )
 
     @application.post("/api/projects/{project_id}/concepts", status_code=202)

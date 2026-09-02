@@ -426,14 +426,22 @@ def _sanitize_concepts(
             if not isinstance(beat, dict):
                 continue
             spans = clean_spans(beat.get("evidence"))
-            cutaways = clean_spans(beat.get("cutaways"))[:2]
             # a cutaway that repeats the beat's own footage shows nothing new
             primary_assets = {span["asset_id"] for span in spans}
-            cutaways = [c for c in cutaways if c["asset_id"] not in primary_assets]
+            cutaways = [
+                c for c in clean_spans(beat.get("cutaways"))
+                if c["asset_id"] not in primary_assets
+            ][:2]
             if spans:
                 beat_id = re.sub(
                     r"[^a-z0-9_]+", "_", str(beat.get("beat_id", "")).lower()
                 ).strip("_") or f"beat_{len(beats) + 1}"
+                taken = {b["beat_id"] for b in beats}
+                if beat_id in taken:  # duplicate ids merge cutaway windows
+                    suffix = 2
+                    while f"{beat_id}_{suffix}" in taken:
+                        suffix += 1
+                    beat_id = f"{beat_id}_{suffix}"
                 duration = sum(
                     span["end_seconds"] - span["start_seconds"] for span in spans
                 )
@@ -968,6 +976,7 @@ def validate_edit_plan(plan: dict, schema_path: Path, project: dict) -> None:
         for asset in project.get("inventory", {}).get("assets", [])
     }
     duration = plan["project"]["duration_seconds"]
+    epsilon = 0.5 / float(plan["project"]["fps"] or 30)
     for kind in ("video", "audio"):
         track = next((t for t in plan["tracks"] if t["kind"] == kind), None)
         if track is None:
@@ -976,7 +985,7 @@ def validate_edit_plan(plan: dict, schema_path: Path, project: dict) -> None:
         for event in sorted(
             track["events"], key=lambda e: e["timeline_start_seconds"]
         ):
-            if event["timeline_start_seconds"] < cursor - 0.02:
+            if event["timeline_start_seconds"] < cursor - epsilon:
                 raise PlanningError(
                     f"{kind} track overlaps itself at "
                     f"{event['timeline_start_seconds']:.3f}s"
@@ -1007,6 +1016,20 @@ def validate_edit_plan(plan: dict, schema_path: Path, project: dict) -> None:
                 raise PlanningError(
                     f"Voiceover event {event['event_id']} extends past the "
                     "plan duration"
+                )
+    for track in plan["tracks"]:
+        if track.get("role") not in ("broll", "voiceover"):
+            continue
+        ordered = sorted(
+            track["events"], key=lambda e: e["timeline_start_seconds"]
+        )
+        for previous, current in zip(ordered, ordered[1:]):
+            if (current["timeline_start_seconds"]
+                    < previous["timeline_start_seconds"]
+                    + previous["duration_seconds"] - epsilon):
+                raise PlanningError(
+                    f"{track.get('role')} events {previous['event_id']} and "
+                    f"{current['event_id']} overlap"
                 )
     video_tracks = [t for t in plan["tracks"] if t["kind"] == "video"]
     if len(video_tracks) > 2:

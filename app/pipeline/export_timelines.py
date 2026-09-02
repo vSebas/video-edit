@@ -105,7 +105,19 @@ def export_otio(plan, assets):
         ("audio", otio.schema.TrackKind.Audio, "A1 — Natural Production Audio"),
     ):
         output_track = otio.schema.Track(name=name, kind=otio_kind)
-        for event in track(plan, kind)["events"]:
+        previous_end = 0.0
+        for event in sorted(
+            track(plan, kind)["events"],
+            key=lambda e: e["timeline_start_seconds"],
+        ):
+            gap = event["timeline_start_seconds"] - previous_end
+            if gap > 1e-9:
+                output_track.append(
+                    otio.schema.Gap(source_range=time_range(0, gap, fps))
+                )
+            previous_end = (
+                event["timeline_start_seconds"] + event["duration_seconds"]
+            )
             asset = assets[event["asset_id"]]
             clip = otio.schema.Clip(
                 name=f"{event['event_id']} — {asset['filename']}",
@@ -135,7 +147,7 @@ def export_otio(plan, assets):
             name="V2 — B-Roll", kind=otio.schema.TrackKind.Video
         )
         previous_end = 0.0
-        for event in overlays:
+        for event in sorted(overlays, key=lambda e: e["timeline_start_seconds"]):
             gap = event["timeline_start_seconds"] - previous_end
             if gap > 1e-9:
                 output_track.append(
@@ -169,7 +181,7 @@ def export_otio(plan, assets):
             name="A2 — Voiceover", kind=otio.schema.TrackKind.Audio
         )
         previous_end = 0.0
-        for event in voiceovers:
+        for event in sorted(voiceovers, key=lambda e: e["timeline_start_seconds"]):
             gap = event["timeline_start_seconds"] - previous_end
             if gap > 1e-9:
                 output_track.append(
@@ -416,7 +428,10 @@ def export_xmeml(plan, assets):
                 add(clipitem, "file", attributes={"id": f"file-{asset['asset_id']}"})
             sourcetrack = add(clipitem, "sourcetrack")
             add(sourcetrack, "mediatype", "video")
-            add(sourcetrack, "trackindex", 2)
+            add(sourcetrack, "trackindex", 1)
+            rotation = (event.get("reframe") or {}).get("rotation_degrees", 0)
+            if rotation:
+                add_motion_filter(clipitem, -rotation)
 
     title_track = add(video_parent, "track")
     for event in track(plan, "title")["events"]:
@@ -478,7 +493,7 @@ def export_xmeml(plan, assets):
                 add(clipitem, "file", attributes={"id": f"file-{asset['asset_id']}"})
             sourcetrack = add(clipitem, "sourcetrack")
             add(sourcetrack, "mediatype", "audio")
-            add(sourcetrack, "trackindex", 2)
+            add(sourcetrack, "trackindex", 1)
             add_audio_level_filter(clipitem, event.get("volume_db"))
         add(vo_xml_track, "enabled", "TRUE")
         add(vo_xml_track, "locked", "FALSE")
@@ -576,7 +591,7 @@ def validate_exports(plan):
     )
     expected_rotations = [
         str(-(event.get("reframe") or {}).get("rotation_degrees", 0))
-        for event in track(plan, "video")["events"]
+        for event in track(plan, "video")["events"] + broll_events(plan)
         if (event.get("reframe") or {}).get("rotation_degrees", 0)
     ]
     rotation_values = [

@@ -1093,7 +1093,7 @@ async function planCommandPropose() {
       </div>`;
     $('#plan-command-apply')?.addEventListener('click', async () => {
       try {
-        const applied = await api(`/api/projects/${project.project_id}/plan/command/apply`, { method: 'POST' });
+        const applied = await api(`/api/projects/${project.project_id}/plan/command/apply?proposal_id=${proposed.proposal_id}`, { method: 'POST' });
         notice(`${applied.summary} (revisión ${applied.revision}). Re-renderiza, y «Enviar a OpenTake» si quieres seguir editando allí.`);
         box.innerHTML = '';
         $('#plan-command-input').value = '';

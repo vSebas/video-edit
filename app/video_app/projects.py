@@ -342,6 +342,9 @@ class ProjectService:
             if not force:
                 cached = self._existing_run_for(project_id, content_key)
                 if cached is not None:
+                    # rotation detection is incremental and pre-dates some
+                    # runs — a cache hit must not skip unchecked assets
+                    self._detect_rotations(project_id, client)
                     return cached
             normalized, raw_records, telemetry = analyze_assets(
                 client, assets, media_root, project_id, run_id
@@ -405,7 +408,7 @@ class ProjectService:
         repeat run returns the existing artifact instead of paying again."""
         identity = {
             "media": sorted(
-                a.get("sha256", a["asset_id"]) for a in assets
+                [a["asset_id"], a.get("sha256", "")] for a in assets
             ),
             "adapter": adapter,
             "model": model or "",
@@ -466,7 +469,9 @@ class ProjectService:
             state["updated_at"] = utc_now()
             write_json(path, state)
 
-    def analyze_context(self, project_id: str, model: str | None = None) -> dict:
+    def analyze_context(
+        self, project_id: str, model: str | None = None, force: bool = False,
+    ) -> dict:
         """Build derived source/event/relationship context without promoting
         any of it into the semantic evidence or review pipelines."""
         project = self.get_project(project_id)
@@ -478,14 +483,25 @@ class ProjectService:
         run_key = f"ctx-live-{run_id}"
         try:
             client = make_client("gemini", model)
+            anchors = sorted(
+                str(o.get("evidence_id") or o.get("id") or "")
+                for o in (self._fine_observations(project_id) or [])
+            )
             content_key = self._analysis_content_key(
                 assets, adapter="owned-source-context",
                 model=getattr(client.config, "model", model),
-                prompt_version=CONTEXT_PROMPT_VERSION,
+                prompt_version=CONTEXT_PROMPT_VERSION
+                + ":" + hashlib.sha256(
+                    json.dumps(anchors).encode()
+                ).hexdigest()[:12],
             )
-            cached = self._existing_run_for(project_id, content_key)
-            if cached is not None:
-                return cached
+            if not force:
+                cached = self._existing_run_for(project_id, content_key)
+                if cached is not None:
+                    # rotation detection is incremental and pre-dates some
+                    # runs — a cache hit must not skip unchecked assets
+                    self._detect_rotations(project_id, client)
+                    return cached
             normalized, raw_records, telemetry = analyze_context(
                 client,
                 assets,
@@ -983,27 +999,36 @@ class ProjectService:
         except (ProviderError, PlanningError) as exc:
             raise ProjectError(f"Plan revision failed: {exc}") from exc
 
-        previous_revision = int(plan.get("revision", 1))
-        write_json(
-            plan_dir / "revisions" / f"edit-plan.rev{previous_revision:03d}.json",
-            plan,
-        )
-        write_json(plan_path, new_plan)
-        log_path = plan_dir / "revisions" / "revision-log.json"
-        log = load_json(log_path) if log_path.is_file() else {"entries": []}
-        log["entries"].append(
-            {
-                "revision": new_plan["revision"],
-                "instruction": instruction.strip(),
-                "note": note,
-                "revised_at": new_plan["generated_at"],
-                "provider": provider,
-            }
-        )
-        write_json(log_path, log)
-
-        path = self.settings.runtime / project_id / "project.json"
+        # The whole install is one transaction under the project lock, with
+        # a revision check against what was loaded — a concurrent
+        # command/sync apply can no longer be silently overwritten
+        # (cross-review 21).
         with self._project_write(project_id):
+            current = load_json(plan_path)
+            if int(current.get("revision", 1)) != int(plan.get("revision", 1)):
+                raise ProjectError(
+                    "The plan changed while this revision was being "
+                    "generated — review the new state and revise again"
+                )
+            previous_revision = int(plan.get("revision", 1))
+            write_json(
+                plan_dir / "revisions" / f"edit-plan.rev{previous_revision:03d}.json",
+                plan,
+            )
+            write_json(plan_path, new_plan)
+            log_path = plan_dir / "revisions" / "revision-log.json"
+            log = load_json(log_path) if log_path.is_file() else {"entries": []}
+            log["entries"].append(
+                {
+                    "revision": new_plan["revision"],
+                    "instruction": instruction.strip(),
+                    "note": note,
+                    "revised_at": new_plan["generated_at"],
+                    "provider": provider,
+                }
+            )
+            write_json(log_path, log)
+            path = self.settings.runtime / project_id / "project.json"
             stored = load_json(path)
             stored["updated_at"] = utc_now()
             stored["plan"] = new_plan
@@ -1297,9 +1322,11 @@ class ProjectService:
             )
         except (PlanOpError, PlanningError) as exc:
             raise ProjectError(str(exc)) from exc
+        proposal_id = uuid.uuid4().hex[:12]
         write_json(
             self.settings.runtime / project_id / "plan-command.json",
             {
+                "proposal_id": proposal_id,
                 "base_revision": int(plan.get("revision", 1)),
                 "instruction": instruction,
                 "op": op,
@@ -1309,19 +1336,30 @@ class ProjectService:
         )
         return {
             "status": "proposed",
+            "proposal_id": proposal_id,
             "op": op,
             "summary": summary,
             "revision_preview": candidate["revision"],
         }
 
-    def plan_command_apply(self, project_id: str) -> dict:
-        """Install the last proposed instruction edit as a plan revision."""
+    def plan_command_apply(
+        self, project_id: str, proposal_id: str | None = None
+    ) -> dict:
+        """Install the last proposed instruction edit as a plan revision.
+        A proposal token pins the apply to the exact proposal the caller
+        reviewed — two browsers cannot install each other's edits
+        (cross-review 21)."""
         plan_dir = self.settings.runtime / project_id / "plan"
         plan_path = plan_dir / "edit-plan.json"
         stored_path = self.settings.runtime / project_id / "plan-command.json"
         if not stored_path.is_file():
             raise ProjectError("No proposed edit — send an instruction first")
         stored = load_json(stored_path)
+        if proposal_id is not None and stored.get("proposal_id") != proposal_id:
+            raise ProjectError(
+                "A different proposal replaced the one you reviewed — "
+                "send the instruction again"
+            )
         with self._project_write(project_id):
             plan = load_json(plan_path)
             if int(plan.get("revision", 1)) != stored["base_revision"]:
@@ -1751,10 +1789,12 @@ class ProjectService:
             segments_by_asset[record["asset_id"]] = record.get("segments", [])
 
         entries: list[tuple[float, float, str]] = []
-        video_events = next(
-            track["events"] for track in plan["tracks"] if track["kind"] == "video"
+        # Captions follow SPOKEN audio, which diverges from the picture on
+        # J/L cuts (cross-review 11): the primary audio track is the truth.
+        caption_events = next(
+            track["events"] for track in plan["tracks"] if track["kind"] == "audio"
         )
-        for event in video_events:
+        for event in caption_events:
             for segment in segments_by_asset.get(event["asset_id"], []):
                 start = max(segment["start_seconds"], event["source_start_seconds"])
                 end = min(segment["end_seconds"], event["source_end_seconds"])
@@ -1957,11 +1997,18 @@ class ProjectService:
         # Artifact cache: an identical plan (and captions choice) with an
         # existing file is a no-op — repeat renders of an unchanged cut are
         # the most common wasted minutes in a session.
+        renderer_sha = hashlib.sha256(
+            (PIPELINE_DIR / "render_edit.py").read_bytes()
+        ).hexdigest()[:12]
         render_key = {
             "plan_sha": hashlib.sha256(
                 json.dumps(plan, sort_keys=True).encode()
             ).hexdigest()[:16],
-            "burn_captions": burn_captions,
+            "renderer": renderer_sha,
+            "captions_sha": (
+                hashlib.sha256(captions_path.read_bytes()).hexdigest()[:12]
+                if captions_path is not None else None
+            ),
         }
         state_path = output_dir / "review.render-state.json"
         if output.is_file() and state_path.is_file():
