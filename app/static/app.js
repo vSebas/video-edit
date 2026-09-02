@@ -1713,6 +1713,10 @@ async function loadProject(projectId) {
           jobs.map((job) => JOB_LABELS[job.kind] || job.kind),
           0,
         );
+        // the chronometer survives a refresh: the job knows when it began
+        if (jobs[0]?.started_at) {
+          state.busy.startedAt = Date.parse(jobs[0].started_at);
+        }
         Promise.allSettled(jobs.map((job) => pollJob(job.job_id))).then(async () => {
           if (!current()) return;
           state.busy = null;
