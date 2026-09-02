@@ -399,9 +399,13 @@ UI) all shipped 2026-09-01 — see the P0-P6 log above.
    divergent pairs survive save/load; playback has no link assumptions).
    840 fork tests pass. Build note: release binaries need
    `--features custom-protocol` or the webview shows "Could not connect to
-   localhost". NEXT: app-side integration — placement creates V2/A2 via
-   add_track, places voiceovers, authors J/L via allowLinkDivergence, the
-   two placement refusals lift, and sync learns the new readback shapes.
+   localhost". App-side integration LANDED the
+   same evening: placement creates V2/A2 via add_track, places voiceovers
+   (volumes set, geometry verified), and authors J/L cuts by re-tiling the
+   linked audio lane per boundary (no fork change needed — moves never
+   propagated to partners). Both placement refusals are gone; only
+   divergent-timeline SYNC remains fail-closed (clear message), the last
+   known round-trip gap.
    Original (superseded) note: OpenTake learns to
    REPRESENT render-side polish so placement stops refusing it — add_track
    + existing-index placement on external MCP (also removes the manual V2
