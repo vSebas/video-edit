@@ -1300,9 +1300,15 @@ class ProjectService:
         client = ChatClient(resolve_provider(
             provider, model or PLANNER_DEFAULT_MODELS.get(provider)
         ))
+        # Content hints let instructions name footage by WHAT IT SHOWS
+        # ("la comida del comedor") instead of by asset id.
+        hints: dict[str, str] = {}
+        for item in self.approved_evidence(project_id):
+            hints.setdefault(item["asset_id"], item.get("caption") or "")
         try:
             op = instruction_to_op(
-                client, plan, instruction, project.get("inventory") or {}
+                client, plan, instruction,
+                project.get("inventory") or {}, hints,
             )
         except ProviderError as exc:
             raise ProjectError(f"The instruction model failed: {exc}") from exc

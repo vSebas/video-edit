@@ -374,6 +374,154 @@ def _apply_remove_voiceover(plan: dict, op: dict, assets: dict) -> str:
     return f"Voz en off {removed['event_id']} eliminada"
 
 
+def _broll_track(plan: dict, create: bool = False) -> dict | None:
+    videos = [t for t in plan["tracks"] if t["kind"] == "video"]
+    if len(videos) == 2 and videos[1].get("role") == "broll":
+        return videos[1]
+    if create:
+        track = {"track_id": "v2", "kind": "video", "role": "broll",
+                 "events": []}
+        plan["tracks"].append(track)
+        return track
+    return None
+
+
+def _primary_end(plan: dict) -> float:
+    video, _ = _primary_tracks(plan)
+    return max(
+        (e["timeline_start_seconds"] + e["duration_seconds"]
+         for e in video["events"]), default=0.0,
+    )
+
+
+def _video_asset(assets: dict, asset_id: str) -> dict:
+    asset = assets.get(asset_id)
+    if asset is None:
+        raise PlanOpError(f"No asset {asset_id!r} in the inventory")
+    if asset.get("media_type") != "video":
+        raise PlanOpError(f"{asset_id} is not a video asset")
+    return asset
+
+
+def _new_broll_event(plan, asset_id, source_start, timeline_start, duration):
+    track = _broll_track(plan, create=True)
+    used = {e["event_id"] for e in track["events"]}
+    number = 1
+    while f"bro-{number:02d}" in used:
+        number += 1
+    event = {
+        "event_id": f"bro-{number:02d}", "asset_id": asset_id,
+        "source_start_seconds": source_start,
+        "source_end_seconds": round(source_start + duration, 6),
+        "timeline_start_seconds": timeline_start,
+        "duration_seconds": duration, "playback_rate": 1.0,
+        "intent": "b-roll", "observed_content": None, "confidence": 0.5,
+        "reframe": None, "transition_out": None, "text": None,
+        "volume_db": None,
+    }
+    track["events"].append(event)
+    track["events"].sort(key=lambda e: e["timeline_start_seconds"])
+    return event
+
+
+def _apply_add_broll(plan: dict, op: dict, assets: dict) -> str:
+    fps = plan["project"]["fps"]
+    asset = _video_asset(assets, op["asset_id"])
+    start = _grid(_op_number(op, "timeline_start_seconds"), fps)
+    end = _primary_end(plan)
+    if not 0 <= start <= end - 0.5:
+        raise PlanOpError(
+            f"timeline_start_seconds must be within [0, {end - 0.5:.1f}]"
+        )
+    available = float(asset.get("duration_seconds") or 0.0)
+    source_start = _grid(
+        _op_number(op, "source_start_seconds")
+        if op.get("source_start_seconds") is not None else 0.0, fps,
+    )
+    if source_start < 0 or source_start >= available:
+        raise PlanOpError(
+            f"source_start_seconds must be within [0, {available:.1f})"
+        )
+    duration = _grid(
+        _op_number(op, "duration_seconds")
+        if op.get("duration_seconds") is not None
+        else min(4.0, available - source_start, end - start), fps,
+    )
+    if duration < 0.5:
+        raise PlanOpError("B-roll must be at least 0.5s")
+    if source_start + duration > available + 0.05:
+        raise PlanOpError(
+            f"{op['asset_id']} has only {available:.1f}s of source material"
+        )
+    event = _new_broll_event(plan, op["asset_id"], source_start, start, duration)
+    _check_overlays_fit(plan)
+    return (
+        f"B-roll {event['event_id']} ({op['asset_id']}) sobre "
+        f"{start:.1f}-{start + duration:.1f}s; el audio original continúa"
+    )
+
+
+def _apply_remove_broll(plan: dict, op: dict, assets: dict) -> str:
+    track = _broll_track(plan)
+    if track is None:
+        raise PlanOpError("This plan has no B-roll track")
+    index = _index_of(track["events"], op["event_id"])
+    removed = track["events"].pop(index)
+    if not track["events"]:
+        plan["tracks"].remove(track)
+    return f"B-roll {removed['event_id']} eliminado; vuelve a verse la escena"
+
+
+def _apply_replace_broll(plan: dict, op: dict, assets: dict) -> str:
+    fps = plan["project"]["fps"]
+    track = _broll_track(plan)
+    if track is None:
+        raise PlanOpError("This plan has no B-roll track")
+    event = track["events"][_index_of(track["events"], op["event_id"])]
+    asset = _video_asset(assets, op["asset_id"])
+    available = float(asset.get("duration_seconds") or 0.0)
+    source_start = _grid(
+        _op_number(op, "source_start_seconds")
+        if op.get("source_start_seconds") is not None else 0.0, fps,
+    )
+    if source_start + event["duration_seconds"] > available + 0.05:
+        raise PlanOpError(
+            f"{op['asset_id']} has only {available:.1f}s of source material "
+            f"for this {event['duration_seconds']:.1f}s slot"
+        )
+    event["asset_id"] = op["asset_id"]
+    event["source_start_seconds"] = source_start
+    event["source_end_seconds"] = _r(source_start + event["duration_seconds"])
+    event["observed_content"] = None
+    event["confidence"] = 0.5
+    return (
+        f"B-roll {event['event_id']} ahora muestra {op['asset_id']} "
+        f"(mismo hueco de {event['duration_seconds']:.1f}s)"
+    )
+
+
+def _apply_move_broll(plan: dict, op: dict, assets: dict) -> str:
+    fps = plan["project"]["fps"]
+    track = _broll_track(plan)
+    if track is None:
+        raise PlanOpError("This plan has no B-roll track")
+    event = track["events"][_index_of(track["events"], op["event_id"])]
+    start = _grid(_op_number(op, "timeline_start_seconds"), fps)
+    end = _primary_end(plan)
+    if not 0 <= start <= end - event["duration_seconds"] + 0.05:
+        raise PlanOpError(
+            "timeline_start_seconds must keep the B-roll within the video "
+            f"(0 to {end - event['duration_seconds']:.1f})"
+        )
+    event["timeline_start_seconds"] = start
+    track["events"].sort(key=lambda e: e["timeline_start_seconds"])
+    _check_overlays_fit(plan)
+    return (
+        f"B-roll {event['event_id']} movido a "
+        f"{start:.1f}-{start + event['duration_seconds']:.1f}s"
+    )
+
+
 _APPLIERS = {
     "delete_event": (_apply_delete, {"event_id"}),
     "trim_event": (_apply_trim, {"event_id", "edge", "direction", "seconds"}),
@@ -383,6 +531,10 @@ _APPLIERS = {
     "add_voiceover": (_apply_add_voiceover,
                       {"asset_id", "timeline_start_seconds"}),
     "remove_voiceover": (_apply_remove_voiceover, {"event_id"}),
+    "add_broll": (_apply_add_broll, {"asset_id", "timeline_start_seconds"}),
+    "remove_broll": (_apply_remove_broll, {"event_id"}),
+    "replace_broll": (_apply_replace_broll, {"event_id", "asset_id"}),
+    "move_broll": (_apply_move_broll, {"event_id", "timeline_start_seconds"}),
 }
 
 
@@ -408,7 +560,11 @@ def apply_op(plan: dict, op: dict, inventory: dict) -> tuple[dict, str]:
     return candidate, summary
 
 
-def _event_table(plan: dict, inventory: dict | None = None) -> str:
+def _event_table(
+    plan: dict,
+    inventory: dict | None = None,
+    asset_hints: dict | None = None,
+) -> str:
     lines = []
     video, audio = _primary_tracks(plan)
     for v, a in zip(video["events"], audio["events"]):
@@ -448,6 +604,19 @@ def _event_table(plan: dict, inventory: dict | None = None) -> str:
                 f"- {a['asset_id']} ({float(a.get('duration_seconds') or 0):.1f}s)"
                 f" :: {a.get('filename', '')}"
             )
+    video_assets = [
+        a for a in (inventory or {}).get("assets", [])
+        if a.get("media_type") == "video"
+    ]
+    if video_assets:
+        lines.append("Available footage assets (for B-roll):")
+        for a in video_assets:
+            hint = (asset_hints or {}).get(a["asset_id"], "")
+            hint = f" — {hint[:80]}" if hint else ""
+            lines.append(
+                f"- {a['asset_id']} ({float(a.get('duration_seconds') or 0):.1f}s)"
+                f" :: {a.get('filename', '')}{hint}"
+            )
     return "\n".join(lines)
 
 
@@ -460,6 +629,10 @@ Respond with EXACTLY one JSON object, nothing else. One of:
 {"op":"set_title","event_id":"...","text":"..."}
 {"op":"add_voiceover","asset_id":"<an available voiceover audio asset>","timeline_start_seconds":<number>}
 {"op":"remove_voiceover","event_id":"vo-.."}
+{"op":"add_broll","asset_id":"<a footage asset>","timeline_start_seconds":<number>,"duration_seconds":<optional, default up to 4>,"source_start_seconds":<optional, default 0>}
+{"op":"remove_broll","event_id":"bro-.."}
+{"op":"replace_broll","event_id":"bro-..","asset_id":"<a footage asset>","source_start_seconds":<optional>}
+{"op":"move_broll","event_id":"bro-..","timeline_start_seconds":<number>}
 {"op":"reject","reason":"<short reason in the instruction's language>"}
 
 Rules: pick exactly ONE operation. Use event ids from the timeline listing
@@ -470,7 +643,8 @@ reason. Do not invent event ids.
 
 
 def instruction_to_op(
-    client, plan: dict, instruction: str, inventory: dict | None = None
+    client, plan: dict, instruction: str, inventory: dict | None = None,
+    asset_hints: dict | None = None,
 ) -> dict:
     """Map a natural-language instruction to one closed-set op via the LLM."""
     instruction = (instruction or "").strip()
@@ -482,7 +656,7 @@ def instruction_to_op(
             "content": (
                 "You translate ONE editing instruction into ONE structured "
                 "operation on a video edit plan.\n\nTimeline:\n"
-                + _event_table(plan, inventory)
+                + _event_table(plan, inventory, asset_hints)
                 + "\n\n" + _OPS_CONTRACT
             ),
         },

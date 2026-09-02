@@ -62,8 +62,10 @@ def _plan(with_broll=False):
 
 
 INVENTORY = {"assets": [
-    {"asset_id": "clip_a", "duration_seconds": 10.0},
-    {"asset_id": "clip_b", "duration_seconds": 6.0},
+    {"asset_id": "clip_a", "media_type": "video", "duration_seconds": 10.0,
+     "filename": "clip_a.mp4"},
+    {"asset_id": "clip_b", "media_type": "video", "duration_seconds": 6.0,
+     "filename": "clip_b.mp4"},
 ]}
 
 
@@ -538,3 +540,91 @@ class TestConceptTrust:
             {"$ref": "#/$defs/evidence", "$defs": schema["$defs"]}
         )
         assert not list(validator.iter_errors(span))
+
+
+class TestBrollOps:
+    """Conversational B-roll: the vocabulary gap the second assessment found."""
+
+    def test_add_broll_defaults_and_track_creation(self) -> None:
+        candidate, summary = apply_op(_plan(), {
+            "op": "add_broll", "asset_id": "clip_b",
+            "timeline_start_seconds": 3.0,
+        }, INVENTORY)
+        videos = [t for t in candidate["tracks"] if t["kind"] == "video"]
+        assert len(videos) == 2 and videos[1]["role"] == "broll"
+        (event,) = videos[1]["events"]
+        assert event["event_id"] == "bro-01"
+        assert event["duration_seconds"] == 4.0  # default cap
+        assert event["source_start_seconds"] == 0.0
+        assert "audio original" in summary
+
+    def test_overlapping_broll_refused(self) -> None:
+        with_one, _ = apply_op(_plan(with_broll=True), {
+            "op": "add_broll", "asset_id": "clip_b",
+            "timeline_start_seconds": 0.5, "duration_seconds": 1.0,
+        }, INVENTORY)
+        with pytest.raises(PlanOpError, match="overlap"):
+            apply_op(with_one, {
+                "op": "add_broll", "asset_id": "clip_b",
+                "timeline_start_seconds": 1.0, "duration_seconds": 1.0,
+            }, INVENTORY)
+
+    def test_add_broll_needs_video_asset_and_source_material(self) -> None:
+        inventory = {"assets": INVENTORY["assets"] + [
+            {"asset_id": "memo", "media_type": "audio",
+             "duration_seconds": 3.0},
+        ]}
+        with pytest.raises(PlanOpError, match="not a video asset"):
+            apply_op(_plan(), {
+                "op": "add_broll", "asset_id": "memo",
+                "timeline_start_seconds": 1.0,
+            }, inventory)
+        with pytest.raises(PlanOpError, match="source material"):
+            apply_op(_plan(), {
+                "op": "add_broll", "asset_id": "clip_b",
+                "timeline_start_seconds": 1.0,
+                "source_start_seconds": 4.0, "duration_seconds": 3.0,
+            }, INVENTORY)
+
+    def test_remove_broll_drops_empty_track(self) -> None:
+        candidate, _ = apply_op(_plan(with_broll=True), {
+            "op": "remove_broll", "event_id": "bro-01",
+        }, INVENTORY)
+        videos = [t for t in candidate["tracks"] if t["kind"] == "video"]
+        assert len(videos) == 1
+
+    def test_replace_broll_keeps_slot(self) -> None:
+        candidate, summary = apply_op(_plan(with_broll=True), {
+            "op": "replace_broll", "event_id": "bro-01", "asset_id": "clip_a",
+            "source_start_seconds": 2.0,
+        }, INVENTORY)
+        videos = [t for t in candidate["tracks"] if t["kind"] == "video"]
+        (event,) = videos[1]["events"]
+        assert event["asset_id"] == "clip_a"
+        assert event["source_start_seconds"] == 2.0
+        assert event["timeline_start_seconds"] == 8.0  # slot unchanged
+        assert event["duration_seconds"] == 1.5
+        assert "mismo hueco" in summary
+
+    def test_move_broll_bounds_and_ripple_safety(self) -> None:
+        candidate, _ = apply_op(_plan(with_broll=True), {
+            "op": "move_broll", "event_id": "bro-01",
+            "timeline_start_seconds": 2.0,
+        }, INVENTORY)
+        videos = [t for t in candidate["tracks"] if t["kind"] == "video"]
+        assert videos[1]["events"][0]["timeline_start_seconds"] == 2.0
+        with pytest.raises(PlanOpError, match="within the video"):
+            apply_op(_plan(with_broll=True), {
+                "op": "move_broll", "event_id": "bro-01",
+                "timeline_start_seconds": 9.5,
+            }, INVENTORY)
+
+    def test_instruction_table_lists_footage_assets(self) -> None:
+        client = FakeClient({"op": "add_broll", "asset_id": "clip_b",
+                             "timeline_start_seconds": 1.0})
+        instruction_to_op(client, _plan(), "muestra la comida",
+                          INVENTORY)
+        system = client.messages[0]["content"]
+        assert "Available footage assets" in system
+        assert "clip_b (6.0s)" in system
+        assert "add_broll" in system
