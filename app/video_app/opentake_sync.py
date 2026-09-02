@@ -388,6 +388,7 @@ def timeline_to_candidate_plan(
     video_by_id = {}
     audio_for_video = {}
     audio_event_ids = set()
+    plan_mirrored = True
     for video_event, audio_event in zip(original_video, original_audio):
         event_id = video_event.get("event_id")
         if not isinstance(event_id, str) or not event_id:
@@ -404,10 +405,14 @@ def timeline_to_candidate_plan(
             raise SyncError(f"unsupported playback_rate on plan event {event_id}")
         if _number(audio_event.get("playback_rate", 1.0), event_id) != 1.0:
             raise SyncError(f"unsupported playback_rate on linked audio for {event_id}")
+        if video_event.get("asset_id") != audio_event.get("asset_id"):
+            raise SyncError(
+                f"plan video/audio assets do not match for {event_id}"
+            )
         if _event_frames(video_event, fps, event_id) != _event_frames(
             audio_event, fps, f"linked audio for {event_id}"
-        ) or video_event.get("asset_id") != audio_event.get("asset_id"):
-            raise SyncError(f"plan video/audio geometry does not match for {event_id}")
+        ):
+            plan_mirrored = False  # J/L plan: audio diverges by design
         video_by_id[event_id] = video_event
         audio_for_video[event_id] = audio_event
 
@@ -491,6 +496,66 @@ def timeline_to_candidate_plan(
             "bridge does not cover plan events: " + ", ".join(missing_bridge_events)
         )
     infos = [infos_by_id[event["event_id"]] for event in original_video]
+
+    # J/L plans need the partners' own identity: bridge audio_events map
+    # each plan audio event to its placed clip and envelope.
+    audio_env_for_video: dict[str, dict] = {}
+    if not plan_mirrored:
+        audio_bridge_events = bridge.get("audio_events")
+        if not isinstance(audio_bridge_events, list):
+            raise SyncError(
+                "this plan has J/L cuts but the bridge has no audio_events — "
+                "re-place the plan into OpenTake, then sync"
+            )
+        audio_env_by_event = {}
+        for item in audio_bridge_events:
+            if not isinstance(item, dict):
+                raise SyncError("bridge audio event must be an object")
+            audio_event_id = item.get("event_id")
+            clip_id = item.get("clip_id")
+            if not isinstance(clip_id, str) or not clip_id:
+                raise SyncError(
+                    f"bridge audio event {audio_event_id} has no clip_id"
+                )
+            if audio_event_id in audio_env_by_event:
+                raise SyncError(f"duplicate bridge audio event {audio_event_id}")
+            source_start = _frame(
+                item.get("source_start_frame"),
+                f"bridge audio event {audio_event_id} source_start_frame",
+            )
+            source_end = _frame(
+                item.get("source_end_frame"),
+                f"bridge audio event {audio_event_id} source_end_frame",
+            )
+            timeline_start = _frame(
+                item.get("timeline_start_frame"),
+                f"bridge audio event {audio_event_id} timeline_start_frame",
+            )
+            audio_env_by_event[audio_event_id] = {
+                "clip_id": clip_id,
+                "source_start": source_start,
+                "source_end": source_end,
+                "timeline_start": timeline_start,
+            }
+        for video_event in original_video:
+            audio_event = audio_for_video[video_event["event_id"]]
+            env = audio_env_by_event.get(audio_event.get("event_id"))
+            if env is None:
+                raise SyncError(
+                    "bridge audio_events do not cover plan audio event "
+                    f"{audio_event.get('event_id')}"
+                )
+            expected = _event_frames(
+                audio_event, fps, f"plan audio event {audio_event['event_id']}"
+            )
+            if (env["source_start"], env["source_end"], env["timeline_start"]) != (
+                expected[0], expected[1], expected[2],
+            ):
+                raise SyncError(
+                    "bridge audio envelope does not match plan audio event "
+                    f"{audio_event['event_id']}"
+                )
+            audio_env_for_video[video_event["event_id"]] = env
 
     broll_bridge_events = bridge.get("broll_events", [])
     if not isinstance(broll_bridge_events, list):
@@ -664,12 +729,17 @@ def timeline_to_candidate_plan(
                 f"{len(partners)} partners"
             )
         partner = partners[0]
-        if _geometry(clip) != _geometry(partner):
+        if plan_mirrored:
+            if _geometry(clip) != _geometry(partner):
+                raise SyncError(
+                    f"linked audio geometry mismatch for video clip "
+                    f"{clip['clip_id']} — this plan is mirrored, so a "
+                    "divergent pair means the timeline no longer matches "
+                    "the placed revision; re-place and sync again"
+                )
+        elif partner["media_ref"] != clip["media_ref"]:
             raise SyncError(
-                f"linked audio geometry mismatch for video clip "
-                f"{clip['clip_id']} — J/L-placed timelines cannot round-trip "
-                "through sync yet; re-place the mirrored revision to edit in "
-                "OpenTake, or keep editing the J/L cut render-side"
+                f"linked audio media mismatch for video clip {clip['clip_id']}"
             )
         paired[clip["clip_id"]] = partner
         paired_audio_ids.add(partner["clip_id"])
@@ -732,8 +802,22 @@ def timeline_to_candidate_plan(
         info = matches[0]
         if info["asset_id"] != asset_id:
             raise SyncError(f"bridge media identity mismatch for mediaRef {media_ref}")
+        partner = paired[clip["clip_id"]]
+        if not plan_mirrored:
+            env = audio_env_for_video[info["event_id"]]
+            known_identity = partner["clip_id"] == env["clip_id"]
+            contained = (
+                env["source_start"] <= partner["trim_start"]
+                and partner["source_end"] <= env["source_end"]
+            )
+            if not known_identity and not contained:
+                raise SyncError(
+                    f"audio partner {partner['clip_id']} of video clip "
+                    f"{clip['clip_id']} is outside the placed audio envelope "
+                    f"[{env['source_start']},{env['source_end']})"
+                )
         descendants[info["event_id"]].append(
-            {"video": clip, "audio": paired[clip["clip_id"]]}
+            {"video": clip, "audio": partner}
         )
 
     for info in infos:
@@ -786,7 +870,7 @@ def timeline_to_candidate_plan(
             info["video_event"], item["video_event_id"], item["video"], fps
         )
         audio_event = _rebuilt_event(
-            info["audio_event"], item["audio_event_id"], item["video"], fps
+            info["audio_event"], item["audio_event_id"], item["audio"], fps
         )
         video_event["asset_id"] = info["asset_id"]
         audio_event["asset_id"] = info["asset_id"]

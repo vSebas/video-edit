@@ -403,9 +403,12 @@ UI) all shipped 2026-09-01 — see the P0-P6 log above.
    same evening: placement creates V2/A2 via add_track, places voiceovers
    (volumes set, geometry verified), and authors J/L cuts by re-tiling the
    linked audio lane per boundary (no fork change needed — moves never
-   propagated to partners). Both placement refusals are gone; only
-   divergent-timeline SYNC remains fail-closed (clear message), the last
-   known round-trip gap.
+   propagated to partners). Both placement refusals are gone, and
+   divergent-pair sync landed the same night: the bridge records each
+   audio partner's identity and plan envelope, sync rebuilds audio events
+   from the partners' own geometry (one code path — mirrored pairs are the
+   degenerate case), and GUI edits on J/L pairs round-trip with the J/L
+   offset preserved. No known round-trip gaps remain.
    Original (superseded) note: OpenTake learns to
    REPRESENT render-side polish so placement stops refusing it — add_track
    + existing-index placement on external MCP (also removes the manual V2

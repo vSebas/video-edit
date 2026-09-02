@@ -628,6 +628,35 @@ def place_plan(
     bridge = build_bridge(
         plan, entries, ref_for, readback, project_id, broll, voiceover
     )
+    if not mirrored:
+        # J/L: record each audio partner's identity + plan envelope so sync
+        # can attribute divergent partners fail-closed.
+        fps = plan["project"]["fps"]
+        plan_audio = next(
+            t for t in plan["tracks"] if t["kind"] == "audio"
+        )["events"]
+        video_tracks_final = _video_tracks(readback)
+        primary_final = sorted(
+            (video_tracks_final[0].get("clips", []) if video_tracks_final else []),
+            key=lambda c: c["startFrame"],
+        )
+        partner_by_group = {
+            c.get("linkGroupId"): c
+            for t in readback.get("tracks", []) if t.get("type") == "audio"
+            for c in t.get("clips", []) if c.get("linkGroupId")
+        }
+        bridge["audio_events"] = [
+            {
+                "event_id": event["event_id"],
+                "clip_id": partner_by_group[v_clip.get("linkGroupId")]["clipId"],
+                "source_start_frame": round(event["source_start_seconds"] * fps),
+                "source_end_frame": round(event["source_end_seconds"] * fps),
+                "timeline_start_frame": round(
+                    event["timeline_start_seconds"] * fps
+                ),
+            }
+            for event, v_clip in zip(plan_audio, primary_final)
+        ]
     summary = {
         "placed_clips": len(entries),
         "placed_broll_clips": len(broll),

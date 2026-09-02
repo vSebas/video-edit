@@ -1148,3 +1148,92 @@ class TestJLPlacement:
         audio["events"][1]["timeline_start_seconds"] += 0.1  # break mirror
         with pytest.raises(BridgeError, match="different asset"):
             place_plan(plan, MINI_INVENTORY, "p", client=self._client())
+
+
+class TestJLRoundTrip:
+    """The last round-trip gap: sync FROM a J/L-placed timeline."""
+
+    def _placed(self):
+        from video_app.opentake_bridge import place_plan
+        from video_app.plan_ops import apply_op
+
+        plan, _ = apply_op(TestJLPlacement()._mirrored_plan(), {
+            "op": "jl_cut", "event_id": "v02", "lead_seconds": 0.4,
+        }, MINI_INVENTORY)
+        client = FakeOpenTake({
+            "red": {"id": "ref-red", "kind": "video"},
+            "blue": {"id": "ref-blue", "kind": "video"},
+        })
+        _, bridge = place_plan(plan, MINI_INVENTORY, "p", client=client)
+        assert "audio_events" in bridge
+        return plan, bridge, client
+
+    def test_untouched_jl_timeline_round_trips(self) -> None:
+        from video_app.opentake_sync import timeline_to_candidate_plan
+
+        plan, bridge, client = self._placed()
+        candidate, diff = timeline_to_candidate_plan(
+            plan, bridge, client.get_timeline()
+        )
+        original_audio = next(
+            t for t in plan["tracks"] if t["kind"] == "audio"
+        )["events"]
+        candidate_audio = next(
+            t for t in candidate["tracks"] if t["kind"] == "audio"
+        )["events"]
+        for before, after in zip(original_audio, candidate_audio):
+            for field in ("source_start_seconds", "source_end_seconds",
+                          "timeline_start_seconds", "duration_seconds"):
+                assert after[field] == before[field], (field, before, after)
+        assert not [d for d in diff if d["kind"] != "unchanged"]
+
+    def test_gui_edit_on_jl_pair_syncs_both_sides(self) -> None:
+        from video_app.opentake_sync import timeline_to_candidate_plan
+
+        plan, bridge, client = self._placed()
+        # Simulate a GUI trim of pair 2's head by 6 frames: propagation
+        # applies the same delta to both clips, preserving the J offset.
+        video_clip = sorted(
+            client.tracks[0]["clips"], key=lambda c: c["startFrame"]
+        )[1]
+        partner = next(
+            c for t in client.tracks if t["type"] == "audio"
+            for c in t["clips"]
+            if c.get("linkGroupId") == video_clip["linkGroupId"]
+        )
+        for clip in (video_clip, partner):
+            clip["startFrame"] += 6
+            clip["durationFrames"] -= 6
+            clip["trimStartFrame"] += 6
+        candidate, diff = timeline_to_candidate_plan(
+            plan, bridge, client.get_timeline()
+        )
+        video_events = next(
+            t for t in candidate["tracks"] if t["kind"] == "video"
+        )["events"]
+        audio_events = next(
+            t for t in candidate["tracks"] if t["kind"] == "audio"
+        )["events"]
+        assert video_events[1]["source_start_seconds"] == 1.2
+        assert audio_events[1]["source_start_seconds"] == 0.8  # 0.6 + 0.2
+        # the J offset survives: audio still leads by 0.4s
+        assert round(
+            video_events[1]["timeline_start_seconds"]
+            - audio_events[1]["timeline_start_seconds"], 6
+        ) == 0.4
+        assert any(d["kind"] == "trimmed" for d in diff)
+
+    def test_partner_outside_audio_envelope_fails_closed(self) -> None:
+        import pytest
+        from video_app.opentake_sync import SyncError, timeline_to_candidate_plan
+
+        plan, bridge, client = self._placed()
+        partner = next(
+            c for t in client.tracks if t["type"] == "audio"
+            for c in t["clips"] if c.get("linkGroupId")
+        )
+        # give the partner a foreign identity AND out-of-envelope source
+        partner["clipId"] = "foreign"
+        partner["trimStartFrame"] = 5000
+        with pytest.raises(SyncError, match="outside the placed audio envelope"):
+            timeline_to_candidate_plan(plan, bridge, client.get_timeline())
