@@ -10,8 +10,9 @@ verdict, retained blind against gpt-5.6-sol); cuts are frame-exact with
 word-snapped edges, SRT captions, and verified DaVinci exports with DNxHR
 proxies. The ratified execution direction is hybrid: OpenTake edits over MCP,
 the owned renderer produces final pixels, and Resolve remains the escape
-hatch. That direction is not yet integrated into the daily app because
-timeline-to-plan sync is still missing. The morning-routine POC
+hatch. That direction is fully integrated as of 2026-09-01: placement,
+timeline-to-plan sync (including B-roll, voiceover, and J/L divergent
+pairs), dialogue cleanup, and instruction edits are all workbench buttons. The morning-routine POC
 fixture and all Phase 2A archive machinery were removed at the user's
 request (2026-08-18), and the POC directory itself on 2026-08-19 — its
 render, export, and validation scripts now live in `app/pipeline/` and its
@@ -77,7 +78,7 @@ Approved neutral edit-plan.json (canonical)
                              v
                       timeline readback
                              |
-                 timeline->plan sync (NEXT; not built)
+              timeline->plan sync (LIVE: revision-guarded)
 ```
 
 ### Best-of component strategy
@@ -95,8 +96,8 @@ bake-offs in `bench/RESULTS.md`:
 - **deepseek-v4-pro:** concept and revision writing.
 - **FFmpeg:** deterministic rendering behind the edit plan.
 - **OpenTake beta.5 fork:** adopted editing surface over external MCP;
-  placement and transcript-driven cleanup are live-trial verified, while app
-  integration and timeline-to-plan sync remain pending.
+  placement (incl. track creation, voiceover, J/L re-tiling), sync,
+  and transcript-driven cleanup are integrated workbench features.
 - **OTIO and FCP7 XMEML:** Resolve escape-path handoff, import-verified in
   DaVinci Resolve.
 
