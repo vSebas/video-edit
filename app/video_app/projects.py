@@ -843,11 +843,24 @@ class ProjectService:
         guidance: str | None = None,
         keep_concept_ids: list[str] | None = None,
         use_source_context: bool = False,
+        style_id: str | None = None,
     ) -> dict:
         """Generate grounded creative concepts with missing-shot advice from
         the project's approved evidence. Kept concepts survive regeneration;
-        guidance steers the new ones."""
+        guidance steers the new ones. A style_id conditions HOW stories are
+        told (pacing, shape, tone) — grounding still owns the content."""
         project = self.get_project(project_id)
+        if style_id:
+            from .style_intelligence import style_guidance
+
+            template = next(
+                (t for t in self.list_styles() if t["style_id"] == style_id),
+                None,
+            )
+            if template is None:
+                raise ProjectError(f"Estilo desconocido: {style_id}")
+            block = style_guidance(template)
+            guidance = f"{guidance.strip()}\n\n{block}" if guidance else block
         evidence = self.approved_evidence(project_id) + self.pending_evidence(project_id)
         keep_concepts: list[dict] = []
         if keep_concept_ids:
@@ -1514,6 +1527,94 @@ class ProjectService:
             "summary": stored["summary"],
             "status": "plan_ready",
         }
+
+    # ---------------- Reference Style Intelligence ---------------- #
+
+    def _styles_dir(self) -> Path:
+        directory = self.settings.runtime / "styles"
+        directory.mkdir(parents=True, exist_ok=True)
+        return directory
+
+    def _references_dir(self) -> Path:
+        directory = self.settings.root / "references"
+        directory.mkdir(parents=True, exist_ok=True)
+        return directory
+
+    def list_style_references(self) -> list[dict]:
+        """Reference videos the user dropped into references/ (gitignored)."""
+        supported = {".mp4", ".mov", ".webm", ".mkv", ".m4v"}
+        return [
+            {"filename": path.name, "size_bytes": path.stat().st_size}
+            for path in sorted(self._references_dir().iterdir())
+            if path.is_file() and path.suffix.lower() in supported
+        ]
+
+    def analyze_style_reference(self, filename: str, name: str | None = None) -> dict:
+        """One reference video → observation → single-source template."""
+        from .style_intelligence import (
+            StyleError,
+            aggregate_template,
+            build_observation,
+            deterministic_observation,
+            semantic_observation,
+        )
+
+        path = (self._references_dir() / Path(filename).name).resolve()
+        if not path.is_file():
+            raise ProjectError(
+                f"No existe references/{Path(filename).name} — deja ahí el "
+                "video de referencia primero"
+            )
+        try:
+            deterministic, source = deterministic_observation(path)
+            client = make_client("gemini", None)
+            semantic = semantic_observation(
+                client, path, source["duration_seconds"]
+            )
+            observation = build_observation(deterministic, source, semantic)
+            template = aggregate_template(
+                name or Path(filename).stem, [observation]
+            )
+        except (StyleError, ProviderError) as exc:
+            raise ProjectError(f"Análisis de referencia falló: {exc}") from exc
+        directory = self._styles_dir()
+        write_json(
+            directory / f"{template['style_id']}.json",
+            {"template": template, "observations": [observation]},
+        )
+        return {"style_id": template["style_id"], "template": template}
+
+    def list_styles(self) -> list[dict]:
+        styles = []
+        for path in sorted(self._styles_dir().glob("style-*.json")):
+            try:
+                styles.append(load_json(path)["template"])
+            except (OSError, ValueError, KeyError):
+                continue
+        return styles
+
+    def style_matches(self, project_id: str) -> dict:
+        """Every style × every grounded concept, scored deterministically."""
+        from .style_intelligence import match_concept
+
+        project = self.get_project(project_id)
+        concepts = project.get("concepts") or []
+        if not concepts:
+            raise ProjectError("Genera historias antes de comparar estilos")
+        styles = self.list_styles()
+        if not styles:
+            raise ProjectError(
+                "No hay estilos todavía — deja un video de referencia en "
+                "references/ y analízalo"
+            )
+        inventory = project.get("inventory") or {}
+        matches = [
+            match_concept(template, concept, inventory)
+            for template in styles
+            for concept in concepts
+        ]
+        matches.sort(key=lambda m: -m["score"])
+        return {"matches": matches}
 
     def _footage_language(self, project_id: str) -> str | None:
         """Dominant detected speech language from the most recent ASR run,

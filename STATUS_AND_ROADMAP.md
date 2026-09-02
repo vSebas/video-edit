@@ -408,9 +408,18 @@ docs consolidation.
    already waiting at `bench/results-context/last-spring-quarter-class/judge/`).
 2. **Reference-style intelligence** — design accepted (see
    `docs/designs/SOCIAL_TREND_AND_REFERENCE_STYLE_INTELLIGENCE_IMPLEMENTATION_HANDOFF.md`
-   and its review header). Gated behind run #1, except MVP #1 (the
-   single-reference style extractor), which can start whenever the owner
-   supplies a reference video.
+   and its review header). MVP #1 slice is BUILT (2026-09-01): schemas
+   (`style-observation/template/match.v1`), `video_app/style_intelligence.py`
+   (deterministic shot/pacing/speech extraction + one-call semantic grammar
+   read + template aggregation + deterministic concept×style matching),
+   style-conditioned concept generation (`style_id` → `style_guidance`
+   appended to planner guidance; concepts now carry `editorial` metadata),
+   endpoints (`/api/styles`, `/api/styles/references`, `/api/styles/analyze`,
+   `/api/projects/{id}/style-matches`), Historia style cards + Diagnóstico
+   reference analyzer, 9 synthetic-media tests (suite 146→155). Waiting on
+   the owner to drop a reference video into `references/` (gitignored) and
+   press "Analizar estilo". Everything else in the design (Trend Scout,
+   clustering, providers, music, preference-ML) stays gated behind run #1.
 3. **Standing items:** full content-addressed state redesign; periodic
    check that the fork still rebases onto newer OpenTake releases
    (fork-only policy — no upstream PRs; rebase cost is ours);

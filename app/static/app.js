@@ -310,9 +310,73 @@ function storyWorkspace(project) {
           placeholder="¿Qué quieres en su lugar? p. ej. enfócate en la demo del proyecto, más energía, menos de 40 segundos…"></textarea>
         <button type="submit" class="secondary">Ideas nuevas${keptCount ? ` (conservando ${keptCount} ★)` : ''}</button>
       </form>
+      <div id="style-section"></div>
     </section>
     ${needsCheckSection()}
   `;
+}
+
+async function loadStyleSection() {
+  const box = $('#style-section');
+  if (!box) return;
+  try {
+    const { styles } = await api('/api/styles');
+    if (!styles.length) {
+      box.innerHTML = `
+        <p class="muted" style="margin-top:1rem">💡 ¿Quieres que las ideas sigan
+        el estilo de un video que te gusta? Deja el video en la carpeta
+        <code>references/</code> y analízalo desde Diagnóstico.</p>`;
+      return;
+    }
+    let matches = [];
+    try {
+      matches = (await api(`/api/projects/${state.activeProjectId}/style-matches`, { method: 'POST' })).matches;
+    } catch { /* sin conceptos todavía */ }
+    box.innerHTML = `
+      <div class="section-header" style="margin-top:1.4rem">
+        <div><span class="eyebrow">Estilos de referencia</span></div>
+      </div>
+      <div class="style-row">
+        ${styles.map((style) => {
+          const best = matches.find((m) => m.style_id === style.style_id);
+          const grammar = style.grammar || {};
+          return `
+            <article class="card style-card">
+              <strong>${escapeHtml(style.name)}</strong>
+              <span class="muted">${(grammar.narrative_shape || []).slice(0, 5).join(' → ') || 'sin forma detectada'}</span>
+              <span class="muted">${grammar.cuts_per_minute ? `${grammar.cuts_per_minute} cortes/min` : ''}
+                ${grammar.broll_ratio ? ` · ${Math.round(grammar.broll_ratio * 100)}% B-roll` : ''}</span>
+              ${best ? `
+                <span class="style-score">Mejor historia: ${(best.score * 100).toFixed(0)}%</span>
+                ${best.reasons.slice(0, 2).map((r) => `<span class="muted">✓ ${escapeHtml(r)}</span>`).join('')}
+                ${best.missing.slice(0, 1).map((m) => `<span class="muted">⚠ ${escapeHtml(m)}</span>`).join('')}` : ''}
+              <button class="secondary compact" data-style-ideas="${escapeHtml(style.style_id)}">Ideas con este estilo</button>
+            </article>`;
+        }).join('')}
+      </div>`;
+    box.querySelectorAll('[data-style-ideas]').forEach((button) => {
+      button.addEventListener('click', () => regenerateWithStyle(button.dataset.styleIdeas));
+    });
+  } catch { box.innerHTML = ''; }
+}
+
+async function regenerateWithStyle(styleId) {
+  const projectId = state.activeProjectId;
+  const kept = [...keptStoryIds()];
+  try {
+    setBusy('Pensando con el estilo de referencia', ['Escribiendo ideas con esa gramática'], 0);
+    await runStep('concepts', {
+      style_id: styleId,
+      keep_concept_ids: kept.length ? kept : null,
+    }, projectId);
+    state.busy = null;
+    notice('Ideas con el estilo de referencia listas.');
+    await loadProject(projectId);
+  } catch (error) {
+    state.busy = null;
+    notice(error.message, true);
+    await loadProject(projectId);
+  }
 }
 
 /* ---- claim review (contextual, lives under Historia) ---- */
@@ -933,6 +997,8 @@ function diagnosticsWorkspace() {
             <strong>${escapeHtml(step.label)}</strong>
           </button>`).join('')}
       </div>
+      <div class="section-header" style="margin-top:1.4rem"><div><span class="eyebrow">Estilos de referencia</span></div></div>
+      <div id="reference-panel" class="sync-diff">Cargando referencias…</div>
       <div id="jobs-panel" class="sync-diff" style="margin-top:1rem">Cargando trabajos…</div>
       <details class="advanced" style="margin-top:1rem">
         <summary>Datos crudos (runs, telemetría, estado)</summary>
@@ -940,6 +1006,42 @@ function diagnosticsWorkspace() {
       </details>
     </section>
   `;
+}
+
+async function loadReferencePanel() {
+  const box = $('#reference-panel');
+  if (!box) return;
+  try {
+    const [{ references }, { styles }] = await Promise.all([
+      api('/api/styles/references'), api('/api/styles'),
+    ]);
+    const analyzed = new Set(styles.map((s) => s.name));
+    box.innerHTML = `
+      <p class="muted">Deja videos de referencia en <code>references/</code> y analízalos aquí (una llamada al modelo visual por video).</p>
+      ${references.length ? references.map((ref) => `
+        <div class="revision-row">
+          <strong>${escapeHtml(ref.filename)}</strong>
+          <span>${(ref.size_bytes / 1e6).toFixed(0)} MB</span>
+          <button class="secondary compact" data-analyze-ref="${escapeHtml(ref.filename)}">
+            ${analyzed.has(ref.filename.replace(/\.[^.]+$/, '')) ? 'Re-analizar' : 'Analizar estilo'}
+          </button>
+        </div>`).join('') : '<p class="muted">La carpeta references/ está vacía.</p>'}
+      ${styles.length ? `<p class="muted">${styles.length} estilo(s) en la biblioteca.</p>` : ''}`;
+    box.querySelectorAll('[data-analyze-ref]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        button.disabled = true;
+        try {
+          notice('Analizando la referencia…');
+          const job = await api('/api/styles/analyze', {
+            method: 'POST', body: JSON.stringify({ filename: button.dataset.analyzeRef }),
+          });
+          await pollJob(job.job_id);
+          notice('Estilo extraído — disponible en Historia.');
+          loadReferencePanel();
+        } catch (error) { notice(error.message, true); button.disabled = false; }
+      });
+    });
+  } catch (error) { box.textContent = error.message; }
 }
 
 async function loadRawPanel() {
@@ -1043,6 +1145,7 @@ function wireHandlers() {
     renderProject();
   });
   $('#see-new-ideas')?.addEventListener('click', () => { state.workspace = 'story'; renderProject(); });
+  if ($('#style-section')) loadStyleSection();
 
   // Edición
   $('#ai-edit-form')?.addEventListener('submit', submitAiEdit);
@@ -1079,6 +1182,7 @@ function wireHandlers() {
     renderProject();
   });
   if ($('#jobs-panel')) loadJobsPanel();
+  if ($('#reference-panel')) loadReferencePanel();
   document.querySelector('#raw-panel')?.closest('details')
     ?.addEventListener('toggle', (e) => { if (e.currentTarget.open) loadRawPanel(); }, { once: true });
 }

@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.video-editing/schemas/style-match.v1.json",
+  "title": "Style Match v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "style_id",
+    "concept_id",
+    "score",
+    "components",
+    "reasons",
+    "missing",
+    "generated_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "style-match.v1"
+    },
+    "style_id": {
+      "type": "string"
+    },
+    "concept_id": {
+      "type": "string"
+    },
+    "generated_at": {
+      "type": "string"
+    },
+    "score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "components": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "narrative_fit",
+        "pacing_feasibility",
+        "broll_feasibility",
+        "payoff_fit"
+      ],
+      "properties": {
+        "narrative_fit": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "pacing_feasibility": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "broll_feasibility": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "payoff_fit": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "tone_fit": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      }
+    },
+    "reasons": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "missing": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

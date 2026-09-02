@@ -1,0 +1,177 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.video-editing/schemas/style-observation.v1.json",
+  "title": "Style Observation v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "observation_id",
+    "source",
+    "deterministic",
+    "semantic",
+    "generated_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "style-observation.v1"
+    },
+    "observation_id": {
+      "type": "string"
+    },
+    "generated_at": {
+      "type": "string"
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "label",
+        "duration_seconds"
+      ],
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "duration_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "width": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "height": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "fps": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "deterministic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "shot_count",
+        "median_shot_seconds",
+        "cuts_per_minute",
+        "speech_ratio"
+      ],
+      "properties": {
+        "shot_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "median_shot_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "shot_seconds_p10": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "shot_seconds_p90": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "cuts_per_minute": {
+          "type": "number",
+          "minimum": 0
+        },
+        "speech_ratio": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "semantic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "confidence"
+      ],
+      "properties": {
+        "hook_type": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "narrative_shape": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "tone": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "payoff_position": {
+          "enum": [
+            "early",
+            "mid",
+            "late",
+            "none",
+            null
+          ]
+        },
+        "broll_ratio_estimate": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "caption_style": {
+          "enum": [
+            "none",
+            "minimal",
+            "heavy",
+            null
+          ]
+        },
+        "uses_voiceover": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "notes": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    }
+  }
+}

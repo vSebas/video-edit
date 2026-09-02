@@ -233,6 +233,14 @@ Respond with JSON:
           ]
         }}
       ],
+      "editorial": {{
+        "archetype": "<e.g. research_progress, academic_day_vlog, technical_explainer>",
+        "narrative_shape": ["<ordered labels from: hook, setup, attempt, failure, debugging, retry, payoff, reflection, montage, explainer, daily_routine, reveal>"],
+        "hook_type": "<one of: unexpected_result, question, bold_claim, in_media_res, greeting, visual_spectacle, problem_statement, none>",
+        "tone": ["<1-4 lowercase adjectives>"],
+        "dialogue_density": "low|medium|high",
+        "payoff": {{"present": <bool>, "approximate_story_position": "early|mid|late|none"}}
+      }},
       "strengths": ["<strings>"],
       "weaknesses": ["<honest strings>"],
       "missing_shots": [
@@ -359,6 +367,28 @@ def _sanitize_concepts(
         used_ids.add(concept_id)
         concept["concept_id"] = concept_id
         concept.setdefault("platforms", ["instagram_reel", "tiktok"])
+        editorial = concept.get("editorial")
+        if isinstance(editorial, dict):
+            payoff = editorial.get("payoff") if isinstance(editorial.get("payoff"), dict) else {}
+            concept["editorial"] = {
+                "archetype": str(editorial.get("archetype") or "")[:48] or None,
+                "narrative_shape": [
+                    str(x)[:24] for x in (editorial.get("narrative_shape") or [])
+                ][:8],
+                "hook_type": str(editorial.get("hook_type") or "")[:32] or None,
+                "tone": [str(x).lower()[:24] for x in (editorial.get("tone") or [])][:4],
+                "dialogue_density": editorial.get("dialogue_density")
+                if editorial.get("dialogue_density") in ("low", "medium", "high")
+                else None,
+                "payoff": {
+                    "present": bool(payoff.get("present")),
+                    "approximate_story_position": payoff.get("approximate_story_position")
+                    if payoff.get("approximate_story_position")
+                    in ("early", "mid", "late", "none") else None,
+                },
+            }
+        else:
+            concept.pop("editorial", None)
         concept.setdefault("strengths", [])
         concept.setdefault("weaknesses", [])
         concept.setdefault("missing_shots", [])

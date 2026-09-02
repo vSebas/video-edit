@@ -57,6 +57,12 @@ class GenerateConceptsRequest(BaseModel):
     guidance: str | None = Field(default=None, max_length=2000)
     keep_concept_ids: list[str] | None = Field(default=None, max_length=10)
     use_source_context: bool = False
+    style_id: str | None = Field(default=None, max_length=64)
+
+
+class AnalyzeStyleReferenceRequest(BaseModel):
+    filename: str = Field(min_length=1, max_length=200)
+    name: str | None = Field(default=None, max_length=80)
 
 
 class CompilePlanRequest(BaseModel):
@@ -368,6 +374,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             fingerprint=f"captions={burn_captions}",
         )
 
+    @application.get("/api/styles")
+    def list_styles():
+        return {"styles": projects.list_styles()}
+
+    @application.get("/api/styles/references")
+    def list_style_references():
+        return {"references": projects.list_style_references()}
+
+    @application.post("/api/styles/analyze", status_code=202)
+    def analyze_style_reference(request: AnalyzeStyleReferenceRequest):
+        return jobs.submit(
+            "style_analysis",
+            "styles",
+            lambda: projects.analyze_style_reference(
+                request.filename, request.name
+            ),
+            fingerprint=request.filename,
+        )
+
+    @application.post("/api/projects/{project_id}/style-matches")
+    def style_matches(project_id: str):
+        return project_call(lambda: projects.style_matches(project_id))
+
     @application.get("/api/projects/{project_id}/plan/revisions")
     def plan_revisions(project_id: str):
         project_call(lambda: projects.get_project(project_id))
@@ -496,7 +525,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 options.guidance,
                 options.keep_concept_ids,
                 options.use_source_context,
+                style_id=options.style_id,
             ),
+            fingerprint=f"{options.style_id}:{(options.guidance or '')[:60]}",
         )
 
     @application.post("/api/projects/{project_id}/plan", status_code=201)

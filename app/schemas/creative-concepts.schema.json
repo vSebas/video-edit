@@ -200,6 +200,68 @@
           "items": {
             "$ref": "#/$defs/missingShot"
           }
+        },
+        "editorial": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "archetype": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "narrative_shape": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "hook_type": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "tone": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "dialogue_density": {
+              "enum": [
+                "low",
+                "medium",
+                "high",
+                null
+              ]
+            },
+            "payoff": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "present": {
+                  "type": "boolean"
+                },
+                "approximate_story_position": {
+                  "enum": [
+                    "early",
+                    "mid",
+                    "late",
+                    "none",
+                    null
+                  ]
+                }
+              }
+            }
+          }
         }
       }
     }

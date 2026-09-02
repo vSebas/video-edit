@@ -771,3 +771,8 @@ input[type="file"] {
 }
 /* Touch/keyboard access to the media delete control */
 .media-card:focus-within .remove-asset { display: block; }
+
+/* Reference styles (Historia) */
+.style-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+.style-card { display: flex; flex-direction: column; gap: 6px; padding: 14px; font-size: 13px; }
+.style-card .style-score { color: var(--accent); font-weight: 700; }

@@ -392,3 +392,30 @@ back out of exports — not by asserting that code ran.
   host rclone config read-only from inside the container.
 
 Current automated result in `video-editing-app:local`: **126 passed**, plus a same-day adversarial cross-review whose 2 blockers and 20 majors were fixed and re-tested.
+
+## Reference Style Intelligence — MVP #1 slice (2026-09-01)
+
+- **Deterministic extraction** proven on synthetic media: a generated
+  4-shot color reference (3s shots, tone on the first half only) yields
+  shot_count 4, median ≈3s, ≈15 cuts/min, speech_ratio ≈0.5; a missing
+  file raises `StyleError` (fail-closed).
+- **Semantic whitelist**: VLM answers outside the hook/shape enums are
+  dropped, not stored — an invented narrative label disappears from the
+  observation.
+- **Aggregation**: single-reference templates cap confidence at 0.55;
+  requirements (needs_payoff, needs_broll, dialogue_density) derive from
+  the observed grammar, not the model's self-reported confidence.
+- **Matching is deterministic** (no model call): payoff-less concepts
+  score 0.2 on payoff_fit with a Spanish "missing" reason; too few
+  evidence moments degrade pacing_feasibility; no spare footage degrades
+  broll_feasibility. Score weights 0.35/0.25/0.25/0.15.
+- **Style-conditioned generation**: `style_id` on the concepts request
+  resolves the stored template and appends `style_guidance` (grammar-only,
+  with the "never invent content" grounding reminder) to the planner
+  guidance; concept `editorial` metadata is schema-validated and
+  sanitizer-whitelisted.
+- **Live**: `/api/styles`, `/api/styles/references` return 200 with the
+  token against the rebuilt container; analysis endpoint untested live —
+  waiting on a real reference video in `references/` (gitignored).
+
+Suite after this slice: **155 passed** in `video-editing-app:local`.

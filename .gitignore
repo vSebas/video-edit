@@ -58,3 +58,4 @@
 
 # Benchmark ground-truth footage: real clips, kept local like footage/.
 /bench/media/
+references/
