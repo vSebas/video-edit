@@ -681,58 +681,79 @@ async function submitAiEdit(event) {
   event.preventDefault();
   const instruction = new FormData(event.currentTarget).get('instruction')?.toString().trim();
   if (!instruction) return;
-  const box = $('#ai-edit-result');
   if (instruction.length > 500) {
     // Too long for one atomic operation — do not silently truncate.
+    state.aiEdit = { status: 'long', instruction };
+    renderAiEditResult();
+    return;
+  }
+  state.aiEdit = { status: 'interpreting', instruction };
+  renderAiEditResult();
+  try {
+    const proposed = await api(`/api/projects/${state.activeProjectId}/plan/command`, {
+      method: 'POST', body: JSON.stringify({ instruction }),
+    });
+    state.aiEdit = proposed.status === 'proposed'
+      ? { status: 'proposed', instruction, proposed }
+      : { status: 'declined', instruction,
+          reason: proposed.reason || 'La instrucción pide más de un cambio.' };
+  } catch (error) {
+    state.aiEdit = { status: 'error', instruction, reason: error.message };
+  }
+  renderAiEditResult();
+}
+
+// State-driven: the proposal survives tab switches and re-renders — a
+// result that only lived in a DOM node vanished when the node did.
+function renderAiEditResult() {
+  const box = $('#ai-edit-result');
+  if (!box || !state.aiEdit) { if (box) box.innerHTML = ''; return; }
+  const { status, instruction, proposed, reason } = state.aiEdit;
+  if (status === 'interpreting') {
+    box.innerHTML = '<p class="notice">Interpretando… (puedes cambiar de pestaña; la propuesta te espera aquí)</p>';
+    return;
+  }
+  if (status === 'long') {
     box.innerHTML = `
       <div class="sync-diff">
         <p class="muted">Instrucción larga — se aplicará como reescritura del corte.</p>
         <button class="primary compact" id="ai-rewrite">Reescribir el corte</button>
       </div>`;
-    $('#ai-rewrite')?.addEventListener('click', () => rewriteCut(instruction));
+    $('#ai-rewrite')?.addEventListener('click', () => { state.aiEdit = null; rewriteCut(instruction); });
     return;
   }
-  box.innerHTML = '<p class="notice">Interpretando…</p>';
-  try {
-    const proposed = await api(`/api/projects/${state.activeProjectId}/plan/command`, {
-      method: 'POST', body: JSON.stringify({ instruction }),
-    });
-    if (proposed.status === 'proposed') {
-      box.innerHTML = `
-        <div class="sync-diff">
-          <p><strong>Propuesta:</strong> ${escapeHtml(proposed.summary)}</p>
-          <div class="review-actions">
-            <button class="primary compact" id="ai-apply">Aplicar y renderizar</button>
-            <button class="ghost compact" id="ai-rewrite">Mejor reescribir el corte</button>
-          </div>
-        </div>`;
-      $('#ai-apply')?.addEventListener('click', async () => {
-        try {
-          setBusy('Cambiando tu vlog', ['Aplicando el cambio', 'Renderizando'], 0);
-          await api(`/api/projects/${state.activeProjectId}/plan/command/apply?proposal_id=${proposed.proposal_id}`, { method: 'POST' });
-          setBusy('Cambiando tu vlog', ['Aplicando el cambio', 'Renderizando'], 1);
-          await runStep('render');
-          state.busy = null;
-          notice('Listo — nuevo corte arriba.');
-          await loadProject(state.activeProjectId);
-        } catch (error) { state.busy = null; notice(error.message, true); await loadProject(state.activeProjectId); }
-      });
-      $('#ai-rewrite')?.addEventListener('click', () => rewriteCut(instruction));
-      return;
-    }
-    // Atomic path declined: offer the full rewrite with the reason shown.
+  if (status === 'proposed') {
     box.innerHTML = `
       <div class="sync-diff">
-        <p class="muted">${escapeHtml(proposed.reason || 'La instrucción pide más de un cambio.')}</p>
-        <button class="primary compact" id="ai-rewrite">Reescribir el corte con esta instrucción</button>
+        <p><strong>Propuesta:</strong> ${escapeHtml(proposed.summary)}</p>
+        <div class="review-actions">
+          <button class="primary compact" id="ai-apply">Aplicar y renderizar</button>
+          <button class="ghost compact" id="ai-rewrite">Mejor reescribir el corte</button>
+        </div>
       </div>`;
-    $('#ai-rewrite')?.addEventListener('click', () => rewriteCut(instruction));
-  } catch (error) {
-    box.innerHTML = `
-      <p class="notice error">${escapeHtml(error.message)}</p>
-      <button class="ghost compact" id="ai-rewrite">Intentar como reescritura del corte</button>`;
-    $('#ai-rewrite')?.addEventListener('click', () => rewriteCut(instruction));
+    $('#ai-apply')?.addEventListener('click', async () => {
+      const projectId = state.activeProjectId;
+      state.aiEdit = null;
+      try {
+        setBusy('Cambiando tu vlog', ['Aplicando el cambio', 'Renderizando'], 0);
+        await api(`/api/projects/${projectId}/plan/command/apply?proposal_id=${proposed.proposal_id}`, { method: 'POST' });
+        setBusy('Cambiando tu vlog', ['Aplicando el cambio', 'Renderizando'], 1);
+        await runStep('render', undefined, projectId);
+        state.busy = null;
+        notice('Listo — nuevo corte arriba.');
+        await loadProject(projectId);
+      } catch (error) { state.busy = null; notice(error.message, true); await loadProject(projectId); }
+    });
+    $('#ai-rewrite')?.addEventListener('click', () => { state.aiEdit = null; rewriteCut(instruction); });
+    return;
   }
+  // declined or error: offer the rewrite with the reason shown
+  box.innerHTML = `
+    <div class="sync-diff">
+      <p class="${status === 'error' ? 'notice error' : 'muted'}">${escapeHtml(reason)}</p>
+      <button class="primary compact" id="ai-rewrite">Reescribir el corte con esta instrucción</button>
+    </div>`;
+  $('#ai-rewrite')?.addEventListener('click', () => { state.aiEdit = null; rewriteCut(instruction); });
 }
 
 async function rewriteCut(instruction) {
@@ -1329,6 +1350,7 @@ function wireHandlers() {
   });
   if ($('#style-section')) loadStyleSection();
   if ($('#step-times')) loadStepTimes();
+  if ($('#ai-edit-result')) renderAiEditResult();
 
   // Edición
   $('#ai-edit-form')?.addEventListener('submit', submitAiEdit);
