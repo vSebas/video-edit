@@ -500,3 +500,33 @@ Still open by choice: dialogue_density stays an audio-activity proxy
 (the observation's sha256 records what was actually analyzed); template
 confidence informs the planner and UI but does not scale match scores
 (fit and trust stay separate axes).
+
+## v2 measurement expansion + capability slice (2026-09-02, overnight)
+
+- **Styled titles**: edit-plan events gain optional `text_style`
+  {font: sans|handwritten|clean|display, size 24-140, position
+  top|center|lower}; three OFL fonts bundled in `app/fonts/` (Caveat,
+  Inter, Montserrat — the host also has them for OpenTake's preview);
+  `set_title` accepts the new args with fail-closed validation; PROVEN BY
+  PIXELS: a centered handwritten title lights up the middle band of the
+  frame that a top title leaves dark.
+- **Audio beat grid (v2 §18.2/§21)**: deterministic onset-autocorrelation
+  tempo estimate + beat phase + median cut-to-beat offset, numpy-only.
+  Proven on a synthetic 120 BPM click track (measured 120±6, cuts on the
+  0.5s grid → cut_to_beat ≤0.1); a silent video claims nothing (None).
+  The real reference measures 68 BPM, cuts 0.19s off-beat →
+  `cuts_on_beat: false` — its cuts follow the voiceover, not music.
+- **Per-field evidence tiers at the consumption boundary**: templates
+  carry `grammar_tiers` (measured vs semantic per grammar field);
+  matches carry `template_confidence`; low-confidence templates are
+  flagged in the planner guidance itself.
+- **style-application.v1 (light)**: a styled concepts document records
+  style_id, template confidence, analyzers, and the exact guidance block
+  — baseline and styled runs are distinguishable artifacts now.
+- **VlogInbox live status**: per-folder clip count/size, a
+  receiving/ready signal (file ModTime within 120s), visibility-aware
+  polling, and REAL import progress (copied MB vs expected) replacing
+  the fake stage list. Verified live against the two folders actually
+  waiting in the user's Drive inbox.
+
+Suite: **183 passed**.

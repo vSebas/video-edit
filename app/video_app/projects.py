@@ -864,6 +864,17 @@ class ProjectService:
                 raise ProjectError(f"Estilo desconocido: {style_id}")
             block = style_guidance(template)
             guidance = f"{guidance.strip()}\n\n{block}" if guidance else block
+            # style-application.v1 (v2 handoff §9.6, light form): record on
+            # the concepts document WHICH style shaped this generation, at
+            # what trust, with what guidance — so a styled run is
+            # distinguishable from a baseline months later
+            style_application = {
+                "schema_version": "style-application.v1",
+                "style_id": template["style_id"],
+                "template_confidence": template.get("confidence"),
+                "analyzers": template.get("analyzers") or [],
+                "guidance_block": block,
+            }
         evidence = self.approved_evidence(project_id) + self.pending_evidence(project_id)
         keep_concepts: list[dict] = []
         if keep_concept_ids:
@@ -900,6 +911,8 @@ class ProjectService:
         except (ProviderError, PlanningError) as exc:
             raise ProjectError(f"Concept generation failed: {exc}") from exc
 
+        if style_id:
+            document["style_application"] = style_application
         write_json(
             self.settings.runtime / project_id / "analysis" / "concepts.json", document
         )

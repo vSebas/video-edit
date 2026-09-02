@@ -117,6 +117,21 @@
               "const": "measured"
             }
           }
+        },
+        "bpm_estimate": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 30,
+          "maximum": 300
+        },
+        "cut_to_beat_seconds": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
         }
       }
     },

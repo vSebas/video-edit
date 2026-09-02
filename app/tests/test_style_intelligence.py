@@ -405,6 +405,69 @@ class TestEditorialSanitizer:
         assert "ignore" in editorial["archetype"]       # slug, but inert
 
 
+class TestBeatGrid:
+    """v2 §18.2/§21: measure the beat, then measure whether cuts land on it."""
+
+    @pytest.fixture(scope="class")
+    def click_reference(self, tmp_path_factory):
+        """120 BPM click track under 4 color shots of 2s each — every cut
+        (at 2s, 4s, 6s) lands exactly on a beat (0.5s grid)."""
+        root = tmp_path_factory.mktemp("beat")
+        path = root / "click.mp4"
+        colors = ["red", "blue", "green", "yellow"]
+        inputs = []
+        for color in colors:
+            inputs += ["-f", "lavfi", "-i",
+                       f"color=c={color}:size=320x240:rate=30:d=2"]
+        subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", *inputs,
+             # 120 BPM click: 60ms tone pulse every 0.5s
+             "-f", "lavfi", "-i",
+             "sine=frequency=1000:sample_rate=22050:duration=8",
+             "-filter_complex",
+             "[0:v][1:v][2:v][3:v]concat=n=4:v=1:a=0[v];"
+             "[4:a]volume='if(lt(mod(t,0.5),0.06),1,0)':eval=frame[a]",
+             "-map", "[v]", "-map", "[a]",
+             "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+             "-c:a", "aac", str(path)],
+            check=True,
+        )
+        return path
+
+    def test_bpm_and_on_beat_cuts_are_measured(self, click_reference) -> None:
+        deterministic, _ = deterministic_observation(click_reference)
+        assert deterministic["bpm_estimate"] == pytest.approx(120.0, abs=6.0)
+        # cuts at 2/4/6s sit on the 0.5s beat grid
+        assert deterministic["cut_to_beat_seconds"] is not None
+        assert deterministic["cut_to_beat_seconds"] <= 0.1
+
+    def test_template_derives_cuts_on_beat(self, click_reference) -> None:
+        deterministic, source = deterministic_observation(click_reference)
+        semantic = semantic_observation(FakeVlm(SEMANTIC), click_reference, 8.0)
+        template = aggregate_template(
+            "beat", [build_observation(deterministic, source, semantic)]
+        )
+        assert template["grammar"]["cuts_on_beat"] is True
+        assert template["grammar_tiers"]["bpm_estimate"] == "measured"
+        assert template["grammar_tiers"]["tone"] == "semantic"
+        text = style_guidance(template)
+        assert "beat" in text.lower()
+
+    def test_no_audio_means_no_beat_claims(self, tmp_path_factory) -> None:
+        root = tmp_path_factory.mktemp("silent")
+        path = root / "silent.mp4"
+        subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+             "-f", "lavfi", "-i", "color=c=gray:size=320x240:rate=30:d=6",
+             "-an", "-c:v", "libx264", "-preset", "ultrafast",
+             "-pix_fmt", "yuv420p", str(path)],
+            check=True,
+        )
+        deterministic, _ = deterministic_observation(path)
+        assert deterministic["bpm_estimate"] is None
+        assert deterministic["cut_to_beat_seconds"] is None
+
+
 class TestFailClosedNumerics:
     def test_booleans_and_out_of_range_are_invalid(self, reference) -> None:
         payload = dict(SEMANTIC)

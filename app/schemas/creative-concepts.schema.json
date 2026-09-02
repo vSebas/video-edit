@@ -34,6 +34,42 @@
       "items": {
         "$ref": "#/$defs/concept"
       }
+    },
+    "style_application": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "style-application.v1"
+        },
+        "style_id": {
+          "type": "string",
+          "pattern": "^style-[a-f0-9]{8}$"
+        },
+        "template_confidence": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "analyzers": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "string",
+            "maxLength": 160
+          }
+        },
+        "guidance_block": {
+          "type": "string",
+          "maxLength": 4000
+        }
+      }
     }
   },
   "$defs": {

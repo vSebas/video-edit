@@ -163,6 +163,27 @@
             "heavy",
             null
           ]
+        },
+        "bpm_estimate": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 30,
+          "maximum": 300
+        },
+        "cut_to_beat_seconds": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "cuts_on_beat": {
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       }
     },
@@ -204,6 +225,15 @@
       "items": {
         "type": "string",
         "maxLength": 160
+      }
+    },
+    "grammar_tiers": {
+      "type": "object",
+      "additionalProperties": {
+        "enum": [
+          "measured",
+          "semantic"
+        ]
       }
     }
   }

@@ -180,6 +180,73 @@ def _speech_ratio(path: Path, duration: float) -> float | None:
     return round(min(1.0, max(0.0, 1.0 - silence / duration)), 3)
 
 
+def _audio_beat_grid(path: Path, duration: float) -> dict | None:
+    """Deterministic beat measurement (v2 §18.2): onset envelope from PCM
+    energy, tempo from envelope autocorrelation, beat grid from the best
+    phase. Returns None (unknown) when there is no usable audio — never a
+    guess. Good enough to ask "do cuts land on the beat?"; not a DAW."""
+    import numpy as np
+
+    result = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(path),
+         "-ac", "1", "-ar", "22050", "-f", "f32le", "-"],
+        capture_output=True,
+    )
+    if result.returncode or len(result.stdout) < 22050 * 4 * 5:
+        return None  # failed or under ~5s of audio
+    samples = np.frombuffer(result.stdout, dtype=np.float32)
+    hop = 512
+    frames = len(samples) // hop
+    if frames < 200:
+        return None
+    energy = (
+        samples[: frames * hop].reshape(frames, hop).astype(np.float64) ** 2
+    ).sum(axis=1)
+    # onset strength: positive energy increase, lightly smoothed
+    onset = np.maximum(0.0, np.diff(energy))
+    if onset.max() <= 0:
+        return None
+    onset /= onset.max()
+    fps_env = 22050 / hop  # ~43 envelope frames per second
+    # tempo via autocorrelation over 60-180 BPM
+    lags = np.arange(int(fps_env * 60 / 180), int(fps_env * 60 / 60) + 1)
+    onset_c = onset - onset.mean()
+    scores = np.array([
+        float((onset_c[:-lag] * onset_c[lag:]).mean()) for lag in lags
+    ])
+    if scores.max() <= 0:
+        return None
+    best_lag = int(lags[int(scores.argmax())])
+    bpm = round(60.0 * fps_env / best_lag, 1)
+    # beat phase: offset whose comb best matches the onset envelope
+    phases = np.arange(best_lag)
+    phase_scores = [
+        float(onset[phase::best_lag].mean()) for phase in phases
+    ]
+    best_phase = int(np.argmax(phase_scores))
+    beats = [
+        round((best_phase + k * best_lag) / fps_env, 3)
+        for k in range(int((len(onset) - best_phase) // best_lag) + 1)
+        if (best_phase + k * best_lag) < len(onset)
+    ]
+    return {"bpm_estimate": bpm, "beat_seconds": beats}
+
+
+def _cut_beat_alignment(cuts: list[float], beats: list[float]) -> float | None:
+    """Median distance from each interior cut to its nearest beat, in
+    seconds — the v2 'cut-to-beat offset' measured fact."""
+    interior = [c for c in cuts if c > 0]
+    if not interior or not beats:
+        return None
+    import numpy as np
+
+    beat_array = np.array(beats)
+    distances = [
+        float(np.abs(beat_array - cut).min()) for cut in interior
+    ]
+    return round(float(statistics.median(distances)), 3)
+
+
 def _file_sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -219,6 +286,17 @@ def deterministic_observation(path: Path) -> tuple[dict, dict]:
         # v2 handoff evidence tier: these values are measured, not inferred
         "provenance": {"extractor": "ffmpeg", "evidence_tier": "measured"},
     }
+    beat_grid = (
+        _audio_beat_grid(path, duration) if probe["has_audio"] else None
+    )
+    if beat_grid:
+        deterministic["bpm_estimate"] = beat_grid["bpm_estimate"]
+        deterministic["cut_to_beat_seconds"] = _cut_beat_alignment(
+            cuts, beat_grid["beat_seconds"]
+        )
+    else:
+        deterministic["bpm_estimate"] = None
+        deterministic["cut_to_beat_seconds"] = None
     source = {
         "label": path.name,
         "duration_seconds": round(duration, 2),
@@ -426,6 +504,28 @@ def aggregate_template(name: str, observations: list[dict]) -> dict:
         "jl_transitions": None,
         "uses_voiceover": mode_of(lambda o: o["semantic"].get("uses_voiceover")),
         "caption_style": mode_of(lambda o: o["semantic"].get("caption_style")),
+        "bpm_estimate": median_of(
+            lambda o: o["deterministic"].get("bpm_estimate")
+        ),
+        "cut_to_beat_seconds": median_of(
+            lambda o: o["deterministic"].get("cut_to_beat_seconds")
+        ),
+    }
+    # a median cut within ~80ms of a beat means the editor cuts to the music
+    beat_offset = grammar["cut_to_beat_seconds"]
+    grammar["cuts_on_beat"] = (
+        None if beat_offset is None else bool(beat_offset <= 0.08)
+    )
+    # v2 evidence tiers, per field, at the consumption boundary: which
+    # grammar values are measured facts and which are one model's reading
+    grammar_tiers = {
+        "median_shot_seconds": "measured", "cuts_per_minute": "measured",
+        "bpm_estimate": "measured", "cut_to_beat_seconds": "measured",
+        "cuts_on_beat": "measured",
+        "narrative_shape": "semantic", "hook_type": "semantic",
+        "tone": "semantic", "broll_ratio": "semantic",
+        "payoff_position": "semantic", "uses_voiceover": "semantic",
+        "caption_style": "semantic", "jl_transitions": "semantic",
     }
     # disagreement between references lowers confidence
     confidence = round(
@@ -465,6 +565,7 @@ def aggregate_template(name: str, observations: list[dict]) -> dict:
         "analyzers": analyzers,
         "confidence": confidence,
         "grammar": grammar,
+        "grammar_tiers": grammar_tiers,
         "requirements": {
             "needs_payoff": payoff in ("early", "mid", "late") or None,
             "dialogue_density": dialogue_density,
@@ -713,6 +814,12 @@ def style_guidance(template: dict) -> str:
         )
     if grammar.get("payoff_position") in ("early", "mid", "late"):
         lines.append(f"- Payoff position: {grammar['payoff_position']}")
+    if grammar.get("cuts_on_beat"):
+        lines.append(
+            f"- Cuts land on the music beat (≈{grammar.get('bpm_estimate')} "
+            "BPM measured) — when music is added later, favor evidence "
+            "ranges whose lengths fit a steady rhythm"
+        )
     if grammar.get("uses_voiceover"):
         lines.append(
             "- The style narrates over footage: recommend a voiceover in "
