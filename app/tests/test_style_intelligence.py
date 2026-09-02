@@ -195,6 +195,30 @@ class TestSemanticAndAggregation:
         consensus = aggregate_template("pure", agreeing)
         assert template["confidence"] < consensus["confidence"]
 
+    def test_provenance_is_recorded(self, reference) -> None:
+        deterministic, _ = deterministic_observation(reference)
+        assert deterministic["provenance"] == {
+            "extractor": "ffmpeg", "evidence_tier": "measured"}
+
+        class IdentifiedVlm(FakeVlm):
+            class config:  # mirrors ProviderConfig.public_identity
+                @staticmethod
+                def public_identity():
+                    return {"provider": "gemini", "model": "gemini-3.6-flash"}
+
+        semantic = semantic_observation(IdentifiedVlm(SEMANTIC), reference, 12.0)
+        assert semantic["provenance"]["model"] == "gemini-3.6-flash"
+        assert semantic["provenance"]["prompt_version"]
+        assert semantic["provenance"]["evidence_tier"] == "semantic"
+        observation = build_observation(deterministic, {"label": "x"}, semantic)
+        template = aggregate_template("t", [observation])
+        assert template["analyzers"] == [
+            f"gemini/gemini-3.6-flash@{semantic['provenance']['prompt_version']}"
+        ]
+        # a client with no identity (tests, future adapters) degrades to null
+        anonymous = semantic_observation(FakeVlm(SEMANTIC), reference, 12.0)
+        assert anonymous["provenance"]["model"] is None
+
     def test_single_reference_template(self, reference) -> None:
         deterministic, source = deterministic_observation(reference)
         semantic = semantic_observation(FakeVlm(SEMANTIC), reference, 12.0)

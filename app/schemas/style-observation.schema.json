@@ -104,6 +104,19 @@
           ],
           "minimum": 0,
           "maximum": 1
+        },
+        "provenance": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "extractor": {
+              "type": "string",
+              "maxLength": 40
+            },
+            "evidence_tier": {
+              "const": "measured"
+            }
+          }
         }
       }
     },
@@ -221,6 +234,36 @@
           "type": "number",
           "minimum": 0,
           "maximum": 1
+        },
+        "provenance": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "provider": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 40
+            },
+            "model": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 80
+            },
+            "prompt_version": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 40
+            },
+            "evidence_tier": {
+              "const": "semantic"
+            }
+          }
         }
       }
     }

@@ -202,6 +202,8 @@ def deterministic_observation(path: Path) -> tuple[dict, dict]:
         "speech_ratio": (
             _speech_ratio(path, duration) if probe["has_audio"] else None
         ),
+        # v2 handoff evidence tier: these values are measured, not inferred
+        "provenance": {"extractor": "ffmpeg", "evidence_tier": "measured"},
     }
     source = {
         "label": path.name,
@@ -290,6 +292,19 @@ def semantic_observation(client, path: Path, duration: float) -> dict:
     ratio = _finite_unit(parsed.get("broll_ratio_estimate"), missing=None,
                          invalid=None)
     semantic["broll_ratio_estimate"] = ratio
+    # who produced this reading — without it, re-analyses with a different
+    # model would be indistinguishable months later
+    config = getattr(client, "config", None)
+    identity = (
+        config.public_identity()
+        if config is not None and hasattr(config, "public_identity") else {}
+    )
+    semantic["provenance"] = {
+        "provider": identity.get("provider"),
+        "model": identity.get("model"),
+        "prompt_version": STYLE_PROMPT_VERSION,
+        "evidence_tier": "semantic",
+    }
     return semantic
 
 
@@ -404,12 +419,19 @@ def aggregate_template(name: str, observations: list[dict]) -> dict:
         * (0.5 + 0.5 * shape_agreement),
         2,
     )
+    analyzers = sorted({
+        f"{p.get('provider')}/{p.get('model')}@{p.get('prompt_version')}"
+        for o in observations
+        for p in [o["semantic"].get("provenance") or {}]
+        if p.get("model")
+    })
     return {
         "schema_version": "style-template.v1",
         "style_id": f"style-{uuid.uuid4().hex[:8]}",
         "name": name,
         "generated_at": utc_now(),
         "source_observations": [o["observation_id"] for o in observations],
+        "analyzers": analyzers,
         "confidence": confidence,
         "grammar": grammar,
         "requirements": {
