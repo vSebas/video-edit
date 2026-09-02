@@ -840,3 +840,14 @@ UNION COVERAGE at the same standard as the pixel gate
 `envelopes_cover` predicate — at revision inheritance AND at
 render/restore. Sliver-overlap test added (fails); genuinely covered
 event passes. Suite 220→221.
+
+## Trust-system FINAL verdict (2026-09-02): YES
+
+After six adversarial rounds, Codex's closing verification: "YES — with
+the documented legacy, confidence-routing, and regex limitations, it is
+honestly fail-closed at the claim level." The arc, for the record:
+range-based authorization (round 1: BLOCKER) → claim gates → claim-ID
+lineage → server-owned contract → live approval with envelopes → union
+coverage. Every claim that reaches rendered pixels in a contract plan is
+now backed by currently-approved evidence identity whose observed
+envelope covers the cut. Suite: 221 passed.

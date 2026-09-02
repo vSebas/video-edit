@@ -456,6 +456,18 @@ docs consolidation.
    deepseek-v4-pro (retained blind 2026-09-01); trending-audio matching
    arrives via the accepted style design, not separately.
 
+### Trust system (afirmaciones) — fail-closed at the claim level
+
+Verified by six adversarial review rounds (2026-09-02, final verdict
+YES). Authorization rides on evidence identity under a server-owned
+lineage contract: claims cite observation ids, plans carry them,
+revisions inherit them under coverage validation, and render/restore
+re-check them against CURRENT approvals with envelope coverage.
+Documented limitations (honest boundaries, not holes): pre-lineage
+legacy artifacts use a risk-gated lexical fallback; auto-approval
+confidence is a ratified routing policy; the regex risk lexicon is
+defense-in-depth, not the authorization boundary.
+
 ## Durable Sources of Truth
 
 - `README.md` — what the project is, how to run it, and the principles
