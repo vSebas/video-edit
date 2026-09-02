@@ -1,7 +1,19 @@
 {
-  "_comment": "USD per 1M tokens, from ai.google.dev/gemini-api/docs/pricing as of 2026-09-02. Gemini 3.6/3.7/3.8 flash: $0.75 in / $3.75 out through 2026-12-31, then $1.50 / $7.50 from 2027-01-01 — UPDATE THIS FILE THEN. deepseek: fill from your DashScope console (null = tokens only).",
-  "gemini-3.6-flash": {"input_per_m": 0.75, "output_per_m": 3.75},
-  "gemini-3.7-flash": {"input_per_m": 0.75, "output_per_m": 3.75},
-  "gemini-3.8-flash": {"input_per_m": 0.75, "output_per_m": 3.75},
-  "deepseek-v4-pro": {"input_per_m": null, "output_per_m": null}
+  "_comment": "USD per 1M tokens, from ai.google.dev/gemini-api/docs/pricing as of 2026-09-02. Gemini 3.6/3.7/3.8 flash: $0.75 in / $3.75 out through 2026-12-31, then $1.50 / $7.50 from 2027-01-01 — UPDATE THIS FILE THEN. deepseek-v4-pro: dashscope-intl (Singapore) rates as of 2026-09-02.",
+  "gemini-3.6-flash": {
+    "input_per_m": 0.75,
+    "output_per_m": 3.75
+  },
+  "gemini-3.7-flash": {
+    "input_per_m": 0.75,
+    "output_per_m": 3.75
+  },
+  "gemini-3.8-flash": {
+    "input_per_m": 0.75,
+    "output_per_m": 3.75
+  },
+  "deepseek-v4-pro": {
+    "input_per_m": 2.4,
+    "output_per_m": 4.8
+  }
 }
