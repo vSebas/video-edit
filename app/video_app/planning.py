@@ -1858,7 +1858,12 @@ def _carry_user_captions(old_plan: dict, new_plan: dict) -> None:
              if not c.get("user_authored")),
             key=lambda s: s[0], reverse=True,
         )
-        if not scored or scored[0][0] < 0.6:
+        # Carrying REPLACES the whole cue text, so the envelope must be NEARLY
+        # IDENTICAL, not merely substantial: deterministic ASR of the same
+        # footage reproduces the same envelope (IoU ~1.0), whereas a trimmed or
+        # re-segmented cue ([10,13] -> [11,13], IoU 0.67) is a materially
+        # different line and must not inherit the old correction.
+        if not scored or scored[0][0] < 0.9:
             continue
         if len(scored) > 1 and scored[1][0] > scored[0][0] - 0.2:
             continue  # ambiguous — two comparably-overlapping cues

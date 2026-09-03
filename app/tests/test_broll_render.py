@@ -623,13 +623,31 @@ class TestCaptionStyleAndRevise:
                                  "source_end_seconds": 5.0}}]}]}
         new = {"tracks": [{"kind": "caption", "events": [
             {"event_id": "cap-001", "timeline_start_seconds": 6.0,
-             "duration_seconds": 1.8, "text": "hola mnd bonito",
-             "caption_source": {"asset_id": "A", "source_start_seconds": 3.1,
-                                 "source_end_seconds": 4.9}}]}]}
+             "duration_seconds": 2.0, "text": "hola mnd bonito",
+             "caption_source": {"asset_id": "A", "source_start_seconds": 3.0,
+                                 "source_end_seconds": 5.0}}]}]}
         _carry_user_captions(old, new)
         cue = new["tracks"][0]["events"][0]
         assert cue["text"] == "hola mundo bonito"
         assert cue["user_authored"] is True
+
+    def test_trimmed_cue_does_not_inherit_correction(self) -> None:
+        from video_app.planning import _carry_user_captions
+        # old [10,13]; regenerated [11,13] after the first words were trimmed —
+        # IoU 0.67 < 0.9, so the whole old correction must NOT be pasted.
+        old = {"tracks": [{"kind": "caption", "events": [
+            {"event_id": "cap-001", "timeline_start_seconds": 1.0,
+             "duration_seconds": 3.0, "text": "toda la frase corregida",
+             "asr_text": "x", "user_authored": True,
+             "caption_source": {"asset_id": "A", "source_start_seconds": 10.0,
+                                 "source_end_seconds": 13.0}}]}]}
+        new = {"tracks": [{"kind": "caption", "events": [
+            {"event_id": "cap-001", "timeline_start_seconds": 1.0,
+             "duration_seconds": 2.0, "text": "media frase",
+             "caption_source": {"asset_id": "A", "source_start_seconds": 11.0,
+                                 "source_end_seconds": 13.0}}]}]}
+        _carry_user_captions(old, new)
+        assert new["tracks"][0]["events"][0]["text"] == "media frase"
 
     def test_revise_refuses_carry_onto_different_footage(self) -> None:
         from video_app.planning import _carry_user_captions
