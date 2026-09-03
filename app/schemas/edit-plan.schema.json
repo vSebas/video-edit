@@ -211,6 +211,25 @@
         "boolean",
         "null"
       ]
+    },
+    "transitions": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "intro_fade_seconds": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "outro_fade_seconds": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 3
+        }
+      }
     }
   },
   "$defs": {

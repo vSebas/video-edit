@@ -327,15 +327,45 @@ def main() -> None:
             f"color={plan['project']['background_color']},"
         )
 
+    # A dip-to-color transition_out on clip i colors the seam to clip i+1: the
+    # outgoing clip fades to the colour over its last half of the duration, the
+    # incoming clip fades up over its first half. It is geometry-preserving —
+    # the dip happens INSIDE each clip's own time, so no timeline math changes.
+    ordered_video = sorted(video_events, key=lambda e: e["timeline_start_seconds"])
+
+    def _dip(transition):
+        t = (transition or {}).get("type")
+        if t not in ("fade_black", "fade_white"):
+            return None, 0.0
+        colour = "black" if t == "fade_black" else "white"
+        return colour, max(0.0, float(transition.get("duration_seconds") or 0.0))
+
     for index, video in enumerate(video_events):
         start = video["source_start_seconds"]
         end = video["source_end_seconds"]
+        length = end - start
         rotation = (video.get("reframe") or {}).get("rotation_degrees", 0)
+        fade_filters = ""
+        # fade UP from the colour the PREVIOUS clip dipped to
+        pos = ordered_video.index(video)
+        if pos > 0:
+            in_colour, in_dur = _dip(ordered_video[pos - 1].get("transition_out"))
+            half = min(in_dur / 2.0, length / 2.0)
+            if in_colour and half > 0:
+                fade_filters += f",fade=t=in:st=0:d={round(half, 3)}:color={in_colour}"
+        # fade DOWN to this clip's own dip colour
+        out_colour, out_dur = _dip(video.get("transition_out"))
+        half = min(out_dur / 2.0, length / 2.0)
+        if out_colour and half > 0:
+            fade_filters += (
+                f",fade=t=out:st={round(length - half, 3)}:d={round(half, 3)}:"
+                f"color={out_colour}"
+            )
         filters.append(
             f"[{index}:v:0]trim=start={start}:end={end},setpts=PTS-STARTPTS,"
             f"{rotation_filter(rotation)}"
             f"{framing(video)}"
-            f"setsar=1,fps={fps},format=yuv420p[v{index}]"
+            f"setsar=1,fps={fps},format=yuv420p{fade_filters}[v{index}]"
         )
     for index, audio in enumerate(audio_events):
         start = audio["source_start_seconds"]
@@ -571,6 +601,27 @@ def main() -> None:
                 f"force_style='{style}'[vsubs]"
             )
         current_video = "vsubs"
+
+    # Opening/closing fades from/to black — applied last so they cover titles
+    # and captions too, with a matching audio fade so sound rises and falls with
+    # the picture. Geometry-preserving: no timeline positions change.
+    transitions = plan.get("transitions") or {}
+    intro = min(float(transitions.get("intro_fade_seconds") or 0.0), duration / 2)
+    outro = min(float(transitions.get("outro_fade_seconds") or 0.0), duration / 2)
+    if intro > 0 or outro > 0:
+        video_fades = []
+        audio_fades = []
+        if intro > 0:
+            video_fades.append(f"fade=t=in:st=0:d={round(intro, 3)}:color=black")
+            audio_fades.append(f"afade=t=in:st=0:d={round(intro, 3)}")
+        if outro > 0:
+            st = round(duration - outro, 3)
+            video_fades.append(f"fade=t=out:st={st}:d={round(outro, 3)}:color=black")
+            audio_fades.append(f"afade=t=out:st={st}:d={round(outro, 3)}")
+        filters.append(f"[{current_video}]{','.join(video_fades)}[vfaded]")
+        current_video = "vfaded"
+        filters.append(f"[{audio_out}]{','.join(audio_fades)}[afaded]")
+        audio_out = "afaded"
 
     filters.append(
         f"[{audio_out}]loudnorm=I=-16:LRA=11:TP=-1.5,aresample=48000,"

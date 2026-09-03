@@ -858,3 +858,48 @@ class TestNewDefectFixes:
         assert _as_bool(None, default=True) is True
         with pytest.raises(PlanOpError):
             _as_bool("maybe", default=True)
+
+
+class TestTransitionOps:
+    def test_set_fades(self) -> None:
+        candidate, summary = apply_op(
+            _plan(), {"op": "set_fades", "intro_seconds": 0.5,
+                      "outro_seconds": 0.8}, INVENTORY)
+        assert candidate["transitions"] == {
+            "intro_fade_seconds": 0.5, "outro_fade_seconds": 0.8}
+        assert "apertura 0.5s" in summary
+
+    def test_set_fades_zero_removes(self) -> None:
+        candidate, summary = apply_op(
+            _plan(), {"op": "set_fades", "intro_seconds": 0,
+                      "outro_seconds": 0}, INVENTORY)
+        assert candidate["transitions"] == {
+            "intro_fade_seconds": 0.0, "outro_fade_seconds": 0.0}
+        assert "quitados" in summary
+
+    def test_set_fades_out_of_range(self) -> None:
+        with pytest.raises(PlanOpError, match="0..3"):
+            apply_op(_plan(), {"op": "set_fades", "intro_seconds": 9}, INVENTORY)
+
+    def test_set_transition_dip(self) -> None:
+        candidate, summary = apply_op(
+            _plan(), {"op": "set_transition", "event_id": "v02",
+                      "type": "fade_black", "duration_seconds": 0.6}, INVENTORY)
+        v02 = next(e for e in candidate["tracks"][0]["events"]
+                   if e["event_id"] == "v02")
+        assert v02["transition_out"] == {"type": "fade_black",
+                                         "duration_seconds": 0.6}
+        assert "negro" in summary
+
+    def test_set_transition_cut(self) -> None:
+        candidate, _ = apply_op(
+            _plan(), {"op": "set_transition", "event_id": "v01",
+                      "type": "cut"}, INVENTORY)
+        v01 = next(e for e in candidate["tracks"][0]["events"]
+                   if e["event_id"] == "v01")
+        assert v01["transition_out"]["type"] == "cut"
+
+    def test_dissolve_is_refused_for_now(self) -> None:
+        with pytest.raises(PlanOpError, match="dissolve"):
+            apply_op(_plan(), {"op": "set_transition", "event_id": "v01",
+                               "type": "dissolve"}, INVENTORY)

@@ -969,6 +969,23 @@ async function applyPlanOp(op, label) {
   }
 }
 
+// Human-readable current intro/outro fade state for the edit-style card.
+function fadesLabel(plan) {
+  const t = plan?.transitions || {};
+  const intro = Number(t.intro_fade_seconds || 0);
+  const outro = Number(t.outro_fade_seconds || 0);
+  if (!intro && !outro) return 'Ahora: sin fundidos.';
+  return `Ahora: apertura ${intro.toFixed(1)}s · cierre ${outro.toFixed(1)}s.`;
+}
+
+async function setFades(intro, outro) {
+  try {
+    await applyPlanOp(
+      { op: 'set_fades', intro_seconds: intro, outro_seconds: outro },
+      'Ajustando fundidos');
+  } catch (error) { notice(error.message, true); }
+}
+
 async function musicRemove() {
   try {
     await applyPlanOp({ op: 'remove_music' }, 'Quitando música incorporada');
@@ -1189,6 +1206,17 @@ function publishWorkspace(project) {
           Incorpora una pista de fondo:</p>
           <button class="secondary compact" id="music-set-bed">Incorporar música al MP4…</button>`}
       </article>` : ''}
+      <article class="card style-card">
+        <h3>🎬 Estilo de edición</h3>
+        <p class="muted">Apertura y cierre con fundido a negro. ${fadesLabel(project.plan)}</p>
+        <div class="review-actions">
+          <button class="secondary compact" data-fades="0.4,0.6">Suaves</button>
+          <button class="secondary compact" data-fades="0.8,1.0">Marcados</button>
+          <button class="ghost compact" data-fades="0,0">Sin fundidos</button>
+        </div>
+        <p class="muted" style="margin-top:.6rem">Para un corte concreto pide en
+        Edición, p. ej. «pon un fundido a negro después de la escena 2».</p>
+      </article>
       ${missing.length ? `
       <article class="card reco-card">
         <h3>Para fortalecer este video</h3>
@@ -1472,6 +1500,12 @@ function wireHandlers() {
   $('#opentake-sync')?.addEventListener('click', openTakeSyncPreview);
   $('#music-remove')?.addEventListener('click', musicRemove);
   $('#music-set-bed')?.addEventListener('click', musicSetBed);
+  document.querySelectorAll('[data-fades]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const [intro, outro] = btn.dataset.fades.split(',').map(Number);
+      setFades(intro, outro);
+    });
+  });
 
   // Diagnóstico
   document.querySelectorAll('[data-pipeline]').forEach((button) => {

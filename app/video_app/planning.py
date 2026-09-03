@@ -995,6 +995,10 @@ def build_plan(
         "concept_id": concept_id,
         "revision": revision,
         **({"style_application": style_block} if style_block else {}),
+        # A light open/close is the one transition every vlog benefits from —
+        # a short fade up from black and a slightly longer fade to black at the
+        # end. Cheap polish, geometry-preserving, editable/removable afterwards.
+        "transitions": _default_transitions(timeline),
         "project": {
             "width": width,
             "height": height,
@@ -1021,6 +1025,19 @@ def build_plan(
     }
     refresh_style_application(plan)
     return plan
+
+
+def _default_transitions(timeline: float) -> dict:
+    """A conservative open/close fade, scaled down for very short cuts so the
+    fades never eat a meaningful fraction of the video."""
+    intro = 0.4
+    outro = 0.6
+    # never let the two fades exceed a third of a short clip
+    budget = max(0.0, timeline / 3.0)
+    if intro + outro > budget:
+        scale = budget / (intro + outro) if (intro + outro) else 0.0
+        intro, outro = round(intro * scale, 3), round(outro * scale, 3)
+    return {"intro_fade_seconds": intro, "outro_fade_seconds": outro}
 
 
 def _caption_events_from_speech(
@@ -1797,6 +1814,10 @@ events. Every range must stay at least {MIN_EVENT_SECONDS}s long."""
     )
     if plan.get("lineage_contract"):
         new_plan["lineage_contract"] = True
+    # Open/close fades are a user choice, not a story decision — keep them
+    # across a revision instead of resetting to the compiler default.
+    if plan.get("transitions") is not None:
+        new_plan["transitions"] = plan["transitions"]
     if approved_captions is not None and unchanged_user_title:
         # the user's own title keeps its exemption across revisions
         for track in new_plan.get("tracks", []):

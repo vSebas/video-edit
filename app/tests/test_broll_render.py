@@ -751,3 +751,47 @@ class TestCaptionCarryDisjoint:
                                  "source_end_seconds": 10.060}}]}]}
         _carry_user_captions(old, new)
         assert new["tracks"][0]["events"][0]["text"] == "otra palabra"
+
+
+class TestTransitionsRender:
+    def test_intro_fade_and_dip_to_black_darken_pixels(self, tmp_path) -> None:
+        _make_clip(tmp_path / "red.mp4", "red", 2.0, 300)
+        _make_clip(tmp_path / "green.mp4", "green", 2.0, 600)
+        inventory = {"assets": [
+            {"asset_id": aid, "filename": f"{aid}.mp4",
+             "source_path": f"{aid}.mp4", "duration_seconds": 2.0,
+             "sha256": "0" * 64, "media_type": "video",
+             "audio": {"sample_rate": 48000, "channels": 1},
+             "video": {"width": 320, "height": 240}}
+            for aid in ("red", "green")]}
+        plan = {
+            "schema_version": "edit-plan.v1", "generated_at": "2026-09-01T00:00:00Z",
+            "benchmark_id": "t", "concept_id": "t", "revision": 1,
+            "transitions": {"intro_fade_seconds": 0.5, "outro_fade_seconds": 0.5},
+            "project": {"width": 320, "height": 240, "fps": 30,
+                        "duration_seconds": 4.0, "background_color": "black"},
+            "tracks": [
+                {"track_id": "v1", "kind": "video", "events": [
+                    {**_event("v01", "red", 0.0, 0.0, 2.0, "base"),
+                     "transition_out": {"type": "fade_black",
+                                        "duration_seconds": 0.6}},
+                    _event("v02", "green", 0.0, 2.0, 2.0, "base")]},
+                {"track_id": "a1", "kind": "audio", "events": [
+                    _event("a01", "red", 0.0, 0.0, 2.0, "base"),
+                    _event("a02", "green", 0.0, 2.0, 2.0, "base")]},
+                {"track_id": "t1", "kind": "title", "events": []}]}
+        (tmp_path / "plan.json").write_text(json.dumps(plan))
+        (tmp_path / "inv.json").write_text(json.dumps(inventory))
+        out = tmp_path / "out.mp4"
+        subprocess.run(
+            [sys.executable, str(PIPELINE / "render_edit.py"),
+             "--plan", str(tmp_path / "plan.json"), "--output", str(out),
+             "--inventory", str(tmp_path / "inv.json"),
+             "--media-root", str(tmp_path)],
+            check=True, capture_output=True, text=True)
+        intro = _center_pixel(out, 0.03)   # inside the 0.5s intro fade
+        mid = _center_pixel(out, 1.0)      # bright red
+        dip = _center_pixel(out, 2.0)      # dip to black at the seam
+        assert sum(intro) < 120, f"intro should be dark, got {intro}"
+        assert mid[0] > 150, f"mid should be bright red, got {mid}"
+        assert sum(dip) < 90, f"seam should dip to black, got {dip}"

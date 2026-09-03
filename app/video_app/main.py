@@ -123,6 +123,7 @@ class PlanCommandRequest(BaseModel):
 # these are the direct-manipulation controls the UI renders buttons for.
 _DIRECT_UI_OPS = {
     "set_music_bed", "remove_music", "edit_caption", "remove_caption",
+    "set_transition", "set_fades",
 }
 
 

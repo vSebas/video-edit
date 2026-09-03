@@ -753,6 +753,53 @@ def _apply_remove_caption(plan: dict, op: dict, assets: dict) -> str:
     return f"Subtítulo {op['event_id']} eliminado"
 
 
+# Transitions the renderer honours WITHOUT changing timeline geometry: a hard
+# cut, or a dip to black/white centred on the seam. A true crossfade
+# ("dissolve") needs the clips to overlap on the timeline, which this build does
+# not yet do, so it is refused rather than silently rendered as a cut.
+_DIP_TRANSITIONS = {"cut", "fade_black", "fade_white"}
+
+
+def _apply_set_transition(plan: dict, op: dict, assets: dict) -> str:
+    video, _ = _primary_tracks(plan)
+    event = next(
+        (e for e in video["events"] if e["event_id"] == op["event_id"]), None
+    )
+    if event is None:
+        raise PlanOpError(f"No scene {op['event_id']!r}")
+    kind = op["type"]
+    if kind == "dissolve":
+        raise PlanOpError(
+            "el fundido encadenado (dissolve) aún no está disponible; usa "
+            "corte, o fundido a negro/blanco"
+        )
+    if kind not in _DIP_TRANSITIONS:
+        raise PlanOpError(f"transition type must be one of {_DIP_TRANSITIONS}")
+    if kind == "cut":
+        event["transition_out"] = {"type": "cut", "duration_seconds": 0.0}
+        return f"Escena {event['event_id']}: corte seco"
+    dur = _finite(op.get("duration_seconds"), 0.5, "duration_seconds")
+    if not 0 < dur <= 3:
+        raise PlanOpError("duration_seconds must be within (0, 3]")
+    event["transition_out"] = {"type": kind, "duration_seconds": round(dur, 3)}
+    colour = "negro" if kind == "fade_black" else "blanco"
+    return f"Escena {event['event_id']}: fundido a {colour} ({dur:g}s)"
+
+
+def _apply_set_fades(plan: dict, op: dict, assets: dict) -> str:
+    intro = _finite(op.get("intro_seconds"), 0.0, "intro_seconds")
+    outro = _finite(op.get("outro_seconds"), 0.0, "outro_seconds")
+    if not 0 <= intro <= 3 or not 0 <= outro <= 3:
+        raise PlanOpError("intro_seconds and outro_seconds must be 0..3")
+    plan["transitions"] = {
+        "intro_fade_seconds": round(intro, 3),
+        "outro_fade_seconds": round(outro, 3),
+    }
+    if intro == 0 and outro == 0:
+        return "Fundidos de apertura y cierre quitados"
+    return f"Fundidos: apertura {intro:g}s, cierre {outro:g}s"
+
+
 _APPLIERS = {
     "delete_event": (_apply_delete, {"event_id"}),
     "trim_event": (_apply_trim, {"event_id", "edge", "direction", "seconds"}),
@@ -770,6 +817,8 @@ _APPLIERS = {
     "remove_music": (_apply_remove_music, set()),
     "edit_caption": (_apply_edit_caption, {"event_id", "text"}),
     "remove_caption": (_apply_remove_caption, {"event_id"}),
+    "set_transition": (_apply_set_transition, {"event_id", "type"}),
+    "set_fades": (_apply_set_fades, set()),
 }
 
 
@@ -868,6 +917,8 @@ Respond with EXACTLY one JSON object, nothing else. One of:
 {"op":"set_title","event_id":"...","text":"...","font":"sans|handwritten|clean|display (optional)","size":"24-140 (optional)","position":"top|center|lower (optional)"}
 {"op":"set_music_bed","asset_id":"<an audio asset>","gain_db":<-40..6, opt>,"duck_db":<-40..0, opt>,"loop":<bool, opt>}
 {"op":"remove_music"}
+{"op":"set_transition","event_id":"<a scene id>","type":"cut|fade_black|fade_white","duration_seconds":<0-3, for a fade>}
+{"op":"set_fades","intro_seconds":<0-3>,"outro_seconds":<0-3>}
 {"op":"add_voiceover","asset_id":"<an available voiceover audio asset>","timeline_start_seconds":<number>}
 {"op":"remove_voiceover","event_id":"vo-.."}
 {"op":"add_broll","asset_id":"<a footage asset>","timeline_start_seconds":<number>,"duration_seconds":<optional, default up to 4>,"source_start_seconds":<optional, default 0>}
