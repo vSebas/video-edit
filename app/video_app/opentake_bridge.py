@@ -434,35 +434,41 @@ def build_bridge(plan: dict, entries: list[dict], ref_for: dict[str, str],
 def ensure_project(client: OpenTakeMcp, name: str) -> str:
     """Open the OpenTake bundle named after this vlog, creating it when it
     does not exist yet — placement must land in THIS project's timeline,
-    never in whatever bundle happens to be open. Returns 'opened' or
-    'created'."""
+    never in whatever bundle happens to be open. Existence is decided by
+    LIST, never by parsing tool errors (external MCP redacts them).
+    Returns 'opened', 'created', or 'already-open'."""
     try:
-        client.tool("open_project", {"name": name})
-        return "opened"
+        listing = client.tool("list_projects")
     except OpenTakeMcpError as exc:
         message = str(exc)
-        if "no bundle named" in message:
-            try:
-                client.tool("new_project", {"name": name})
-                return "created"
-            except OpenTakeMcpError as create_exc:
-                create_message = str(create_exc)
-                if "Unknown tool" in create_message or "unknown tool" in create_message:
-                    raise BridgeError(
-                        "Tu OpenTake no tiene la herramienta new_project — "
-                        "reinicia OpenTake con el binario recién compilado "
-                        "del fork (run.sh) y reintenta"
-                    ) from create_exc
-                raise BridgeError(
-                    f"No se pudo crear el proyecto en OpenTake: {create_message}"
-                ) from create_exc
         if "projects folder is unknown" in message:
             raise BridgeError(
                 "OpenTake no sabe dónde está tu carpeta de proyectos — abre "
-                "cualquier proyecto guardado una vez en OpenTake y reintenta"
+                "o guarda cualquier proyecto una vez en OpenTake y reintenta"
             ) from exc
         raise BridgeError(
-            f"No se pudo abrir el proyecto en OpenTake: {message}"
+            f"No se pudo listar los proyectos de OpenTake: {message}"
+        ) from exc
+    projects = listing.get("projects") or []
+    entry = next((p for p in projects if p.get("name") == name), None)
+    if entry is not None and entry.get("open"):
+        return "already-open"
+    tool_name = "open_project" if entry is not None else "new_project"
+    try:
+        client.tool(tool_name, {"name": name})
+        return "opened" if entry is not None else "created"
+    except OpenTakeMcpError as exc:
+        message = str(exc)
+        if tool_name == "new_project" and (
+            "Unknown tool" in message or "unknown tool" in message
+        ):
+            raise BridgeError(
+                "Tu OpenTake no tiene la herramienta new_project — reinicia "
+                "OpenTake con el binario recién compilado del fork (run.sh)"
+            ) from exc
+        verb = "abrir" if tool_name == "open_project" else "crear"
+        raise BridgeError(
+            f"No se pudo {verb} el proyecto «{name}» en OpenTake: {message}"
         ) from exc
 
 

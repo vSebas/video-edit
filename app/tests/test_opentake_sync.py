@@ -788,15 +788,14 @@ class FakeOpenTake:
 
     def tool(self, name, arguments=None):
         arguments = arguments or {}
-        if name == "open_project":
-            # the fake host "has" a bundle for every project name unless
-            # the test marks it missing — mirrors the fork's lifecycle
+        if name == "list_projects":
             if getattr(self, "missing_bundle", False):
-                from video_app.opentake_mcp import OpenTakeMcpError
-
-                raise OpenTakeMcpError(
-                    f"open_project: no bundle named {arguments['name']!r}"
-                )
+                return {"projects": []}
+            return {"projects": [
+                {"name": getattr(self, "bundle_name", "mi-vlog"),
+                 "open": False},
+            ]}
+        if name == "open_project":
             self.opened_project = arguments["name"]
             return {"name": arguments["name"]}
         if name == "new_project":
@@ -1296,3 +1295,22 @@ class TestEnsureProject:
         fake2.missing_bundle = True
         assert ensure_project(fake2, "mi-vlog") == "created"
         assert fake2.created_project == "mi-vlog"
+
+    def test_existence_never_relies_on_redacted_errors(self) -> None:
+        # external MCP redacts tool errors — ensure_project must decide
+        # open-vs-create from list_projects, so open_project errors that
+        # ARE raised surface as real failures, never trigger create
+        from video_app.opentake_bridge import BridgeError, ensure_project
+        from video_app.opentake_mcp import OpenTakeMcpError
+
+        fake = FakeOpenTake({})
+
+        def failing_tool(name, arguments=None, _orig=fake.tool):
+            if name == "open_project":
+                raise OpenTakeMcpError("MCP_TOOL_ERROR_REDACTED")
+            return _orig(name, arguments)
+
+        fake.tool = failing_tool
+        import pytest as _pytest
+        with _pytest.raises(BridgeError, match="abrir el proyecto"):
+            ensure_project(fake, "mi-vlog")
