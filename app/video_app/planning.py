@@ -1825,12 +1825,14 @@ def _carry_user_captions(old_plan: dict, new_plan: dict) -> None:
     if not old_caps or not new_caps:
         return
     # Carrying REPLACES the whole cue text, so the regenerated cue must be the
-    # SAME line — proven by an envelope that matches within rounding tolerance,
-    # not merely one that overlaps. Deterministic ASR of unchanged footage
-    # reproduces the identical (asset, source_start, source_end) envelope, so
-    # equality is exactly the right test: any real content change (a trimmed or
-    # newly-exposed word) moves an endpoint well beyond TOL and is refused.
-    TOL = 0.05
+    # SAME line — proven by an envelope that matches to the stored 1ms
+    # precision. Deterministic ASR of unchanged footage reproduces the identical
+    # (asset, source_start, source_end) envelope, so equality within ~1ms is
+    # exactly the test: any real content change (a trimmed or newly-exposed
+    # word) moves an endpoint far beyond TOL and is refused. The tolerance is
+    # near the rounding precision, NOT tens of ms — a looser bound would let two
+    # short, disjoint envelopes ([10.000,10.020] vs [10.040,10.060]) match.
+    TOL = 0.002
 
     def _same_envelope(a: dict | None, b: dict | None) -> bool:
         # Missing fields (schema allows a null object) → no match, never KeyError.
@@ -1840,7 +1842,11 @@ def _carry_user_captions(old_plan: dict, new_plan: dict) -> None:
         b0, b1 = b.get("source_start_seconds"), b.get("source_end_seconds")
         if None in (a0, a1, b0, b1):
             return False
-        return abs(a0 - b0) <= TOL and abs(a1 - b1) <= TOL
+        # Endpoints equal to precision AND the intervals genuinely overlap —
+        # belt-and-suspenders against tiny disjoint envelopes.
+        if abs(a0 - b0) > TOL or abs(a1 - b1) > TOL:
+            return False
+        return min(a1, b1) > max(a0, b0)
 
     edited = [c for c in old_caps if c.get("user_authored")]
     for cue in edited:

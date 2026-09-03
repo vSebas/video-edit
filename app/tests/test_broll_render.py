@@ -731,3 +731,23 @@ class TestCaptionCarrySplit:
         _carry_user_captions(old, new)
         texts = [e["text"] for e in new["tracks"][0]["events"]]
         assert texts == ["primera", "segunda"]  # correction carried to neither
+
+
+class TestCaptionCarryDisjoint:
+    def test_disjoint_tiny_envelopes_do_not_match(self) -> None:
+        from video_app.planning import _carry_user_captions
+        # short, DISJOINT source envelopes (different words) — endpoints differ
+        # by 40ms, well beyond the 2ms precision → must not transfer.
+        old = {"tracks": [{"kind": "caption", "events": [
+            {"event_id": "cap-001", "timeline_start_seconds": 1.0,
+             "duration_seconds": 0.5, "text": "palabra corregida",
+             "asr_text": "x", "user_authored": True,
+             "caption_source": {"asset_id": "A", "source_start_seconds": 10.000,
+                                 "source_end_seconds": 10.020}}]}]}
+        new = {"tracks": [{"kind": "caption", "events": [
+            {"event_id": "cap-001", "timeline_start_seconds": 1.0,
+             "duration_seconds": 0.5, "text": "otra palabra",
+             "caption_source": {"asset_id": "A", "source_start_seconds": 10.040,
+                                 "source_end_seconds": 10.060}}]}]}
+        _carry_user_captions(old, new)
+        assert new["tracks"][0]["events"][0]["text"] == "otra palabra"
