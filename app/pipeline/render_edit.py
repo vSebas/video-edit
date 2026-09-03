@@ -127,6 +127,19 @@ def _ass_time(seconds: float) -> str:
     return f"{h:d}:{m:02d}:{s:02d}.{cs:02d}"
 
 
+def _ass_text(value: str) -> str:
+    # Neutralize ASS markup in caption BODY text: '{...}' is an override block
+    # and '\' starts commands (\N, \h). A user/model caption must never inject
+    # styling outside the constrained caption_style vocabulary, so strip those
+    # characters to harmless look-alikes after collapsing whitespace.
+    return (
+        _srt_text(value)
+        .replace("\\", "＼")
+        .replace("{", "(")
+        .replace("}", ")")
+    )
+
+
 def has_caption_styles(events) -> bool:
     return any((e.get("caption_style") or {}) for e in events)
 
@@ -152,7 +165,7 @@ def write_caption_ass(events, path, width: int, height: int) -> bool:
     lines = [header]
     n = 0
     for e in sorted(events, key=lambda x: x["timeline_start_seconds"]):
-        text = _srt_text(e.get("text"))
+        text = _ass_text(e.get("text"))
         if not text:
             continue
         n += 1

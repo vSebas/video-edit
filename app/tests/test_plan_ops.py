@@ -829,3 +829,32 @@ class TestPartialFixes:
                       "loop": "false"}, inv)
         ev = _music_events_of(candidate)[0]
         assert ev["music"]["bed"]["loop"] is False
+
+
+class TestNewDefectFixes:
+    def test_extend_end_keeps_following_scene_captions(self) -> None:
+        # v01 spans [0,3); a caption at 3.2 belongs to v02, not v01. Extending
+        # v01's end must ripple it forward, NOT delete it.
+        plan = _plan()
+        plan["tracks"].append({
+            "track_id": "cap1", "kind": "caption", "events": [{
+                "event_id": "cap-001", "asset_id": None,
+                "source_start_seconds": None, "source_end_seconds": None,
+                "timeline_start_seconds": 3.2, "duration_seconds": 1.0,
+                "playback_rate": 1.0, "intent": "caption",
+                "observed_content": None, "confidence": 1.0,
+                "text": "de la segunda", "volume_db": None}]})
+        candidate, _ = apply_op(plan, {
+            "op": "trim_event", "event_id": "v01", "edge": "end",
+            "direction": "extend", "seconds": 0.5,
+        }, INVENTORY)
+        cap = next(t for t in candidate["tracks"] if t["kind"] == "caption")
+        assert len(cap["events"]) == 1
+        assert cap["events"][0]["timeline_start_seconds"] == 3.7  # rippled +0.5
+
+    def test_as_bool_rejects_garbage(self) -> None:
+        from video_app.plan_ops import _as_bool
+        assert _as_bool("no", default=True) is False
+        assert _as_bool(None, default=True) is True
+        with pytest.raises(PlanOpError):
+            _as_bool("maybe", default=True)

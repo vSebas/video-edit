@@ -267,15 +267,14 @@ def _apply_trim(plan: dict, op: dict, assets: dict) -> str:
             event["source_end_seconds"] = _r(new_source_end)
         event["duration_seconds"] = _r(new_duration)
     # Captions that no longer cover the same footage must go (a caption cannot
-    # be reliably remapped without ASR). End-edge: only the removed/added tail
-    # region [min(new,old)end, max(new,old)end) changes footage. Start-edge: the
-    # clip's whole content shifts, so drop all of this clip's captions — the
-    # user recompiles to reseed them for the retimed footage.
+    # be reliably remapped without ASR). Start-edge: the clip's whole content
+    # shifts, so drop all of this clip's captions. End-shorten: drop only the
+    # removed tail [new_end, old_end). End-extend adds fresh footage (no
+    # captions yet) and the following scene's captions merely ripple forward —
+    # dropping anything there would wrongly delete the next scene's captions.
     if edge == "start":
         _drop_captions_between(plan, old_start, old_end)
-    elif direction == "extend":
-        _drop_captions_between(plan, old_end, new_end)
-    else:
+    elif direction == "shorten":
         _drop_captions_between(plan, new_end, old_end)
     _ripple(
         plan,
@@ -645,15 +644,20 @@ def _music_track(plan: dict, create: bool = False) -> dict | None:
 
 
 def _as_bool(value, default: bool) -> bool:
-    # A JSON string "false"/"0"/"no" must not become True (plain bool("false")
-    # does). Accept real booleans and common string spellings.
+    # A JSON string must map to a bool by its SPELLING, not Python truthiness
+    # (plain bool("false") is True). Only recognized spellings are accepted;
+    # anything else raises rather than silently guessing.
     if value is None:
         return default
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
-        return value.strip().lower() not in ("false", "0", "no", "")
-    return bool(value)
+        token = value.strip().lower()
+        if token in ("true", "1", "yes"):
+            return True
+        if token in ("false", "0", "no"):
+            return False
+    raise PlanOpError(f"expected a boolean, got {value!r}")
 
 
 def _finite(value, default: float, name: str) -> float:
@@ -727,6 +731,10 @@ def _apply_edit_caption(plan: dict, op: dict, assets: dict) -> str:
     text = str(op["text"]).strip()
     if not 1 <= len(text) <= 200:
         raise PlanOpError("Caption text must be 1-200 characters")
+    # Capture the ASR text this correction replaced (once) so a later revision
+    # can prove the footage is unchanged before carrying the correction forward.
+    if not event.get("asr_text"):
+        event["asr_text"] = event.get("text")
     event["text"] = text
     # Provenance: this text was typed by the user through the direct caption
     # control, not authored by a model — it is trusted rendered language.

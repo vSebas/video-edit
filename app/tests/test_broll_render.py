@@ -615,12 +615,48 @@ class TestCaptionStyleAndRevise:
         from video_app.planning import _carry_user_captions
         old = {"tracks": [{"kind": "caption", "events": [
             {"event_id": "cap-001", "timeline_start_seconds": 1.0,
-             "duration_seconds": 2.0, "text": "hola corregido",
-             "user_authored": True}]}]}
+             "duration_seconds": 2.0, "text": "hola mundo bonito",
+             "asr_text": "hola mnd bonito", "user_authored": True}]}]}
+        # same footage → fresh ASR reproduces similar words → carry
         new = {"tracks": [{"kind": "caption", "events": [
             {"event_id": "cap-001", "timeline_start_seconds": 1.1,
-             "duration_seconds": 1.8, "text": "hla"}]}]}
+             "duration_seconds": 1.8, "text": "hola mnd bonito"}]}]}
         _carry_user_captions(old, new)
         cue = new["tracks"][0]["events"][0]
-        assert cue["text"] == "hola corregido"
+        assert cue["text"] == "hola mundo bonito"
         assert cue["user_authored"] is True
+
+    def test_revise_refuses_carry_onto_different_footage(self) -> None:
+        from video_app.planning import _carry_user_captions
+        old = {"tracks": [{"kind": "caption", "events": [
+            {"event_id": "cap-001", "timeline_start_seconds": 1.0,
+             "duration_seconds": 2.0, "text": "hola mundo",
+             "asr_text": "hola mundo", "user_authored": True}]}]}
+        # reordered: the slot now holds unrelated words → must NOT paste
+        new = {"tracks": [{"kind": "caption", "events": [
+            {"event_id": "cap-001", "timeline_start_seconds": 1.0,
+             "duration_seconds": 2.0, "text": "comida deliciosa"}]}]}
+        _carry_user_captions(old, new)
+        assert new["tracks"][0]["events"][0]["text"] == "comida deliciosa"
+
+
+class TestAssEscaping:
+    def _render_edit(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "re_mod3", str(PIPELINE / "render_edit.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_ass_text_neutralizes_markup(self, tmp_path) -> None:
+        m = self._render_edit()
+        events = [{"timeline_start_seconds": 0.0, "duration_seconds": 1.0,
+                   "text": "hola {\\an8}\\N mundo",
+                   "caption_style": {"size": 40}}]
+        path = tmp_path / "c.ass"
+        assert m.write_caption_ass(events, path, 1080, 1920)
+        # the injected override block/newline must not survive as ASS markup
+        dialogue = [l for l in path.read_text().splitlines()
+                    if l.startswith("Dialogue:")][0]
+        assert "{\\an8}" not in dialogue and "\\N" not in dialogue

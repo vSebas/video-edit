@@ -1108,10 +1108,12 @@ def _caption_event(
     end = max(start + 0.3, end)
     if max_end is not None:
         end = min(end, max_end)
-    if end <= start:
-        end = start + 0.001
     start = round(start, 3)
     end = round(end, 3)
+    # Guarantee a non-zero duration AFTER rounding — two endpoints a hair apart
+    # can round to the same millisecond, and a 0s cue fails schema validation.
+    if end <= start:
+        end = round(start + 0.001, 3)
     return {
         "event_id": f"cap-{index:03d}",
         "asset_id": None,
@@ -1810,6 +1812,9 @@ def _carry_user_captions(old_plan: dict, new_plan: dict) -> None:
     new_caps = _captions(new_plan)
     if not old_caps or not new_caps:
         return
+    def _tokens(text: str) -> set:
+        return {w for w in re.findall(r"\w+", (text or "").lower()) if w}
+
     edited = [c for c in old_caps if c.get("user_authored")]
     for cue in edited:
         c_lo = cue["timeline_start_seconds"]
@@ -1821,9 +1826,25 @@ def _carry_user_captions(old_plan: dict, new_plan: dict) -> None:
             overlap = min(c_hi, hi) - max(c_lo, lo)
             if overlap > best_overlap:
                 best, best_overlap = cand, overlap
-        if best is not None and best_overlap > 0:
-            best["text"] = cue["text"]
-            best["user_authored"] = True
+        if best is None or best_overlap <= 0:
+            continue
+        # Only paste the correction when the regenerated cue is plainly the SAME
+        # footage. The signal is the ORIGINAL ASR text captured when the user
+        # edited (asr_text): fresh ASR of the same footage reproduces it, so the
+        # tokens overlap. After a reorder the slot holds different words, the
+        # overlap collapses, and we refuse — never moving trusted text onto
+        # another scene. (Without a stored original we cannot prove sameness, so
+        # we also refuse.)
+        original = cue.get("asr_text")
+        if not original:
+            continue
+        old_t, new_t = _tokens(original), _tokens(best.get("text"))
+        union = old_t | new_t
+        if not union or len(old_t & new_t) / len(union) < 0.4:
+            continue
+        best["text"] = cue["text"]
+        best["user_authored"] = True
+        best["asr_text"] = original
 
 
 def validate_edit_plan(plan: dict, schema_path: Path, project: dict) -> None:
@@ -1880,10 +1901,13 @@ def validate_edit_plan(plan: dict, schema_path: Path, project: dict) -> None:
         )
     if len(primary_audio) != 1:
         # Voiceover/music are additions to a primary bed, never a substitute:
-        # every plan anchors on exactly one primary audio track. The renderer
-        # selects the primary by role, so a missing or reordered primary would
-        # otherwise leave it with no base audio (or mistake music for it).
+        # every plan anchors on exactly one primary audio track.
         raise PlanningError("A plan needs exactly one primary audio track")
+    # The primary must be the FIRST audio track: several consumers still select
+    # "the first audio track" as the primary, so a reordered [music, primary]
+    # would feed them the wrong track. Enforcing order keeps them all correct.
+    if audio_tracks and audio_tracks[0] is not primary_audio[0]:
+        raise PlanningError("The primary audio track must come before voiceover/music")
     if len(voiceover_tracks) > 1:
         raise PlanningError("At most one voiceover track beyond the primary audio")
     if len(music_tracks) > 1:
@@ -1913,7 +1937,11 @@ def validate_edit_plan(plan: dict, schema_path: Path, project: dict) -> None:
                     raise PlanningError(
                         f"Music bed {event['event_id']} needs a top-level asset_id"
                     )
-                if bed.get("asset_id") and bed["asset_id"] != event["asset_id"]:
+                if not bed.get("asset_id"):
+                    raise PlanningError(
+                        f"Music bed {event['event_id']} needs a bed.asset_id"
+                    )
+                if bed["asset_id"] != event["asset_id"]:
                     raise PlanningError(
                         f"Music bed {event['event_id']} asset_id disagrees with "
                         "its bed.asset_id"

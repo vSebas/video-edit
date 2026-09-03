@@ -397,6 +397,13 @@
             "null"
           ]
         },
+        "asr_text": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 200
+        },
         "evidence_ids": {
           "type": "array",
           "maxItems": 8,

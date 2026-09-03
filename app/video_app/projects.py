@@ -1804,9 +1804,6 @@ class ProjectService:
         plan_dir = self.settings.runtime / project_id / "plan"
         plan_path = plan_dir / "edit-plan.json"
         stored_path = self.settings.runtime / project_id / "plan-command.json"
-        if not stored_path.is_file():
-            raise ProjectError("No proposed edit — send an instruction first")
-        stored = load_json(stored_path)
         # The token is REQUIRED: without it, a caller applying blindly could
         # install another caller's same-revision proposal that overwrote the
         # store between propose and apply (cross-review 21).
@@ -1814,12 +1811,18 @@ class ProjectService:
             raise ProjectError(
                 "Missing proposal token — send the instruction again"
             )
-        if stored.get("proposal_id") != proposal_id:
-            raise ProjectError(
-                "A different proposal replaced the one you reviewed — "
-                "send the instruction again"
-            )
+        # Load AND check the proposal inside the write lock so no concurrent
+        # apply/propose can swap the stored proposal between the check and the
+        # install (the check and the commit must be atomic).
         with self._project_write(project_id):
+            if not stored_path.is_file():
+                raise ProjectError("No proposed edit — send an instruction first")
+            stored = load_json(stored_path)
+            if stored.get("proposal_id") != proposal_id:
+                raise ProjectError(
+                    "A different proposal replaced the one you reviewed — "
+                    "send the instruction again"
+                )
             plan = load_json(plan_path)
             if int(plan.get("revision", 1)) != stored["base_revision"]:
                 stored_path.unlink(missing_ok=True)
