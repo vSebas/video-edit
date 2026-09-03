@@ -750,10 +750,17 @@ def place_plan(
         "total_frames": sum(e["durationFrames"] for e in entries),
         "removed_previous_clips": len(existing),
     }
+    # The explicit save is what makes the placement DURABLE — a swallowed
+    # failure here silently returns "placed" while the bundle on disk stays
+    # empty (Codex review: the 0-clips bug). Save failure is fatal.
     try:
         client.tool("save_project")
-    except OpenTakeMcpError:
-        pass  # placement succeeded; an autosave failure is not fatal
+    except OpenTakeMcpError as exc:
+        raise BridgeError(
+            "OpenTake colocó los clips pero no pudo GUARDAR el proyecto — "
+            f"nada quedó en disco: {exc}"
+        ) from exc
+    summary["saved"] = True
     return summary, bridge
 
 
