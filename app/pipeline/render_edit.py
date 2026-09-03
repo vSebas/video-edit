@@ -327,38 +327,49 @@ def main() -> None:
             f"color={plan['project']['background_color']},"
         )
 
-    # A dip-to-color transition_out on clip i colors the seam to clip i+1: the
-    # outgoing clip fades to the colour over its last half of the duration, the
-    # incoming clip fades up over its first half. It is geometry-preserving —
-    # the dip happens INSIDE each clip's own time, so no timeline math changes.
+    # Per-cut dip-to-colour: a fade_black/fade_white transition_out colours ONE
+    # seam. It is applied inside the two adjacent clips' own time (outgoing tail
+    # fades to the colour, incoming head fades up), so it is geometry-preserving.
+    # A dip only exists where the two clips are actually CONTIGUOUS and the
+    # outgoing clip has a successor — a gap or the final clip has no seam.
     ordered_video = sorted(video_events, key=lambda e: e["timeline_start_seconds"])
 
-    def _dip(transition):
-        t = (transition or {}).get("type")
-        if t not in ("fade_black", "fade_white"):
+    def _seam_dip(prev_ev, this_ev):
+        """(colour, half-duration) of the dip on the seam BEFORE this_ev, or
+        (None, 0) if prev_ev has no dip or the two are not contiguous."""
+        if prev_ev is None:
             return None, 0.0
-        colour = "black" if t == "fade_black" else "white"
-        return colour, max(0.0, float(transition.get("duration_seconds") or 0.0))
+        t = (prev_ev.get("transition_out") or {})
+        if t.get("type") not in ("fade_black", "fade_white"):
+            return None, 0.0
+        prev_end = prev_ev["timeline_start_seconds"] + prev_ev["duration_seconds"]
+        if abs(this_ev["timeline_start_seconds"] - prev_end) > epsilon:
+            return None, 0.0  # a gap sits between them — not a seam
+        colour = "black" if t["type"] == "fade_black" else "white"
+        half = min(float(t.get("duration_seconds") or 0.0) / 2.0,
+                   prev_ev["duration_seconds"] / 2.0,
+                   this_ev["duration_seconds"] / 2.0)
+        return (colour, half) if half > 0 else (None, 0.0)
 
     for index, video in enumerate(video_events):
         start = video["source_start_seconds"]
         end = video["source_end_seconds"]
         length = end - start
         rotation = (video.get("reframe") or {}).get("rotation_degrees", 0)
-        fade_filters = ""
-        # fade UP from the colour the PREVIOUS clip dipped to
         pos = ordered_video.index(video)
-        if pos > 0:
-            in_colour, in_dur = _dip(ordered_video[pos - 1].get("transition_out"))
-            half = min(in_dur / 2.0, length / 2.0)
-            if in_colour and half > 0:
-                fade_filters += f",fade=t=in:st=0:d={round(half, 3)}:color={in_colour}"
-        # fade DOWN to this clip's own dip colour
-        out_colour, out_dur = _dip(video.get("transition_out"))
-        half = min(out_dur / 2.0, length / 2.0)
-        if out_colour and half > 0:
+        prev_ev = ordered_video[pos - 1] if pos > 0 else None
+        next_ev = ordered_video[pos + 1] if pos + 1 < len(ordered_video) else None
+        fade_filters = ""
+        # fade UP from the colour of the dip on the seam BEFORE this clip
+        in_colour, in_half = _seam_dip(prev_ev, video)
+        if in_colour:
+            fade_filters += f",fade=t=in:st=0:d={round(in_half, 3)}:color={in_colour}"
+        # fade DOWN to the colour of this clip's own dip (only if it has a
+        # contiguous successor — the final clip has no seam to colour)
+        out_colour, out_half = _seam_dip(video, next_ev) if next_ev else (None, 0.0)
+        if out_colour:
             fade_filters += (
-                f",fade=t=out:st={round(length - half, 3)}:d={round(half, 3)}:"
+                f",fade=t=out:st={round(length - out_half, 3)}:d={round(out_half, 3)}:"
                 f"color={out_colour}"
             )
         filters.append(
@@ -602,26 +613,24 @@ def main() -> None:
             )
         current_video = "vsubs"
 
-    # Opening/closing fades from/to black — applied last so they cover titles
-    # and captions too, with a matching audio fade so sound rises and falls with
-    # the picture. Geometry-preserving: no timeline positions change.
+    # Opening/closing fades are VIDEO-ONLY and applied to the FINAL composited
+    # picture: they sit at the very ends of the stream (where a plain fade=in /
+    # fade=out is well defined) and cover B-roll/titles/captions. Video-only so
+    # they never clip an opening hook or a closing sentence. (Internal dips can
+    # NOT use composite fades — a chained fade=in blacks the whole stream before
+    # its start — so they are applied per-clip above.)
+    video_fades = []
     transitions = plan.get("transitions") or {}
     intro = min(float(transitions.get("intro_fade_seconds") or 0.0), duration / 2)
     outro = min(float(transitions.get("outro_fade_seconds") or 0.0), duration / 2)
-    if intro > 0 or outro > 0:
-        video_fades = []
-        audio_fades = []
-        if intro > 0:
-            video_fades.append(f"fade=t=in:st=0:d={round(intro, 3)}:color=black")
-            audio_fades.append(f"afade=t=in:st=0:d={round(intro, 3)}")
-        if outro > 0:
-            st = round(duration - outro, 3)
-            video_fades.append(f"fade=t=out:st={st}:d={round(outro, 3)}:color=black")
-            audio_fades.append(f"afade=t=out:st={st}:d={round(outro, 3)}")
+    if intro > 0:
+        video_fades.append(f"fade=t=in:st=0:d={round(intro, 3)}:color=black")
+    if outro > 0:
+        st = round(duration - outro, 3)
+        video_fades.append(f"fade=t=out:st={st}:d={round(outro, 3)}:color=black")
+    if video_fades:
         filters.append(f"[{current_video}]{','.join(video_fades)}[vfaded]")
         current_video = "vfaded"
-        filters.append(f"[{audio_out}]{','.join(audio_fades)}[afaded]")
-        audio_out = "afaded"
 
     filters.append(
         f"[{audio_out}]loudnorm=I=-16:LRA=11:TP=-1.5,aresample=48000,"

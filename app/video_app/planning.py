@@ -1027,17 +1027,25 @@ def build_plan(
     return plan
 
 
-def _default_transitions(timeline: float) -> dict:
-    """A conservative open/close fade, scaled down for very short cuts so the
-    fades never eat a meaningful fraction of the video."""
-    intro = 0.4
-    outro = 0.6
-    # never let the two fades exceed a third of a short clip
+def _scale_transitions(intro: float, outro: float, timeline: float) -> dict:
+    """Clamp an intro/outro fade pair to at most a third of the cut, preserving
+    their ratio, so the fades never eat a meaningful fraction of a short video.
+    Used both for the compiler default and when carrying a fade choice across a
+    revision that changed the duration."""
+    intro = max(0.0, float(intro))
+    outro = max(0.0, float(outro))
     budget = max(0.0, timeline / 3.0)
-    if intro + outro > budget:
-        scale = budget / (intro + outro) if (intro + outro) else 0.0
-        intro, outro = round(intro * scale, 3), round(outro * scale, 3)
-    return {"intro_fade_seconds": intro, "outro_fade_seconds": outro}
+    total = intro + outro
+    if total > budget:
+        scale = budget / total if total else 0.0
+        intro, outro = intro * scale, outro * scale
+    return {"intro_fade_seconds": round(intro, 3),
+            "outro_fade_seconds": round(outro, 3)}
+
+
+def _default_transitions(timeline: float) -> dict:
+    """A conservative open/close fade for a freshly compiled cut."""
+    return _scale_transitions(0.4, 0.6, timeline)
 
 
 def _caption_events_from_speech(
@@ -1815,9 +1823,16 @@ events. Every range must stay at least {MIN_EVENT_SECONDS}s long."""
     if plan.get("lineage_contract"):
         new_plan["lineage_contract"] = True
     # Open/close fades are a user choice, not a story decision — keep them
-    # across a revision instead of resetting to the compiler default.
+    # across a revision, but RE-SCALE to the new duration's budget so a fade
+    # that was fine on the old cut can't swallow a now-shorter one. An explicit
+    # empty/None transitions choice is preserved as-is (no fades).
     if plan.get("transitions") is not None:
-        new_plan["transitions"] = plan["transitions"]
+        old = plan["transitions"] or {}
+        new_plan["transitions"] = _scale_transitions(
+            old.get("intro_fade_seconds") or 0.0,
+            old.get("outro_fade_seconds") or 0.0,
+            new_plan["project"]["duration_seconds"],
+        )
     if approved_captions is not None and unchanged_user_title:
         # the user's own title keeps its exemption across revisions
         for track in new_plan.get("tracks", []):

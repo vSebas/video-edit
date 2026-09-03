@@ -795,3 +795,44 @@ class TestTransitionsRender:
         assert sum(intro) < 120, f"intro should be dark, got {intro}"
         assert mid[0] > 150, f"mid should be bright red, got {mid}"
         assert sum(dip) < 90, f"seam should dip to black, got {dip}"
+
+
+class TestTransitionAdjacency:
+    def test_final_clip_transition_and_gap_produce_no_dip(self, tmp_path) -> None:
+        # v01 [0,2] fade_black, GAP [2,3], v02 [3,5] fade_black (last clip).
+        # Neither dip is a real seam: v01→v02 is separated by a gap, and v02 has
+        # no successor — so the mid of each clip stays bright (no dip artifact).
+        _make_clip(tmp_path / "red.mp4", "red", 2.0, 300)
+        _make_clip(tmp_path / "green.mp4", "green", 2.0, 600)
+        inv = {"assets": [
+            {"asset_id": aid, "filename": f"{aid}.mp4", "source_path": f"{aid}.mp4",
+             "duration_seconds": 2.0, "sha256": "0" * 64, "media_type": "video",
+             "audio": {"sample_rate": 48000, "channels": 1},
+             "video": {"width": 320, "height": 240}} for aid in ("red", "green")]}
+        plan = {
+            "schema_version": "edit-plan.v1", "generated_at": "2026-09-01T00:00:00Z",
+            "benchmark_id": "t", "concept_id": "t", "revision": 1,
+            "project": {"width": 320, "height": 240, "fps": 30,
+                        "duration_seconds": 5.0, "background_color": "black"},
+            "tracks": [
+                {"track_id": "v1", "kind": "video", "events": [
+                    {**_event("v01", "red", 0.0, 0.0, 2.0, "base"),
+                     "transition_out": {"type": "fade_black", "duration_seconds": 0.6}},
+                    {**_event("v02", "green", 0.0, 3.0, 2.0, "base"),
+                     "transition_out": {"type": "fade_black", "duration_seconds": 0.6}}]},
+                {"track_id": "a1", "kind": "audio", "events": [
+                    _event("a01", "red", 0.0, 0.0, 2.0, "base"),
+                    _event("a02", "green", 0.0, 3.0, 2.0, "base")]},
+                {"track_id": "t1", "kind": "title", "events": []}]}
+        (tmp_path / "plan.json").write_text(json.dumps(plan))
+        (tmp_path / "inv.json").write_text(json.dumps(inv))
+        out = tmp_path / "out.mp4"
+        subprocess.run(
+            [sys.executable, str(PIPELINE / "render_edit.py"),
+             "--plan", str(tmp_path / "plan.json"), "--output", str(out),
+             "--inventory", str(tmp_path / "inv.json"), "--media-root", str(tmp_path)],
+            check=True, capture_output=True, text=True)
+        # v01 near its end (1.9s) must NOT have dipped (gap after, not a seam)
+        assert _center_pixel(out, 1.9)[0] > 150
+        # v02 near its end (4.9s) must NOT have dipped (last clip, no successor)
+        assert _center_pixel(out, 4.9)[1] > 100

@@ -855,6 +855,10 @@ def timeline_to_candidate_plan(
             item["info"] = info
             item["video_event_id"] = f"{info['video_event']['event_id']}{suffix}"
             item["audio_event_id"] = f"{info['audio_event']['event_id']}{suffix}"
+            # A transition_out belongs to the ORIGINAL clip's outgoing seam, so
+            # only the final descendant of a split inherits it — the internal
+            # seams between the pieces are plain cuts, not repeated dips.
+            item["keeps_transition"] = index == len(items) - 1
 
     generated_video_ids = [
         item["video_event_id"] for items in descendants.values() for item in items
@@ -883,6 +887,8 @@ def timeline_to_candidate_plan(
         video_event = _rebuilt_event(
             info["video_event"], item["video_event_id"], item["video"], fps
         )
+        if not item.get("keeps_transition"):
+            video_event["transition_out"] = {"type": "cut", "duration_seconds": 0.0}
         audio_event = _rebuilt_event(
             info["audio_event"], item["audio_event_id"], item["audio"], fps
         )

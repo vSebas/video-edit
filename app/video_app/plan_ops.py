@@ -768,6 +768,8 @@ def _apply_set_transition(plan: dict, op: dict, assets: dict) -> str:
     if event is None:
         raise PlanOpError(f"No scene {op['event_id']!r}")
     kind = op["type"]
+    if not isinstance(kind, str):
+        raise PlanOpError("transition type must be a string")
     if kind == "dissolve":
         raise PlanOpError(
             "el fundido encadenado (dissolve) aún no está disponible; usa "
@@ -787,8 +789,15 @@ def _apply_set_transition(plan: dict, op: dict, assets: dict) -> str:
 
 
 def _apply_set_fades(plan: dict, op: dict, assets: dict) -> str:
-    intro = _finite(op.get("intro_seconds"), 0.0, "intro_seconds")
-    outro = _finite(op.get("outro_seconds"), 0.0, "outro_seconds")
+    if op.get("intro_seconds") is None and op.get("outro_seconds") is None:
+        raise PlanOpError("set_fades needs intro_seconds and/or outro_seconds")
+    current = plan.get("transitions") or {}
+    # Update only the side(s) the caller provided — an instruction that sets the
+    # intro must not silently wipe an existing outro.
+    intro = _finite(op.get("intro_seconds"),
+                    float(current.get("intro_fade_seconds") or 0.0), "intro_seconds")
+    outro = _finite(op.get("outro_seconds"),
+                    float(current.get("outro_fade_seconds") or 0.0), "outro_seconds")
     if not 0 <= intro <= 3 or not 0 <= outro <= 3:
         raise PlanOpError("intro_seconds and outro_seconds must be 0..3")
     plan["transitions"] = {

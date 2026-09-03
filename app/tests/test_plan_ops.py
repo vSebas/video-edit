@@ -903,3 +903,22 @@ class TestTransitionOps:
         with pytest.raises(PlanOpError, match="dissolve"):
             apply_op(_plan(), {"op": "set_transition", "event_id": "v01",
                                "type": "dissolve"}, INVENTORY)
+
+
+class TestTransitionReviewFixes:
+    def test_partial_set_fades_keeps_other_side(self) -> None:
+        plan = _plan()
+        plan["transitions"] = {"intro_fade_seconds": 0.4, "outro_fade_seconds": 0.6}
+        candidate, _ = apply_op(
+            plan, {"op": "set_fades", "intro_seconds": 0.0}, INVENTORY)
+        assert candidate["transitions"] == {
+            "intro_fade_seconds": 0.0, "outro_fade_seconds": 0.6}
+
+    def test_set_fades_needs_a_field(self) -> None:
+        with pytest.raises(PlanOpError, match="intro_seconds"):
+            apply_op(_plan(), {"op": "set_fades"}, INVENTORY)
+
+    def test_set_transition_non_string_type_rejected(self) -> None:
+        with pytest.raises(PlanOpError, match="must be a string"):
+            apply_op(_plan(), {"op": "set_transition", "event_id": "v01",
+                               "type": []}, INVENTORY)
