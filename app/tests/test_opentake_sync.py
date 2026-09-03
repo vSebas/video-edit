@@ -811,6 +811,11 @@ class FakeOpenTake:
             self.media[stem] = {"id": f"media-{stem}"}
             self.imported = getattr(self, "imported", []) + [stem]
             return {"assetId": f"media-{stem}"}
+        if name == "set_project_settings":
+            self.fps = arguments["fps"]
+            self.width = arguments["width"]
+            self.height = arguments["height"]
+            return dict(arguments)
         if name == "get_media":
             return {"entries": [
                 {"name": stem, "id": info["id"]}

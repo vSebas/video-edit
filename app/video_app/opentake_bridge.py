@@ -555,18 +555,26 @@ def place_plan(
         # ALL preflight happens before anything is removed (cross-review
         # BLOCKER 2: a failed check after removal left an empty timeline).
         fps = plan["project"]["fps"]
-        if before.get("fps") not in (None, fps):
-            raise BridgeError(
-                f"OpenTake project runs at {before.get('fps')} fps but the "
-                f"plan is {fps} fps — align the project settings first"
-            )
-        dims = (before.get("width"), before.get("height"))
         want = (plan["project"]["width"], plan["project"]["height"])
-        if all(dims) and dims != want:
-            raise BridgeError(
-                f"OpenTake canvas is {dims[0]}x{dims[1]} but the plan is "
-                f"{want[0]}x{want[1]} — align the project settings first"
-            )
+        dims = (before.get("width"), before.get("height"))
+        fps_mismatch = before.get("fps") not in (None, fps)
+        dims_mismatch = all(dims) and dims != want
+        if fps_mismatch or dims_mismatch:
+            # align OpenTake to the plan (the plan is canonical). The tool
+            # refuses when existing clips cannot reproject — surfaced as an
+            # actionable error instead of a manual settings chore.
+            try:
+                client.tool("set_project_settings", {
+                    "fps": fps, "width": want[0], "height": want[1],
+                })
+            except OpenTakeMcpError as exc:
+                raise BridgeError(
+                    f"OpenTake está en {dims[0]}x{dims[1]}@"
+                    f"{before.get('fps')}fps y el plan pide "
+                    f"{want[0]}x{want[1]}@{fps}fps; no se pudo alinear "
+                    f"automáticamente: {exc}"
+                ) from exc
+            before = client.get_timeline()
         existing = [c["clipId"] for t in before.get("tracks", [])
                     for c in t.get("clips", [])]
         if existing:
