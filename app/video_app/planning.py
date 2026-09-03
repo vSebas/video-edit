@@ -1173,8 +1173,11 @@ def default_music_recommendation(
     if style_application:
         targets = style_application.get("targets") or {}
         cpm = targets.get("cuts_per_minute")
-        # measured beat grid, when the style carried one
-        bpm = targets.get("bpm_estimate")
+        # measured beat grid, when the style carried one; keep it inside the
+        # schema's [30, 300] range (a measured outlier must not fail compile).
+        measured_bpm = targets.get("bpm_estimate")
+        if measured_bpm is not None and 30 <= measured_bpm <= 300:
+            bpm = measured_bpm
         if cpm is not None:
             energy = "high" if cpm >= 40 else "low" if cpm <= 15 else "medium"
     editorial = (concept.get("editorial") or {})
