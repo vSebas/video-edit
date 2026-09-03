@@ -1824,34 +1824,45 @@ def _carry_user_captions(old_plan: dict, new_plan: dict) -> None:
     new_caps = _captions(new_plan)
     if not old_caps or not new_caps:
         return
-    def _same_footage(a: dict | None, b: dict | None) -> bool:
+    def _coverage(a: dict | None, b: dict | None) -> float:
         # Proof of identity is the SOURCE the cue transcribes, not its words or
-        # timeline slot: same asset AND overlapping source interval. Two clips
-        # that merely both say "sí" have different source ranges (or assets), so
-        # a correction never leaks across scenes; a re-timed but same-footage cue
-        # still matches wherever its source survives.
+        # timeline slot: same asset AND a source interval that substantially
+        # coincides. Returns the fraction of the SMALLER interval covered by the
+        # overlap (0 if different assets), so two clips that merely both say "sí"
+        # never match, a barely-touching neighbor cue is rejected, and a re-timed
+        # same-footage cue still matches wherever its source survives.
         if not a or not b or a.get("asset_id") != b.get("asset_id"):
-            return False
+            return 0.0
         lo = max(a["source_start_seconds"], b["source_start_seconds"])
         hi = min(a["source_end_seconds"], b["source_end_seconds"])
-        return hi > lo
+        overlap = hi - lo
+        if overlap <= 0:
+            return 0.0
+        span = min(
+            a["source_end_seconds"] - a["source_start_seconds"],
+            b["source_end_seconds"] - b["source_start_seconds"],
+        )
+        return overlap / span if span > 0 else 0.0
 
     edited = [c for c in old_caps if c.get("user_authored")]
     for cue in edited:
         src = cue.get("caption_source")
         if not src:
             continue
-        match = next(
-            (c for c in new_caps
-             if _same_footage(src, c.get("caption_source"))
-             and not c.get("user_authored")),
-            None,
-        )
-        if match is None:
+        # Pick the BEST-covered candidate and require substantial coincidence —
+        # a sliver of overlap with a neighbouring cue is not the same line.
+        best, best_cov = None, 0.6
+        for c in new_caps:
+            if c.get("user_authored"):
+                continue
+            cov = _coverage(src, c.get("caption_source"))
+            if cov >= best_cov:
+                best, best_cov = c, cov
+        if best is None:
             continue
-        match["text"] = cue["text"]
-        match["user_authored"] = True
-        match["asr_text"] = cue.get("asr_text")
+        best["text"] = cue["text"]
+        best["user_authored"] = True
+        best["asr_text"] = cue.get("asr_text")
 
 
 def validate_edit_plan(plan: dict, schema_path: Path, project: dict) -> None:

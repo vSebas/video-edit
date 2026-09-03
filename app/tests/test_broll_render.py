@@ -670,3 +670,22 @@ class TestAssEscaping:
         dialogue = [l for l in path.read_text().splitlines()
                     if l.startswith("Dialogue:")][0]
         assert "{\\an8}" not in dialogue and "\\N" not in dialogue
+
+
+class TestCaptionCarryCoverage:
+    def test_barely_overlapping_neighbor_is_not_matched(self) -> None:
+        from video_app.planning import _carry_user_captions
+        # old cue source [10,13]; candidate [12.99,15] barely touches → reject.
+        old = {"tracks": [{"kind": "caption", "events": [
+            {"event_id": "cap-001", "timeline_start_seconds": 1.0,
+             "duration_seconds": 3.0, "text": "corrección importante",
+             "asr_text": "correccion", "user_authored": True,
+             "caption_source": {"asset_id": "A", "source_start_seconds": 10.0,
+                                 "source_end_seconds": 13.0}}]}]}
+        new = {"tracks": [{"kind": "caption", "events": [
+            {"event_id": "cap-001", "timeline_start_seconds": 1.0,
+             "duration_seconds": 2.0, "text": "otra cosa",
+             "caption_source": {"asset_id": "A", "source_start_seconds": 12.99,
+                                 "source_end_seconds": 15.0}}]}]}
+        _carry_user_captions(old, new)
+        assert new["tracks"][0]["events"][0]["text"] == "otra cosa"
