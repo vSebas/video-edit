@@ -1037,7 +1037,10 @@ def _caption_events_from_speech(
     # words on either side belong to separate cues, so they must not share one
     # caption stretched across the silence.
     SILENCE_GAP = 0.8
-    raw: list[tuple[float, float, str]] = []
+    # (start, end, text, ceiling) — ceiling is the clip's timeline end, an
+    # absolute cap so the legibility bump can never push a cue past its footage
+    # (and, for the final cue, past the project tail the validator enforces).
+    raw: list[tuple[float, float, str, float]] = []
     for clip in video_events:
         words = speech_words.get(clip["asset_id"]) or []
         offset = clip["timeline_start_seconds"] - clip["source_start_seconds"]
@@ -1056,6 +1059,7 @@ def _caption_events_from_speech(
                     max(clip_start, line_start + offset),
                     min(clip_end, line_end + offset),
                     " ".join(line),
+                    clip_end,
                 ))
             line, line_start, line_end = [], None, None
 
@@ -1083,21 +1087,29 @@ def _caption_events_from_speech(
     # the project tail — re-clamping after the minimum, which a raw max() skips.
     raw.sort(key=lambda c: c[0])
     events: list[dict] = []
-    for i, (start, end, text) in enumerate(raw):
-        next_start = raw[i + 1][0] if i + 1 < len(raw) else None
-        events.append(_caption_event(i + 1, text, start, end, next_start))
+    for i, (start, end, text, ceiling) in enumerate(raw):
+        # The cue may grow up to the next cue's start, but never past its own
+        # clip's end — so the last cue is bounded by its footage, not infinity.
+        cap = ceiling
+        if i + 1 < len(raw):
+            cap = min(cap, raw[i + 1][0])
+        events.append(_caption_event(i + 1, text, start, end, cap))
     return events
 
 
 def _caption_event(
     index: int, text: str, start: float, end: float,
-    next_start: float | None = None,
+    max_end: float | None = None,
 ) -> dict:
     start = max(0.0, start)
-    # Legible minimum, but never overrunning the next cue's start.
+    # Legible minimum, but never overrunning the cue's ceiling (next cue start
+    # or clip end, whichever is nearer) — the ceiling is a hard cap so the cue
+    # can never extend past its footage or the project tail.
     end = max(start + 0.3, end)
-    if next_start is not None and end > next_start:
-        end = max(start + 0.05, next_start)
+    if max_end is not None:
+        end = min(end, max_end)
+    if end <= start:
+        end = start + 0.001
     start = round(start, 3)
     end = round(end, 3)
     return {
@@ -1777,8 +1789,41 @@ events. Every range must stay at least {MIN_EVENT_SECONDS}s long."""
             if track.get("kind") == "title":
                 for event in track.get("events", []):
                     event["user_authored"] = True
+    _carry_user_captions(plan, new_plan)
     note = str(parsed.get("revision_note", "")).strip() or "Plan revised."
     return new_plan, note
+
+
+def _carry_user_captions(old_plan: dict, new_plan: dict) -> None:
+    """Re-apply the user's manual caption corrections onto the regenerated
+    caption track. A revision recomputes captions from ASR (correct timing for
+    the new cut), which would otherwise discard hand-typed fixes. Each edited
+    cue is matched to the regenerated cue it most overlaps in the timeline, so
+    corrections survive wherever that region of footage still exists."""
+    def _captions(plan):
+        return next(
+            (t["events"] for t in plan.get("tracks", [])
+             if t.get("kind") == "caption"),
+            None,
+        )
+    old_caps = _captions(old_plan)
+    new_caps = _captions(new_plan)
+    if not old_caps or not new_caps:
+        return
+    edited = [c for c in old_caps if c.get("user_authored")]
+    for cue in edited:
+        c_lo = cue["timeline_start_seconds"]
+        c_hi = c_lo + cue["duration_seconds"]
+        best, best_overlap = None, 0.0
+        for cand in new_caps:
+            lo = cand["timeline_start_seconds"]
+            hi = lo + cand["duration_seconds"]
+            overlap = min(c_hi, hi) - max(c_lo, lo)
+            if overlap > best_overlap:
+                best, best_overlap = cand, overlap
+        if best is not None and best_overlap > 0:
+            best["text"] = cue["text"]
+            best["user_authored"] = True
 
 
 def validate_edit_plan(plan: dict, schema_path: Path, project: dict) -> None:
@@ -1833,10 +1878,12 @@ def validate_edit_plan(plan: dict, schema_path: Path, project: dict) -> None:
         raise PlanningError(
             "Audio tracks may only be 'primary', 'voiceover', or 'music'"
         )
-    if audio_tracks and len(primary_audio) != 1:
+    if len(primary_audio) != 1:
         # Voiceover/music are additions to a primary bed, never a substitute:
-        # a plan with audio must anchor on exactly one primary track.
-        raise PlanningError("A plan with audio needs exactly one primary audio track")
+        # every plan anchors on exactly one primary audio track. The renderer
+        # selects the primary by role, so a missing or reordered primary would
+        # otherwise leave it with no base audio (or mistake music for it).
+        raise PlanningError("A plan needs exactly one primary audio track")
     if len(voiceover_tracks) > 1:
         raise PlanningError("At most one voiceover track beyond the primary audio")
     if len(music_tracks) > 1:
@@ -1857,6 +1904,20 @@ def validate_edit_plan(plan: dict, schema_path: Path, project: dict) -> None:
                 )
     for music in music_tracks:
         for event in music["events"]:
+            bed = (event.get("music") or {}).get("bed") or {}
+            if (event.get("music") or {}).get("mode") == "bed":
+                # The renderer indexes assets[event["asset_id"]]; a bed carrying
+                # only the nested bed.asset_id (or a mismatched pair) would play
+                # the wrong track or crash. Keep the two in lockstep.
+                if not event.get("asset_id"):
+                    raise PlanningError(
+                        f"Music bed {event['event_id']} needs a top-level asset_id"
+                    )
+                if bed.get("asset_id") and bed["asset_id"] != event["asset_id"]:
+                    raise PlanningError(
+                        f"Music bed {event['event_id']} asset_id disagrees with "
+                        "its bed.asset_id"
+                    )
             asset = assets.get(event.get("asset_id"))
             if asset is not None and asset.get("media_type") not in (
                 "audio", "video"

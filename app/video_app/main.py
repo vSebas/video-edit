@@ -496,10 +496,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @application.post("/api/projects/{project_id}/plan/op")
     def plan_op_propose(project_id: str, request: PlanOpRequest):
         name = request.op.get("op")
-        if name not in _DIRECT_UI_OPS:
+        # name may be any JSON type; only a string can match the allowlist, and
+        # an unhashable value (list/dict) would otherwise raise on `in`.
+        if not isinstance(name, str) or name not in _DIRECT_UI_OPS:
             raise HTTPException(
                 status_code=400,
-                detail=f"Op '{name}' is not available through direct controls",
+                detail=f"Op {name!r} is not available through direct controls",
             )
         return project_call(
             lambda: projects.plan_op_propose(project_id, request.op)

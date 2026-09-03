@@ -1807,7 +1807,14 @@ class ProjectService:
         if not stored_path.is_file():
             raise ProjectError("No proposed edit — send an instruction first")
         stored = load_json(stored_path)
-        if proposal_id is not None and stored.get("proposal_id") != proposal_id:
+        # The token is REQUIRED: without it, a caller applying blindly could
+        # install another caller's same-revision proposal that overwrote the
+        # store between propose and apply (cross-review 21).
+        if not proposal_id:
+            raise ProjectError(
+                "Missing proposal token — send the instruction again"
+            )
+        if stored.get("proposal_id") != proposal_id:
             raise ProjectError(
                 "A different proposal replaced the one you reviewed — "
                 "send the instruction again"

@@ -243,7 +243,10 @@ class TestPlanCommandEndpoints:
             body = proposed.json()
             assert body["status"] == "proposed"
             assert body["revision_preview"] == 4
-            applied = client.post("/api/projects/cmd-test/plan/command/apply")
+            applied = client.post(
+                "/api/projects/cmd-test/plan/command/apply",
+                params={"proposal_id": body["proposal_id"]},
+            )
             assert applied.status_code == 200, applied.text
             assert applied.json()["revision"] == 4
             plan = json.loads(
@@ -768,3 +771,61 @@ class TestCaptionOpsNotModelAuthored:
         op = instruction_to_op(_StubClient(), _plan(),
                                "corrige el subtítulo", INVENTORY)
         assert op["op"] == "reject"
+
+
+class TestPartialFixes:
+    def _plan_with_caption_at(self, t, dur=1.5, text="hola"):
+        plan = _plan()
+        plan["tracks"].append({
+            "track_id": "cap1", "kind": "caption", "events": [{
+                "event_id": "cap-001", "asset_id": None,
+                "source_start_seconds": None, "source_end_seconds": None,
+                "timeline_start_seconds": t, "duration_seconds": dur,
+                "playback_rate": 1.0, "intent": "caption",
+                "observed_content": None, "confidence": 1.0,
+                "text": text, "volume_db": None,
+            }]})
+        return plan
+
+    def test_delete_drops_captions_in_deleted_window(self) -> None:
+        # v01 spans [0,3); a caption at 1.0 belongs to it and must be dropped.
+        plan = self._plan_with_caption_at(1.0)
+        candidate, _ = apply_op(
+            plan, {"op": "delete_event", "event_id": "v01"}, INVENTORY)
+        cap = next(t for t in candidate["tracks"] if t["kind"] == "caption")
+        assert cap["events"] == []
+
+    def test_bed_asset_consistency_enforced(self) -> None:
+        from video_app.planning import validate_edit_plan
+        from video_app.projects import ProjectService  # noqa
+        plan = _plan()
+        plan["tracks"].append({
+            "track_id": "mus1", "kind": "audio", "role": "music", "events": [{
+                "event_id": "mus-01", "asset_id": "clip_a",
+                "source_start_seconds": 0.0, "source_end_seconds": 10.0,
+                "timeline_start_seconds": 0.0, "duration_seconds": 10.0,
+                "playback_rate": 1.0, "intent": "music",
+                "observed_content": None, "confidence": 1.0, "text": None,
+                "volume_db": -14,
+                "music": {"mode": "bed", "recommended": None,
+                          "bed": {"asset_id": "clip_b", "gain_db": -14,
+                                  "duck_db": -12, "loop": True}}},
+            ]})
+        schema = PROJECT_ROOT / "app" / "schemas" / "edit-plan.schema.json"
+        project = {"inventory": {"assets": [
+            {"asset_id": "clip_a", "media_type": "video",
+             "duration_seconds": 10.0, "audio": True},
+            {"asset_id": "clip_b", "media_type": "audio",
+             "duration_seconds": 10.0, "audio": True}]}}
+        with pytest.raises(Exception, match="disagrees"):
+            validate_edit_plan(plan, schema, project)
+
+    def test_loop_false_string_is_respected(self) -> None:
+        inv = {"assets": [{"asset_id": "song", "filename": "s.mp3",
+                           "media_type": "audio", "duration_seconds": 90,
+                           "audio": True}]}
+        candidate, _ = apply_op(
+            _plan(), {"op": "set_music_bed", "asset_id": "song",
+                      "loop": "false"}, inv)
+        ev = _music_events_of(candidate)[0]
+        assert ev["music"]["bed"]["loop"] is False

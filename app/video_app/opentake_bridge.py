@@ -47,10 +47,14 @@ def broll_entries(plan: dict) -> list[dict]:
 
 
 def voiceover_entries(plan: dict) -> list[dict]:
-    """Voiceover track events (if any) → add_clips entries."""
-    audios = [t for t in plan["tracks"] if t["kind"] == "audio"]
-    if len(audios) == 2 and audios[1].get("role") == "voiceover":
-        return _event_entries(audios[1]["events"], plan["project"]["fps"])
+    """Voiceover track events (if any) → add_clips entries.
+
+    Role-based: a music track can also be an audio track, so the voiceover is
+    not necessarily the second one — a positional check would drop it (and its
+    dialogue) from OpenTake placement whenever music is present."""
+    for track in plan["tracks"]:
+        if track["kind"] == "audio" and track.get("role") == "voiceover":
+            return _event_entries(track["events"], plan["project"]["fps"])
     return []
 
 

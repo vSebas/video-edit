@@ -192,6 +192,23 @@ def _check_overlays_fit(plan: dict) -> None:
                 )
 
 
+def _drop_captions_between(plan: dict, lo: float, hi: float) -> None:
+    """Remove caption cues whose span falls in [lo, hi) — the timeline region
+    whose footage a delete/trim removed. A cue left behind there would end up
+    over the wrong scene once the ripple closes the gap. Uses pre-ripple
+    coordinates, so call it BEFORE rippling."""
+    cap = next((t for t in plan["tracks"] if t.get("kind") == "caption"), None)
+    if cap is None:
+        return
+    kept = []
+    for e in cap["events"]:
+        mid = e["timeline_start_seconds"] + e["duration_seconds"] / 2
+        if lo - 1e-6 <= mid < hi - 1e-6:
+            continue
+        kept.append(e)
+    cap["events"] = kept
+
+
 def _apply_delete(plan: dict, op: dict, assets: dict) -> str:
     video_events, audio_events = _require_mirrored(plan)
     index = _index_of(video_events, op["event_id"])
@@ -199,6 +216,9 @@ def _apply_delete(plan: dict, op: dict, assets: dict) -> str:
     audio_events.pop(index)
     start = removed["timeline_start_seconds"]
     length = removed["duration_seconds"]
+    # The deleted scene's captions go with it — before the ripple slides the
+    # rest forward over the gap.
+    _drop_captions_between(plan, start, start + length)
     _ripple(plan, start + length, -length)
     _check_overlays_fit(plan)
     return (
@@ -223,6 +243,9 @@ def _apply_trim(plan: dict, op: dict, assets: dict) -> str:
         raise PlanOpError(
             f"{video['event_id']} would shrink below {MIN_EVENT_SECONDS}s"
         )
+    old_start = video["timeline_start_seconds"]
+    old_end = old_start + video["duration_seconds"]
+    new_end = old_start + new_duration
     for event in (video, audio):
         if edge == "start":
             new_source_start = event["source_start_seconds"] - delta
@@ -243,6 +266,17 @@ def _apply_trim(plan: dict, op: dict, assets: dict) -> str:
                 )
             event["source_end_seconds"] = _r(new_source_end)
         event["duration_seconds"] = _r(new_duration)
+    # Captions that no longer cover the same footage must go (a caption cannot
+    # be reliably remapped without ASR). End-edge: only the removed/added tail
+    # region [min(new,old)end, max(new,old)end) changes footage. Start-edge: the
+    # clip's whole content shifts, so drop all of this clip's captions — the
+    # user recompiles to reseed them for the retimed footage.
+    if edge == "start":
+        _drop_captions_between(plan, old_start, old_end)
+    elif direction == "extend":
+        _drop_captions_between(plan, old_end, new_end)
+    else:
+        _drop_captions_between(plan, new_end, old_end)
     _ripple(
         plan,
         video["timeline_start_seconds"] + video["duration_seconds"] - delta + 1e-6,
@@ -610,6 +644,18 @@ def _music_track(plan: dict, create: bool = False) -> dict | None:
     return None
 
 
+def _as_bool(value, default: bool) -> bool:
+    # A JSON string "false"/"0"/"no" must not become True (plain bool("false")
+    # does). Accept real booleans and common string spellings.
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() not in ("false", "0", "no", "")
+    return bool(value)
+
+
 def _finite(value, default: float, name: str) -> float:
     if value is None:
         return default
@@ -637,7 +683,7 @@ def _apply_set_music_bed(plan: dict, op: dict, assets: dict) -> str:
     duck = _finite(op.get("duck_db"), -12.0, "duck_db")
     if not -40 <= gain <= 6 or not -40 <= duck <= 0:
         raise PlanOpError("gain_db must be -40..6 and duck_db -40..0")
-    loop = bool(op.get("loop", True))
+    loop = _as_bool(op.get("loop"), default=True)
     # Looping fills the whole cut from a source of any length; a one-shot bed
     # occupies only min(asset, cut) so its source range stays inside the asset
     # and the plan validator accepts it.

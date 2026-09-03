@@ -582,3 +582,45 @@ class TestSrtAndCaptionMapping:
         ]}
         events = _caption_events_from_speech(video_events, speech)
         assert len(events) == 2
+
+
+class TestCaptionStyleAndRevise:
+    def _render_edit(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "render_edit_mod2", str(PIPELINE / "render_edit.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_caption_style_becomes_ass_overrides(self, tmp_path) -> None:
+        m = self._render_edit()
+        events = [{
+            "timeline_start_seconds": 1.0, "duration_seconds": 2.0,
+            "text": "hola", "caption_style": {
+                "font": "handwritten", "size": 80, "position": "top"}}]
+        assert m.has_caption_styles(events)
+        path = tmp_path / "c.ass"
+        assert m.write_caption_ass(events, path, 1080, 1920)
+        body = path.read_text()
+        assert "\\fs80" in body and "\\an8" in body
+        assert "Liberation Serif" in body  # handwritten mapping
+
+    def test_unstyled_captions_stay_on_srt(self) -> None:
+        m = self._render_edit()
+        assert not m.has_caption_styles(
+            [{"text": "x", "timeline_start_seconds": 0, "duration_seconds": 1}])
+
+    def test_revise_carries_user_caption_text(self) -> None:
+        from video_app.planning import _carry_user_captions
+        old = {"tracks": [{"kind": "caption", "events": [
+            {"event_id": "cap-001", "timeline_start_seconds": 1.0,
+             "duration_seconds": 2.0, "text": "hola corregido",
+             "user_authored": True}]}]}
+        new = {"tracks": [{"kind": "caption", "events": [
+            {"event_id": "cap-001", "timeline_start_seconds": 1.1,
+             "duration_seconds": 1.8, "text": "hla"}]}]}
+        _carry_user_captions(old, new)
+        cue = new["tracks"][0]["events"][0]
+        assert cue["text"] == "hola corregido"
+        assert cue["user_authored"] is True

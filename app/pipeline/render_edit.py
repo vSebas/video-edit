@@ -32,6 +32,15 @@ def track(plan, kind: str):
     return next(item for item in plan["tracks"] if item["kind"] == kind)
 
 
+def primary_audio_track(plan):
+    # Role-based: voiceover and music are also kind 'audio', so the primary is
+    # not simply "the first audio track" once tracks may be reordered.
+    return next(
+        item for item in plan["tracks"]
+        if item["kind"] == "audio" and item.get("role") in (None, "primary")
+    )
+
+
 def duration_target(plan):
     return plan["project"]["duration_seconds"]
 
@@ -98,6 +107,79 @@ def write_caption_srt(events, path) -> bool:
     return True
 
 
+_ASS_FONTS = {
+    # best-effort mapping onto fonts present in the render container
+    "sans": "Liberation Sans",
+    "clean": "Liberation Sans",
+    "display": "Liberation Sans",
+    "handwritten": "Liberation Serif",
+}
+_ASS_ALIGN = {"lower": 2, "center": 5, "top": 8}
+
+
+def _ass_time(seconds: float) -> str:
+    total_cs = max(0, int(round(seconds * 100)))
+    cs = total_cs % 100
+    total_s = total_cs // 100
+    s = total_s % 60
+    m = (total_s // 60) % 60
+    h = total_s // 3600
+    return f"{h:d}:{m:02d}:{s:02d}.{cs:02d}"
+
+
+def has_caption_styles(events) -> bool:
+    return any((e.get("caption_style") or {}) for e in events)
+
+
+def write_caption_ass(events, path, width: int, height: int) -> bool:
+    """Per-cue styled captions as ASS. Used only when an event carries a
+    caption_style — the default (unstyled) path stays on SRT + force_style so
+    its proven appearance is untouched. Style is applied as inline overrides
+    so one default Style suffices."""
+    default_size = max(16, round(height * 0.030))
+    header = (
+        "[Script Info]\n"
+        "ScriptType: v4.00+\n"
+        f"PlayResX: {width}\nPlayResY: {height}\n\n"
+        "[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, "
+        "BackColour, Bold, BorderStyle, Outline, Shadow, Alignment, MarginV\n"
+        f"Style: Default,Liberation Sans,{default_size},&H00FFFFFF,&HCC000000,"
+        "&H00000000,1,1,3,0,2,64\n\n"
+        "[Events]\n"
+        "Format: Layer, Start, End, Style, MarginV, Text\n"
+    )
+    lines = [header]
+    n = 0
+    for e in sorted(events, key=lambda x: x["timeline_start_seconds"]):
+        text = _srt_text(e.get("text"))
+        if not text:
+            continue
+        n += 1
+        style = e.get("caption_style") or {}
+        overrides = ""
+        font = _ASS_FONTS.get(style.get("font"))
+        if font:
+            overrides += f"\\fn{font}"
+        if style.get("size"):
+            overrides += f"\\fs{int(style['size'])}"
+        align = _ASS_ALIGN.get(style.get("position"))
+        if align:
+            overrides += f"\\an{align}"
+        # a top caption clears the top edge; others sit above the bottom edge
+        margin = 64
+        body = f"{{{overrides}}}{text}" if overrides else text
+        start = _ass_time(e["timeline_start_seconds"])
+        end = _ass_time(e["timeline_start_seconds"] + e["duration_seconds"])
+        lines.append(
+            f"Dialogue: 0,{start},{end},Default,{margin},{body}"
+        )
+    if not n:
+        return False
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return True
+
+
 def voiceover_events(plan):
     # Role-based: a music track may now sit among the audio tracks, so the
     # voiceover is no longer guaranteed to be the second audio track.
@@ -148,7 +230,7 @@ def main() -> None:
     inventory = load_json(args.inventory)
     assets = {asset["asset_id"]: asset for asset in inventory["assets"]}
     video_events = track(plan, "video")["events"]
-    audio_events = track(plan, "audio")["events"]
+    audio_events = primary_audio_track(plan)["events"]
     title_events = track(plan, "title")["events"]
     overlay = broll_track(plan)
     broll_events = overlay["events"] if overlay else []
@@ -415,6 +497,15 @@ def main() -> None:
                 (e["timeline_start_seconds"],
                  e["timeline_start_seconds"] + e["duration_seconds"])
             )
+        # Fallback: with no captions and no voiceover we have no speech map, so
+        # duck under the whole production audio rather than let music blast over
+        # possible dialogue. (Conservative — captions, when present, are tighter.)
+        if not speech_windows:
+            for e in audio_events:
+                speech_windows.append(
+                    (e["timeline_start_seconds"],
+                     e["timeline_start_seconds"] + e["duration_seconds"])
+                )
         # Small pad so the duck opens just before a word and closes just after.
         pad = 0.15
         enable = "+".join(
@@ -434,25 +525,38 @@ def main() -> None:
         )
         audio_out = "amus"
 
-    caption_srt = None
-    if caption_track:
+    caption_file = None
+    caption_is_ass = False
+    if caption_track and has_caption_styles(caption_track):
+        # per-cue styling requires ASS; the subtitles filter renders it natively
+        caption_ass = output_path.with_name(f".{output_path.stem}.captions.ass")
+        if write_caption_ass(caption_track, caption_ass, width, height):
+            caption_file = caption_ass
+            caption_is_ass = True
+    if caption_file is None and caption_track:
         caption_srt = output_path.with_name(f".{output_path.stem}.captions.srt")
-        if not write_caption_srt(caption_track, caption_srt):
-            caption_srt = None
-    elif args.captions:
-        caption_srt = args.captions.resolve()
-    if caption_srt is not None:
-        srt = str(caption_srt)
+        if write_caption_srt(caption_track, caption_srt):
+            caption_file = caption_srt
+    elif caption_file is None and args.captions:
+        caption_file = args.captions.resolve()
+    if caption_file is not None:
+        srt = str(caption_file)
         escaped = srt.replace("\\", "\\\\").replace("'", "\\'").replace(":", "\\:")
-        # bigger, high-contrast, safely above the bottom edge for Reels
-        style = (
-            "FontName=Liberation Sans,FontSize=15,Bold=1,PrimaryColour=&HFFFFFF&,"
-            "OutlineColour=&HCC000000&,BorderStyle=1,Outline=3,Shadow=0,MarginV=64"
-        )
-        filters.append(
-            f"[{current_video}]subtitles=filename='{escaped}':"
-            f"force_style='{style}'[vsubs]"
-        )
+        if caption_is_ass:
+            # ASS carries its own styling; no force_style override
+            filters.append(
+                f"[{current_video}]subtitles=filename='{escaped}'[vsubs]"
+            )
+        else:
+            # bigger, high-contrast, safely above the bottom edge for Reels
+            style = (
+                "FontName=Liberation Sans,FontSize=15,Bold=1,PrimaryColour=&HFFFFFF&,"
+                "OutlineColour=&HCC000000&,BorderStyle=1,Outline=3,Shadow=0,MarginV=64"
+            )
+            filters.append(
+                f"[{current_video}]subtitles=filename='{escaped}':"
+                f"force_style='{style}'[vsubs]"
+            )
         current_video = "vsubs"
 
     filters.append(
