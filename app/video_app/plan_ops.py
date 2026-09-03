@@ -783,6 +783,17 @@ def _apply_set_transition(plan: dict, op: dict, assets: dict) -> str:
     dur = _finite(op.get("duration_seconds"), 0.5, "duration_seconds")
     if not 0 < dur <= 3:
         raise PlanOpError("duration_seconds must be within (0, 3]")
+    # A dip is split across the two adjacent clips, so it cannot exceed the
+    # shorter of them — store only what the renderer can actually deliver, so
+    # the plan and the confirmation don't overstate the fade.
+    ordered = sorted(video["events"], key=lambda e: e["timeline_start_seconds"])
+    pos = ordered.index(event)
+    limits = [event["duration_seconds"]]
+    if pos + 1 < len(ordered):
+        limits.append(ordered[pos + 1]["duration_seconds"])
+    dur = min(dur, *limits)
+    if dur <= 0:
+        raise PlanOpError("this scene is too short for a fade")
     event["transition_out"] = {"type": kind, "duration_seconds": round(dur, 3)}
     colour = "negro" if kind == "fade_black" else "blanco"
     return f"Escena {event['event_id']}: fundido a {colour} ({dur:g}s)"
@@ -800,10 +811,15 @@ def _apply_set_fades(plan: dict, op: dict, assets: dict) -> str:
                     float(current.get("outro_fade_seconds") or 0.0), "outro_seconds")
     if not 0 <= intro <= 3 or not 0 <= outro <= 3:
         raise PlanOpError("intro_seconds and outro_seconds must be 0..3")
-    plan["transitions"] = {
-        "intro_fade_seconds": round(intro, 3),
-        "outro_fade_seconds": round(outro, 3),
-    }
+    # Store only what the renderer will deliver (fades are capped to a third of
+    # the cut), so a 3s fade on a 2s vlog isn't recorded/announced as 3s.
+    from .planning import _scale_transitions
+
+    plan["transitions"] = _scale_transitions(
+        intro, outro, float(plan["project"]["duration_seconds"])
+    )
+    intro = plan["transitions"]["intro_fade_seconds"]
+    outro = plan["transitions"]["outro_fade_seconds"]
     if intro == 0 and outro == 0:
         return "Fundidos de apertura y cierre quitados"
     return f"Fundidos: apertura {intro:g}s, cierre {outro:g}s"

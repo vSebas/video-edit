@@ -334,21 +334,36 @@ def main() -> None:
     # outgoing clip has a successor — a gap or the final clip has no seam.
     ordered_video = sorted(video_events, key=lambda e: e["timeline_start_seconds"])
 
+    def _rendered_len(ev):
+        # the actual length of the trimmed segment the fade sits on — source
+        # span, not the timeline duration (they differ under a playback_rate)
+        return ev["source_end_seconds"] - ev["source_start_seconds"]
+
     def _seam_dip(prev_ev, this_ev):
         """(colour, half-duration) of the dip on the seam BEFORE this_ev, or
-        (None, 0) if prev_ev has no dip or the two are not contiguous."""
+        (None, 0) if prev_ev has no dip or the two are not contiguous. Raises on
+        an unsupported transition type so a persisted 'dissolve' fails loudly
+        rather than rendering as a silent cut."""
         if prev_ev is None:
             return None, 0.0
         t = (prev_ev.get("transition_out") or {})
-        if t.get("type") not in ("fade_black", "fade_white"):
+        kind = t.get("type")
+        if kind in (None, "cut"):
             return None, 0.0
+        if kind not in ("fade_black", "fade_white"):
+            raise ValueError(
+                f"transition type {kind!r} on {prev_ev['event_id']} is not "
+                "renderable in this build"
+            )
         prev_end = prev_ev["timeline_start_seconds"] + prev_ev["duration_seconds"]
         if abs(this_ev["timeline_start_seconds"] - prev_end) > epsilon:
             return None, 0.0  # a gap sits between them — not a seam
-        colour = "black" if t["type"] == "fade_black" else "white"
+        colour = "black" if kind == "fade_black" else "white"
+        # clamp by the RENDERED length of both segments so the fade can never
+        # start before the clip or run past its decoded frames
         half = min(float(t.get("duration_seconds") or 0.0) / 2.0,
-                   prev_ev["duration_seconds"] / 2.0,
-                   this_ev["duration_seconds"] / 2.0)
+                   _rendered_len(prev_ev) / 2.0,
+                   _rendered_len(this_ev) / 2.0)
         return (colour, half) if half > 0 else (None, 0.0)
 
     for index, video in enumerate(video_events):
@@ -566,11 +581,16 @@ def main() -> None:
             f"between(t\\,{round(max(0.0, s0 - pad), 3)}\\,{round(e0 + pad, 3)})"
             for s0, e0 in speech_windows
         ) or "0"
+        # Short in/out fades so a bed that starts or ends on a non-zero sample
+        # cannot click (the primary/voiceover clips already do this per-segment).
+        mus_end = round(duration, 3)
         filters.append(
             f"[{music_input_index}:a:0]"
-            f"atrim=start=0:end={round(duration, 3)},asetpts=PTS-STARTPTS,"
+            f"atrim=start=0:end={mus_end},asetpts=PTS-STARTPTS,"
             f"volume={gain}dB,"
             f"volume={duck}dB:enable='{enable}',"
+            f"afade=t=in:st=0:d=0.02,"
+            f"afade=t=out:st={round(mus_end - 0.02, 3)}:d=0.02,"
             f"aresample=48000,"
             f"aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[mus]"
         )

@@ -836,3 +836,37 @@ class TestTransitionAdjacency:
         assert _center_pixel(out, 1.9)[0] > 150
         # v02 near its end (4.9s) must NOT have dipped (last clip, no successor)
         assert _center_pixel(out, 4.9)[1] > 100
+
+
+class TestDissolveFailsLoudly:
+    def test_persisted_dissolve_is_not_silently_a_cut(self, tmp_path) -> None:
+        _make_clip(tmp_path / "red.mp4", "red", 2.0, 300)
+        _make_clip(tmp_path / "green.mp4", "green", 2.0, 600)
+        inv = {"assets": [
+            {"asset_id": aid, "filename": f"{aid}.mp4", "source_path": f"{aid}.mp4",
+             "duration_seconds": 2.0, "sha256": "0" * 64, "media_type": "video",
+             "audio": {"sample_rate": 48000, "channels": 1},
+             "video": {"width": 320, "height": 240}} for aid in ("red", "green")]}
+        plan = {
+            "schema_version": "edit-plan.v1", "generated_at": "2026-09-01T00:00:00Z",
+            "benchmark_id": "t", "concept_id": "t", "revision": 1,
+            "project": {"width": 320, "height": 240, "fps": 30,
+                        "duration_seconds": 4.0, "background_color": "black"},
+            "tracks": [
+                {"track_id": "v1", "kind": "video", "events": [
+                    {**_event("v01", "red", 0.0, 0.0, 2.0, "base"),
+                     "transition_out": {"type": "dissolve", "duration_seconds": 0.5}},
+                    _event("v02", "green", 0.0, 2.0, 2.0, "base")]},
+                {"track_id": "a1", "kind": "audio", "events": [
+                    _event("a01", "red", 0.0, 0.0, 2.0, "base"),
+                    _event("a02", "green", 0.0, 2.0, 2.0, "base")]},
+                {"track_id": "t1", "kind": "title", "events": []}]}
+        (tmp_path / "plan.json").write_text(json.dumps(plan))
+        (tmp_path / "inv.json").write_text(json.dumps(inv))
+        result = subprocess.run(
+            [sys.executable, str(PIPELINE / "render_edit.py"),
+             "--plan", str(tmp_path / "plan.json"), "--output", str(tmp_path / "o.mp4"),
+             "--inventory", str(tmp_path / "inv.json"), "--media-root", str(tmp_path)],
+            capture_output=True, text=True)
+        assert result.returncode != 0
+        assert "dissolve" in result.stderr

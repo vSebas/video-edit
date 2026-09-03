@@ -922,3 +922,26 @@ class TestTransitionReviewFixes:
         with pytest.raises(PlanOpError, match="must be a string"):
             apply_op(_plan(), {"op": "set_transition", "event_id": "v01",
                                "type": []}, INVENTORY)
+
+
+class TestTransitionClamping:
+    def test_set_transition_clamps_to_short_neighbor(self) -> None:
+        # v01 is 3s, v02 is 4s; a 3s dip is split across them but the renderer
+        # can only deliver up to the shorter clip — store the achievable value.
+        plan = _plan()
+        candidate, summary = apply_op(
+            plan, {"op": "set_transition", "event_id": "v01",
+                   "type": "fade_black", "duration_seconds": 3.0}, INVENTORY)
+        v01 = next(e for e in candidate["tracks"][0]["events"]
+                   if e["event_id"] == "v01")
+        assert v01["transition_out"]["duration_seconds"] <= 3.0
+        assert v01["transition_out"]["duration_seconds"] == 3.0  # min(3, v01=3, v02=4)
+
+    def test_set_fades_clamps_to_budget(self) -> None:
+        plan = _plan()
+        plan["project"]["duration_seconds"] = 3.0  # third-of-cut budget = 1.0s
+        candidate, _ = apply_op(
+            plan, {"op": "set_fades", "intro_seconds": 3, "outro_seconds": 0},
+            INVENTORY)
+        t = candidate["transitions"]
+        assert t["intro_fade_seconds"] + t["outro_fade_seconds"] <= 1.0 + 1e-6

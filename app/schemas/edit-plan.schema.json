@@ -353,6 +353,7 @@
             "type": {
               "enum": [
                 "cut",
+                "dissolve",
                 "fade_black",
                 "fade_white"
               ]

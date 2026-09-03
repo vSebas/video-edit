@@ -1824,15 +1824,16 @@ events. Every range must stay at least {MIN_EVENT_SECONDS}s long."""
         new_plan["lineage_contract"] = True
     # Open/close fades are a user choice, not a story decision — keep them
     # across a revision, but RE-SCALE to the new duration's budget so a fade
-    # that was fine on the old cut can't swallow a now-shorter one. An explicit
-    # empty/None transitions choice is preserved as-is (no fades).
-    if plan.get("transitions") is not None:
-        old = plan["transitions"] or {}
+    # that was fine on the old cut can't swallow a now-shorter one. A plan that
+    # carries the key at all overrides the compiler default; an explicit null
+    # (deliberately no fades) is preserved as null, not reset to the default.
+    if "transitions" in plan:
+        old = plan["transitions"]
         new_plan["transitions"] = _scale_transitions(
-            old.get("intro_fade_seconds") or 0.0,
-            old.get("outro_fade_seconds") or 0.0,
+            (old or {}).get("intro_fade_seconds") or 0.0,
+            (old or {}).get("outro_fade_seconds") or 0.0,
             new_plan["project"]["duration_seconds"],
-        )
+        ) if old else old
     if approved_captions is not None and unchanged_user_title:
         # the user's own title keeps its exemption across revisions
         for track in new_plan.get("tracks", []):

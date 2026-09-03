@@ -1156,6 +1156,16 @@ def timeline_to_candidate_plan(
     # after the last A-roll clip must not become black/silent seconds
     # (cross-review 4). totalFrames stays a bound check via _normalize_clip.
     candidate["project"]["duration_seconds"] = _seconds(primary_end, fps)
+    # Open/close fades must fit the NEW duration — a hand-edit that shortened the
+    # cut in OpenTake could otherwise leave a fade longer than a third of it.
+    if candidate.get("transitions"):
+        from .planning import _scale_transitions
+
+        candidate["transitions"] = _scale_transitions(
+            candidate["transitions"].get("intro_fade_seconds") or 0.0,
+            candidate["transitions"].get("outro_fade_seconds") or 0.0,
+            candidate["project"]["duration_seconds"],
+        )
     # Captions follow the (possibly rearranged) footage: regenerate them from
     # ASR through the rebuilt geometry so they never sit over the wrong scene.
     caption_track = next(
