@@ -613,14 +613,19 @@ class TestCaptionStyleAndRevise:
 
     def test_revise_carries_user_caption_text(self) -> None:
         from video_app.planning import _carry_user_captions
+        # same footage (asset A, overlapping source range) → carry, even though
+        # the cue moved on the timeline after the revision.
         old = {"tracks": [{"kind": "caption", "events": [
             {"event_id": "cap-001", "timeline_start_seconds": 1.0,
              "duration_seconds": 2.0, "text": "hola mundo bonito",
-             "asr_text": "hola mnd bonito", "user_authored": True}]}]}
-        # same footage → fresh ASR reproduces similar words → carry
+             "asr_text": "hola mnd bonito", "user_authored": True,
+             "caption_source": {"asset_id": "A", "source_start_seconds": 3.0,
+                                 "source_end_seconds": 5.0}}]}]}
         new = {"tracks": [{"kind": "caption", "events": [
-            {"event_id": "cap-001", "timeline_start_seconds": 1.1,
-             "duration_seconds": 1.8, "text": "hola mnd bonito"}]}]}
+            {"event_id": "cap-001", "timeline_start_seconds": 6.0,
+             "duration_seconds": 1.8, "text": "hola mnd bonito",
+             "caption_source": {"asset_id": "A", "source_start_seconds": 3.1,
+                                 "source_end_seconds": 4.9}}]}]}
         _carry_user_captions(old, new)
         cue = new["tracks"][0]["events"][0]
         assert cue["text"] == "hola mundo bonito"
@@ -628,16 +633,21 @@ class TestCaptionStyleAndRevise:
 
     def test_revise_refuses_carry_onto_different_footage(self) -> None:
         from video_app.planning import _carry_user_captions
+        # different clip (asset B) at the SAME timeline slot, even same words →
+        # different source identity → must NOT paste the correction.
         old = {"tracks": [{"kind": "caption", "events": [
             {"event_id": "cap-001", "timeline_start_seconds": 1.0,
-             "duration_seconds": 2.0, "text": "hola mundo",
-             "asr_text": "hola mundo", "user_authored": True}]}]}
-        # reordered: the slot now holds unrelated words → must NOT paste
+             "duration_seconds": 2.0, "text": "Sí, ganamos",
+             "asr_text": "si", "user_authored": True,
+             "caption_source": {"asset_id": "A", "source_start_seconds": 0.0,
+                                 "source_end_seconds": 1.0}}]}]}
         new = {"tracks": [{"kind": "caption", "events": [
             {"event_id": "cap-001", "timeline_start_seconds": 1.0,
-             "duration_seconds": 2.0, "text": "comida deliciosa"}]}]}
+             "duration_seconds": 2.0, "text": "si",
+             "caption_source": {"asset_id": "B", "source_start_seconds": 0.0,
+                                 "source_end_seconds": 1.0}}]}]}
         _carry_user_captions(old, new)
-        assert new["tracks"][0]["events"][0]["text"] == "comida deliciosa"
+        assert new["tracks"][0]["events"][0]["text"] == "si"
 
 
 class TestAssEscaping:

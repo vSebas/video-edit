@@ -404,6 +404,26 @@
           ],
           "maxLength": 200
         },
+        "caption_source": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "asset_id": {
+              "type": "string"
+            },
+            "source_start_seconds": {
+              "type": "number",
+              "minimum": 0
+            },
+            "source_end_seconds": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        },
         "evidence_ids": {
           "type": "array",
           "maxItems": 8,

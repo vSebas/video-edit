@@ -1037,10 +1037,10 @@ def _caption_events_from_speech(
     # words on either side belong to separate cues, so they must not share one
     # caption stretched across the silence.
     SILENCE_GAP = 0.8
-    # (start, end, text, ceiling) — ceiling is the clip's timeline end, an
-    # absolute cap so the legibility bump can never push a cue past its footage
-    # (and, for the final cue, past the project tail the validator enforces).
-    raw: list[tuple[float, float, str, float]] = []
+    # Each raw cue records the FOOTAGE it transcribes (asset + source range) so
+    # a later revision can prove footage identity, plus a ceiling (the clip's
+    # timeline end) capping the legibility bump.
+    raw: list[dict] = []
     for clip in video_events:
         words = speech_words.get(clip["asset_id"]) or []
         offset = clip["timeline_start_seconds"] - clip["source_start_seconds"]
@@ -1048,6 +1048,7 @@ def _caption_events_from_speech(
         clip_end = clip_start + clip["duration_seconds"]
         src_start = clip["source_start_seconds"]
         src_end = src_start + clip["duration_seconds"]
+        asset_id = clip["asset_id"]
         line: list[str] = []
         line_start = None
         line_end = None
@@ -1055,12 +1056,15 @@ def _caption_events_from_speech(
         def flush() -> None:
             nonlocal line, line_start, line_end
             if line and line_start is not None:
-                raw.append((
-                    max(clip_start, line_start + offset),
-                    min(clip_end, line_end + offset),
-                    " ".join(line),
-                    clip_end,
-                ))
+                raw.append({
+                    "start": max(clip_start, line_start + offset),
+                    "end": min(clip_end, line_end + offset),
+                    "text": " ".join(line),
+                    "ceiling": clip_end,
+                    "asset_id": asset_id,
+                    "src_lo": max(src_start, line_start),
+                    "src_hi": min(src_end, line_end),
+                })
             line, line_start, line_end = [], None, None
 
         for word in sorted(words, key=lambda w: w["start_seconds"]):
@@ -1085,21 +1089,26 @@ def _caption_events_from_speech(
 
     # Bump each cue to a legible minimum, but never past the next cue's start or
     # the project tail — re-clamping after the minimum, which a raw max() skips.
-    raw.sort(key=lambda c: c[0])
+    raw.sort(key=lambda c: c["start"])
     events: list[dict] = []
-    for i, (start, end, text, ceiling) in enumerate(raw):
+    for i, cue in enumerate(raw):
         # The cue may grow up to the next cue's start, but never past its own
         # clip's end — so the last cue is bounded by its footage, not infinity.
-        cap = ceiling
+        cap = cue["ceiling"]
         if i + 1 < len(raw):
-            cap = min(cap, raw[i + 1][0])
-        events.append(_caption_event(i + 1, text, start, end, cap))
+            cap = min(cap, raw[i + 1]["start"])
+        events.append(_caption_event(
+            i + 1, cue["text"], cue["start"], cue["end"], cap,
+            source={"asset_id": cue["asset_id"],
+                    "source_start_seconds": round(cue["src_lo"], 3),
+                    "source_end_seconds": round(cue["src_hi"], 3)},
+        ))
     return events
 
 
 def _caption_event(
     index: int, text: str, start: float, end: float,
-    max_end: float | None = None,
+    max_end: float | None = None, source: dict | None = None,
 ) -> dict:
     start = max(0.0, start)
     # Legible minimum, but never overrunning the cue's ceiling (next cue start
@@ -1127,6 +1136,9 @@ def _caption_event(
         "confidence": 1.0,
         "text": text[:120],
         "volume_db": None,
+        # the footage this cue transcribes — the stable identity a revision uses
+        # to prove "same footage" before carrying a user's correction forward
+        "caption_source": source,
     }
 
 
@@ -1812,38 +1824,34 @@ def _carry_user_captions(old_plan: dict, new_plan: dict) -> None:
     new_caps = _captions(new_plan)
     if not old_caps or not new_caps:
         return
-    def _norm(text: str) -> str:
-        # normalized word sequence — fresh ASR of the SAME audio is
-        # deterministic, so identical footage yields an identical sequence
-        return " ".join(re.findall(r"\w+", (text or "").lower()))
+    def _same_footage(a: dict | None, b: dict | None) -> bool:
+        # Proof of identity is the SOURCE the cue transcribes, not its words or
+        # timeline slot: same asset AND overlapping source interval. Two clips
+        # that merely both say "sí" have different source ranges (or assets), so
+        # a correction never leaks across scenes; a re-timed but same-footage cue
+        # still matches wherever its source survives.
+        if not a or not b or a.get("asset_id") != b.get("asset_id"):
+            return False
+        lo = max(a["source_start_seconds"], b["source_start_seconds"])
+        hi = min(a["source_end_seconds"], b["source_end_seconds"])
+        return hi > lo
 
     edited = [c for c in old_caps if c.get("user_authored")]
     for cue in edited:
-        c_lo = cue["timeline_start_seconds"]
-        c_hi = c_lo + cue["duration_seconds"]
-        best, best_overlap = None, 0.0
-        for cand in new_caps:
-            lo = cand["timeline_start_seconds"]
-            hi = lo + cand["duration_seconds"]
-            overlap = min(c_hi, hi) - max(c_lo, lo)
-            if overlap > best_overlap:
-                best, best_overlap = cand, overlap
-        if best is None or best_overlap <= 0:
+        src = cue.get("caption_source")
+        if not src:
             continue
-        # Only paste the correction when the regenerated cue is provably the
-        # SAME footage. The signal is the ORIGINAL ASR text captured when the
-        # user edited (asr_text): fresh ASR of the same audio is deterministic,
-        # so it reproduces that text EXACTLY. We require exact normalized
-        # equality — a mere token overlap ("no lo sé" vs "no lo quiero") is not
-        # identity and could move trusted text onto another scene. Strictness is
-        # the safe side: a missed carry just asks the user to re-apply a fix,
-        # whereas a wrong carry burns unverified words over the wrong footage.
-        original = cue.get("asr_text")
-        if not original or _norm(original) != _norm(best.get("text")):
+        match = next(
+            (c for c in new_caps
+             if _same_footage(src, c.get("caption_source"))
+             and not c.get("user_authored")),
+            None,
+        )
+        if match is None:
             continue
-        best["text"] = cue["text"]
-        best["user_authored"] = True
-        best["asr_text"] = original
+        match["text"] = cue["text"]
+        match["user_authored"] = True
+        match["asr_text"] = cue.get("asr_text")
 
 
 def validate_edit_plan(plan: dict, schema_path: Path, project: dict) -> None:
