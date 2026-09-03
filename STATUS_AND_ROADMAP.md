@@ -112,6 +112,22 @@ Every component connects through an adapter, which keeps incompatible
 licenses and optional research models from becoming inseparable from the
 core.
 
+### OpenTake orchestration — end-to-end LIVE (2026-09-03)
+
+"Colocar en OpenTake" now drives the fork over external MCP with no manual
+steps: it opens (or creates) the vlog's own OpenTake project, auto-imports
+the footage the cut needs (under a user-granted path root), aligns the
+canvas to the plan, places the cut, saves it durably, and the GUI
+navigates straight to the loaded timeline. Reaching this took nine fork
+defects fixed and reviewed (identity turn guard, inner-dispatch guard,
+error redaction, gate admission, path authority, canvas settings, cover
+authority, the save-project deadlock, HEVC cover decode) plus the GUI
+navigation, and a personal-path leak purged from the public fork history.
+Placement is idempotent (open-not-create, import-only-missing,
+clear-then-place) — repeated Colocar never duplicates. The `.opentake`
+bundle IS the project store (project.json = timeline, media.json =
+library); there is no separate database.
+
 ## Standing Today
 
 ### Third-party handoff memo, reviewed (2026-08-31)
