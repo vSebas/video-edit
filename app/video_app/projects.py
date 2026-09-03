@@ -1650,6 +1650,31 @@ class ProjectService:
                 "status": "rejected",
                 "reason": str(op.get("reason") or "instrucción ambigua"),
             }
+        return self._propose_op(project_id, project, plan, op, instruction)
+
+    def plan_op_propose(self, project_id: str, op: dict) -> dict:
+        """Propose a caller-supplied, closed-set op directly — no LLM. Used by
+        deterministic UI controls (set_music_bed, remove_music, edit_caption,
+        …) that already know the exact op. Same apply/validate/persist path and
+        revision-guarded apply as the natural-language command flow."""
+        project = self.get_project(project_id)
+        plan = project.get("plan")
+        if not plan:
+            raise ProjectError("This project does not have an approved edit plan")
+        return self._propose_op(
+            project_id, project, plan, op, f"op:{op.get('op')}"
+        )
+
+    def _propose_op(
+        self,
+        project_id: str,
+        project: dict,
+        plan: dict,
+        op: dict,
+        instruction: str,
+    ) -> dict:
+        from .plan_ops import PlanOpError, apply_op
+
         try:
             candidate, summary = apply_op(
                 plan, op, project.get("inventory") or {}

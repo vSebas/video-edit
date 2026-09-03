@@ -555,6 +555,77 @@ def _apply_move_broll(plan: dict, op: dict, assets: dict) -> str:
     )
 
 
+def _music_track(plan: dict, create: bool = False) -> dict | None:
+    for track in plan["tracks"]:
+        if track["kind"] == "audio" and track.get("role") == "music":
+            return track
+    if create:
+        track = {"track_id": "mus1", "kind": "audio", "role": "music",
+                 "events": []}
+        plan["tracks"].append(track)
+        return track
+    return None
+
+
+def _apply_set_music_bed(plan: dict, op: dict, assets: dict) -> str:
+    asset_id = op["asset_id"]
+    asset = assets.get(asset_id)
+    if asset is None or asset.get("media_type") not in ("audio", "video"):
+        raise PlanOpError(f"{asset_id} is not a usable music source")
+    duration = plan["project"]["duration_seconds"]
+    gain = float(op.get("gain_db") if op.get("gain_db") is not None else -14)
+    duck = float(op.get("duck_db") if op.get("duck_db") is not None else -12)
+    if not -40 <= gain <= 6 or not -40 <= duck <= 0:
+        raise PlanOpError("gain_db must be -40..6 and duck_db -40..0")
+    track = _music_track(plan, create=True)
+    track["events"] = [{
+        "event_id": "mus-01", "asset_id": asset_id,
+        "source_start_seconds": 0.0, "source_end_seconds": round(duration, 3),
+        "timeline_start_seconds": 0.0, "duration_seconds": round(duration, 3),
+        "playback_rate": 1.0, "intent": "music", "observed_content": None,
+        "confidence": 1.0, "text": None, "volume_db": gain,
+        "music": {"mode": "bed", "recommended": None,
+                  "bed": {"asset_id": asset_id, "gain_db": gain,
+                          "duck_db": duck, "loop": bool(op.get("loop", True))}},
+    }]
+    return f"Música de fondo puesta ({asset['filename']}, {gain:g}dB, ducking {duck:g}dB)"
+
+
+def _apply_remove_music(plan: dict, op: dict, assets: dict) -> str:
+    plan["tracks"] = [
+        t for t in plan["tracks"]
+        if not (t["kind"] == "audio" and t.get("role") == "music")
+    ]
+    return "Música de fondo quitada"
+
+
+def _apply_edit_caption(plan: dict, op: dict, assets: dict) -> str:
+    cap = next((t for t in plan["tracks"] if t["kind"] == "caption"), None)
+    if cap is None:
+        raise PlanOpError("This cut has no captions")
+    event = next(
+        (e for e in cap["events"] if e["event_id"] == op["event_id"]), None
+    )
+    if event is None:
+        raise PlanOpError(f"No caption {op['event_id']!r}")
+    text = str(op["text"]).strip()
+    if not 1 <= len(text) <= 200:
+        raise PlanOpError("Caption text must be 1-200 characters")
+    event["text"] = text
+    return f"Subtítulo {event['event_id']} ahora dice: «{text}»"
+
+
+def _apply_remove_caption(plan: dict, op: dict, assets: dict) -> str:
+    cap = next((t for t in plan["tracks"] if t["kind"] == "caption"), None)
+    if cap is None:
+        raise PlanOpError("This cut has no captions")
+    before = len(cap["events"])
+    cap["events"] = [e for e in cap["events"] if e["event_id"] != op["event_id"]]
+    if len(cap["events"]) == before:
+        raise PlanOpError(f"No caption {op['event_id']!r}")
+    return f"Subtítulo {op['event_id']} eliminado"
+
+
 _APPLIERS = {
     "delete_event": (_apply_delete, {"event_id"}),
     "trim_event": (_apply_trim, {"event_id", "edge", "direction", "seconds"}),
@@ -568,6 +639,10 @@ _APPLIERS = {
     "remove_broll": (_apply_remove_broll, {"event_id"}),
     "replace_broll": (_apply_replace_broll, {"event_id", "asset_id"}),
     "move_broll": (_apply_move_broll, {"event_id", "timeline_start_seconds"}),
+    "set_music_bed": (_apply_set_music_bed, {"asset_id"}),
+    "remove_music": (_apply_remove_music, set()),
+    "edit_caption": (_apply_edit_caption, {"event_id", "text"}),
+    "remove_caption": (_apply_remove_caption, {"event_id"}),
 }
 
 
@@ -664,6 +739,10 @@ Respond with EXACTLY one JSON object, nothing else. One of:
 {"op":"set_volume","event_id":"...","volume_db":<-96..12, -96 mutes>}
 {"op":"jl_cut","event_id":"...","lead_seconds":<0.1..5 J-cut (audio of this scene starts early) or -5..-0.1 L-cut>}
 {"op":"set_title","event_id":"...","text":"...","font":"sans|handwritten|clean|display (optional)","size":"24-140 (optional)","position":"top|center|lower (optional)"}
+{"op":"set_music_bed","asset_id":"<an audio asset>","gain_db":<-40..6, opt>,"duck_db":<-40..0, opt>,"loop":<bool, opt>}
+{"op":"remove_music"}
+{"op":"edit_caption","event_id":"cap-...","text":"corrected caption text"}
+{"op":"remove_caption","event_id":"cap-..."}
 {"op":"add_voiceover","asset_id":"<an available voiceover audio asset>","timeline_start_seconds":<number>}
 {"op":"remove_voiceover","event_id":"vo-.."}
 {"op":"add_broll","asset_id":"<a footage asset>","timeline_start_seconds":<number>,"duration_seconds":<optional, default up to 4>,"source_start_seconds":<optional, default 0>}

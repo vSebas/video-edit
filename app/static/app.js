@@ -928,6 +928,72 @@ async function quickCaptions() {
   }
 }
 
+// Reads the plan's music track and returns a flat view for the publish card,
+// or null when there is no music track. Recommended mode = an annotation the
+// user applies natively when posting; bed mode = audio burned into the MP4.
+function musicRecommendation(plan) {
+  if (!plan) return null;
+  const track = (plan.tracks || []).find((t) => t.role === 'music');
+  const music = track?.events?.[0]?.music;
+  if (!music) return null;
+  if (music.mode === 'bed') return { mode: 'bed' };
+  const reco = music.recommended || {};
+  return {
+    mode: 'recommended',
+    name: reco.name || null,
+    vibe: reco.vibe || null,
+    bpm: reco.bpm || null,
+    energy: reco.energy || null,
+  };
+}
+
+// Deterministic op → propose (no LLM) → apply → re-render. Mirrors the AI-edit
+// apply flow but skips interpretation because the op is already exact.
+async function applyPlanOp(op, label) {
+  const projectId = state.activeProjectId;
+  const proposed = await api(`/api/projects/${projectId}/plan/op`, {
+    method: 'POST', body: JSON.stringify({ op }),
+  });
+  try {
+    setBusy(label, ['Aplicando el cambio', 'Renderizando'], 0);
+    await api(`/api/projects/${projectId}/plan/command/apply?proposal_id=${proposed.proposal_id}`, { method: 'POST' });
+    setBusy(label, ['Aplicando el cambio', 'Renderizando'], 1);
+    await runStep('render', undefined, projectId);
+    state.busy = null;
+    notice('Listo — corte actualizado.');
+    await loadProject(projectId);
+  } catch (error) {
+    state.busy = null;
+    await loadProject(projectId);
+    throw error;
+  }
+}
+
+async function musicRemove() {
+  try {
+    await applyPlanOp({ op: 'remove_music' }, 'Quitando música incorporada');
+  } catch (error) { notice(error.message, true); }
+}
+
+async function musicSetBed() {
+  const assets = (state.activeProject?.inventory?.assets || [])
+    .filter((a) => a.media_type === 'audio' || a.media_type === 'video');
+  if (!assets.length) {
+    notice('Agrega primero un archivo de audio en Metraje.', true);
+    return;
+  }
+  const list = assets.map((a, i) => `${i + 1}. ${a.filename || a.asset_id}`).join('\n');
+  const pick = window.prompt(
+    `¿Qué archivo usar como música de fondo?\n${list}\n\nEscribe el número:`);
+  const idx = Number(pick) - 1;
+  if (!Number.isInteger(idx) || idx < 0 || idx >= assets.length) return;
+  try {
+    await applyPlanOp(
+      { op: 'set_music_bed', asset_id: assets[idx].asset_id },
+      'Incorporando música al corte');
+  } catch (error) { notice(error.message, true); }
+}
+
 /* ------------------------------------------------------------------ */
 /* METRAJE                                                             */
 
@@ -1071,6 +1137,7 @@ function publishWorkspace(project) {
   const duration = project.plan?.project?.duration_seconds;
   const concept = (project.concepts || []).find((c) => c.concept_id === project.plan?.concept_id);
   const missing = concept?.missing_shots || [];
+  const music = musicRecommendation(project.plan);
   return `
     <section class="publish-grid">
       <article class="card">
@@ -1101,6 +1168,27 @@ function publishWorkspace(project) {
           <code>runtime/projects/${escapeHtml(project.project_id)}/outputs/timeline-davinci-proxies.xml</code></p>` : ''}
         <button class="secondary compact" id="prepare-export">${proxyExport ? 'Reconstruir archivos' : 'Preparar archivos'}</button>
       </article>
+      ${music ? `
+      <article class="card music-card">
+        <h3>🎵 Música para este video</h3>
+        ${music.mode === 'bed' ? `
+          <p class="muted">Este corte lleva música incorporada en el MP4
+          (mezclada y bajada bajo la voz). Para IG/TikTok, considera quitarla y
+          usar audio nativo — mejor alcance y sin reclamos de copyright.</p>
+          <button class="secondary compact" id="music-remove">Quitar música incorporada</button>` : `
+          <p class="muted">Al publicar en IG/TikTok, agrega audio de tendencia
+          <em>dentro de la app</em> — favorece el alcance y evita reclamos de
+          copyright. Sugerencia según el ritmo de este corte:</p>
+          <ul class="music-reco">
+            ${music.name ? `<li><strong>Pista:</strong> ${escapeHtml(music.name)}</li>` : ''}
+            ${music.vibe ? `<li><strong>Vibra:</strong> ${escapeHtml(music.vibe)}</li>` : ''}
+            ${music.bpm ? `<li><strong>Tempo:</strong> ~${Math.round(music.bpm)} BPM</li>` : ''}
+            ${music.energy ? `<li><strong>Energía:</strong> ${escapeHtml(music.energy)}</li>` : ''}
+          </ul>
+          <p class="muted">¿Prefieres un MP4 autónomo (YouTube/vista previa)?
+          Incorpora una pista de fondo:</p>
+          <button class="secondary compact" id="music-set-bed">Incorporar música al MP4…</button>`}
+      </article>` : ''}
       ${missing.length ? `
       <article class="card reco-card">
         <h3>Para fortalecer este video</h3>
@@ -1382,6 +1470,8 @@ function wireHandlers() {
   $('#prepare-export')?.addEventListener('click', prepareExport);
   $('#opentake-place')?.addEventListener('click', openTakePlace);
   $('#opentake-sync')?.addEventListener('click', openTakeSyncPreview);
+  $('#music-remove')?.addEventListener('click', musicRemove);
+  $('#music-set-bed')?.addEventListener('click', musicSetBed);
 
   // Diagnóstico
   document.querySelectorAll('[data-pipeline]').forEach((button) => {

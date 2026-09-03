@@ -41,6 +41,48 @@ def broll_track(plan):
     return matches[1] if len(matches) == 2 and matches[1].get("role") == "broll" else None
 
 
+def caption_events(plan):
+    cap = next((t for t in plan["tracks"] if t.get("kind") == "caption"), None)
+    return cap["events"] if cap else []
+
+
+def music_bed_event(plan):
+    for t in plan["tracks"]:
+        if t.get("kind") == "audio" and t.get("role") == "music":
+            for e in t.get("events", []):
+                m = e.get("music") or {}
+                if m.get("mode") == "bed" and (m.get("bed") or {}).get("asset_id"):
+                    return e
+    return None
+
+
+def srt_timestamp(seconds: float) -> str:
+    seconds = max(0.0, seconds)
+    h = int(seconds // 3600); m = int((seconds % 3600) // 60)
+    s = int(seconds % 60); ms = int(round((seconds - int(seconds)) * 1000))
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+def write_caption_srt(events, path) -> bool:
+    lines = []
+    n = 0
+    for e in sorted(events, key=lambda x: x["timeline_start_seconds"]):
+        text = str(e.get("text") or "").strip()
+        if not text:
+            continue
+        n += 1
+        start = e["timeline_start_seconds"]
+        end = start + e["duration_seconds"]
+        lines.append(str(n))
+        lines.append(f"{srt_timestamp(start)} --> {srt_timestamp(end)}")
+        lines.append(text)
+        lines.append("")
+    if not n:
+        return False
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return True
+
+
 def voiceover_events(plan):
     matches = [item for item in plan["tracks"] if item["kind"] == "audio"]
     if len(matches) == 2 and matches[1].get("role") == "voiceover":
@@ -94,6 +136,8 @@ def main() -> None:
     overlay = broll_track(plan)
     broll_events = overlay["events"] if overlay else []
     vo_events = voiceover_events(plan)
+    caption_track = caption_events(plan)
+    music_event = music_bed_event(plan)
 
     # Video and audio are independent timelines (J/L cuts move the audio
     # boundary without moving the picture boundary). Overlaps are errors;
@@ -131,6 +175,15 @@ def main() -> None:
         command.extend(["-i", str(source)])
     audio_input_base = len(video_events) + len(broll_events)
     vo_input_base = audio_input_base + len(audio_events)
+    music_input_index = None
+    if music_event is not None:
+        music_input_index = len(video_events) + len(broll_events) + len(audio_events) + len(vo_events)
+        bed = (music_event.get("music") or {}).get("bed") or {}
+        msrc = (media_root / assets[music_event["asset_id"]]["source_path"]).resolve()
+        # loop the bed so a short track fills the whole cut
+        if bed.get("loop", True):
+            command.extend(["-stream_loop", "-1"])
+        command.extend(["-i", str(msrc)])
 
     def gaps(events):
         """(position, length) of every hole a track leaves in [0, duration)."""
@@ -323,12 +376,54 @@ def main() -> None:
         )
         audio_out = "amix"
 
-    if args.captions:
-        srt = str(args.captions.resolve())
+    # Background music bed: loop/trim to the cut, apply gain, DUCK inside
+    # speech + voiceover windows so dialogue stays intelligible, then mix
+    # under the production audio.
+    if music_input_index is not None:
+        bed = (music_event.get("music") or {}).get("bed") or {}
+        gain = bed.get("gain_db", -14)
+        duck = bed.get("duck_db", -12)
+        speech_windows = []
+        for e in audio_events:
+            speech_windows.append(
+                (e["timeline_start_seconds"],
+                 e["timeline_start_seconds"] + e["duration_seconds"])
+            )
+        for e in vo_events:
+            speech_windows.append(
+                (e["timeline_start_seconds"],
+                 e["timeline_start_seconds"] + e["duration_seconds"])
+            )
+        enable = "+".join(
+            f"between(t\\,{s0}\\,{e0})" for s0, e0 in speech_windows
+        ) or "0"
+        filters.append(
+            f"[{music_input_index}:a:0]"
+            f"atrim=start=0:end={round(duration, 3)},asetpts=PTS-STARTPTS,"
+            f"volume={gain}dB,"
+            f"volume={duck}dB:enable='{enable}',"
+            f"aresample=48000,"
+            f"aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[mus]"
+        )
+        filters.append(
+            f"[{audio_out}][mus]amix=inputs=2:duration=first:normalize=0[amus]"
+        )
+        audio_out = "amus"
+
+    caption_srt = None
+    if caption_track:
+        caption_srt = output_path.with_name(f".{output_path.stem}.captions.srt")
+        if not write_caption_srt(caption_track, caption_srt):
+            caption_srt = None
+    elif args.captions:
+        caption_srt = args.captions.resolve()
+    if caption_srt is not None:
+        srt = str(caption_srt)
         escaped = srt.replace("\\", "\\\\").replace("'", "\\'").replace(":", "\\:")
+        # bigger, high-contrast, safely above the bottom edge for Reels
         style = (
-            "FontName=Liberation Sans,FontSize=13,PrimaryColour=&HFFFFFF&,"
-            "OutlineColour=&H99000000&,Outline=2,MarginV=42"
+            "FontName=Liberation Sans,FontSize=15,Bold=1,PrimaryColour=&HFFFFFF&,"
+            "OutlineColour=&HCC000000&,BorderStyle=1,Outline=3,Shadow=0,MarginV=64"
         )
         filters.append(
             f"[{current_video}]subtitles=filename='{escaped}':"

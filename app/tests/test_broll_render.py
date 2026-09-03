@@ -458,3 +458,76 @@ class TestStyledTitles:
         assert self._band_peak(center, middle_band) > (
             self._band_peak(top, middle_band) + 80
         )
+
+
+class TestMusicAndCaptions:
+    """Music bed mixes (ducked) and plan captions burn into the pixels."""
+
+    def _render(self, root: Path, plan: dict, name: str) -> Path:
+        (root / f"{name}.json").write_text(json.dumps(plan))
+        output = root / f"{name}.mp4"
+        subprocess.run(
+            [sys.executable, str(PIPELINE / "render_edit.py"),
+             "--plan", str(root / f"{name}.json"), "--output", str(output),
+             "--inventory", str(root / "inventory.json"),
+             "--media-root", str(root)],
+            check=True, capture_output=True, text=True,
+        )
+        return output
+
+    def test_music_bed_is_audible_and_captions_burn(self, rendered) -> None:
+        root, _ = rendered
+        # a distinct-frequency music bed
+        _make_clip(root / "music.mp4", "black", 4.0, 1500)
+        inv = json.loads((root / "inventory.json").read_text())
+        inv["assets"].append({
+            "asset_id": "music", "filename": "music.mp4",
+            "source_path": "music.mp4", "duration_seconds": 4.0,
+            "sha256": "0" * 64, "media_type": "audio",
+            "audio": {"sample_rate": 48000, "channels": 1},
+            "video": {"width": 320, "height": 240},
+        })
+        (root / "inventory.json").write_text(json.dumps(inv))
+        plan = json.loads((root / "plan.json").read_text())
+        plan["tracks"].append({
+            "track_id": "cap1", "kind": "caption", "events": [{
+                "event_id": "cap-001", "asset_id": None,
+                "source_start_seconds": None, "source_end_seconds": None,
+                "timeline_start_seconds": 0.2, "duration_seconds": 3.0,
+                "playback_rate": 1.0, "intent": "caption",
+                "observed_content": None, "confidence": 1.0,
+                "text": "HOLA MUNDO", "volume_db": None,
+            }]})
+        plan["tracks"].append({
+            "track_id": "mus1", "kind": "audio", "role": "music", "events": [{
+                "event_id": "mus-01", "asset_id": "music",
+                "source_start_seconds": 0.0, "source_end_seconds": 4.0,
+                "timeline_start_seconds": 0.0, "duration_seconds": 4.0,
+                "playback_rate": 1.0, "intent": "music",
+                "observed_content": None, "confidence": 1.0, "text": None,
+                "volume_db": -10,
+                "music": {"mode": "bed", "recommended": None,
+                          "bed": {"asset_id": "music", "gain_db": -10,
+                                  "duck_db": -12, "loop": True}},
+            }]})
+        out = self._render(root, plan, "music_cap")
+        assert out.exists()
+        # the 1500 Hz music bed must be present in the mix
+        raw = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-i", str(out),
+             "-af", "bandpass=f=1500:width_type=h:w=80,volumedetect",
+             "-f", "null", "-"],
+            capture_output=True, text=True,
+        ).stderr
+        import re as _re
+        m = _re.search(r"mean_volume:\s*(-?[0-9.]+) dB", raw)
+        assert m, raw[-400:]
+        # the 1500 Hz bed band must carry real signal, not near-silence
+        assert float(m.group(1)) > -70, f"music bed too quiet: {m.group(1)} dB"
+        # captions light up the lower third (white text over the clip)
+        band = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", "1.0",
+             "-i", str(out), "-frames:v", "1", "-vf", "crop=iw:80:0:ih-120",
+             "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+            check=True, capture_output=True).stdout
+        assert max(band) > 150, "burned captions should brighten the lower band"

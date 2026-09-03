@@ -644,3 +644,51 @@ class TestBrollOps:
         assert "Available footage assets" in system
         assert "clip_b (6.0s)" in system
         assert "add_broll" in system
+
+
+class TestMusicAndCaptionOps:
+    def _plan_with_captions_and_music_source(self):
+        plan = _plan()
+        plan["tracks"].append({
+            "track_id": "cap1", "kind": "caption", "events": [{
+                "event_id": "cap-001", "asset_id": None,
+                "source_start_seconds": None, "source_end_seconds": None,
+                "timeline_start_seconds": 0.5, "duration_seconds": 2.0,
+                "playback_rate": 1.0, "intent": "caption",
+                "observed_content": None, "confidence": 1.0,
+                "text": "hla mundo", "volume_db": None,
+            }]})
+        return plan
+
+    def test_set_and_remove_music_bed(self) -> None:
+        inv = {"assets": [{"asset_id": "song", "filename": "song.mp3",
+                           "media_type": "audio", "duration_seconds": 90}]}
+        candidate, summary = apply_op(
+            _plan(), {"op": "set_music_bed", "asset_id": "song",
+                      "gain_db": -12, "duck_db": -10}, inv)
+        music = next(t for t in candidate["tracks"]
+                     if t.get("role") == "music")
+        assert music["events"][0]["music"]["mode"] == "bed"
+        assert music["events"][0]["music"]["bed"]["duck_db"] == -10
+        assert "Música de fondo" in summary
+        cleared, _ = apply_op(candidate, {"op": "remove_music"}, inv)
+        assert not any(t.get("role") == "music" for t in cleared["tracks"])
+
+    def test_music_source_must_be_audio_or_video(self) -> None:
+        inv = {"assets": [{"asset_id": "x", "filename": "x.txt",
+                           "media_type": "document", "duration_seconds": 1}]}
+        with pytest.raises(PlanOpError, match="not a usable music source"):
+            apply_op(_plan(), {"op": "set_music_bed", "asset_id": "x"}, inv)
+
+    def test_edit_and_remove_caption(self) -> None:
+        plan = self._plan_with_captions_and_music_source()
+        candidate, summary = apply_op(
+            plan, {"op": "edit_caption", "event_id": "cap-001",
+                   "text": "hola mundo"}, INVENTORY)
+        cap = next(t for t in candidate["tracks"] if t["kind"] == "caption")
+        assert cap["events"][0]["text"] == "hola mundo"
+        assert "«hola mundo»" in summary
+        removed, _ = apply_op(candidate, {"op": "remove_caption",
+                                          "event_id": "cap-001"}, INVENTORY)
+        cap2 = next(t for t in removed["tracks"] if t["kind"] == "caption")
+        assert cap2["events"] == []

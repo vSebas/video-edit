@@ -686,6 +686,7 @@ def build_plan(
     speech_words: dict[str, list[dict]] | None = None,
     cutaways: list[dict] | None = None,
     style_application: dict | None = None,
+    music: dict | None = None,
 ) -> dict:
     """Deterministically assemble edit-plan.v1 from grounded spans with
     linked video/audio events, a hook title, and optional B-roll cutaways
@@ -976,6 +977,8 @@ def build_plan(
             "broll_shortfall_seconds": None,
         }
 
+    caption_events = _caption_events_from_speech(video_events, speech_words)
+    music_events = [_music_event(music, timeline)] if music else []
     plan = {
         "schema_version": "edit-plan.v1",
         "generated_at": utc_now(),
@@ -994,15 +997,150 @@ def build_plan(
             {"track_id": "v1", "kind": "video", "events": video_events},
             {"track_id": "a1", "kind": "audio", "events": audio_events},
             {"track_id": "t1", "kind": "title", "events": title_events},
+            {"track_id": "cap1", "kind": "caption", "events": caption_events},
             *(
                 [{"track_id": "v2", "kind": "video", "role": "broll",
                   "events": broll_events}]
                 if broll_events else []
             ),
+            *(
+                [{"track_id": "mus1", "kind": "audio", "role": "music",
+                  "events": music_events}]
+                if music_events else []
+            ),
         ],
     }
     refresh_style_application(plan)
     return plan
+
+
+def _caption_events_from_speech(
+    video_events: list[dict],
+    speech_words: dict[str, list[dict]] | None,
+) -> list[dict]:
+    """First-class caption events on the TIMELINE, grouped into readable
+    lines (<=7 words / <=3.5s), mapping each source word through its
+    clip's trim+offset. Seeded from ASR; editable afterwards like any
+    other plan event."""
+    if not speech_words:
+        return []
+    events: list[dict] = []
+    index = 0
+    for clip in video_events:
+        words = speech_words.get(clip["asset_id"]) or []
+        offset = clip["timeline_start_seconds"] - clip["source_start_seconds"]
+        src_end = clip["source_start_seconds"] + clip["duration_seconds"]
+        line: list[str] = []
+        line_start = None
+        line_end = None
+        for word in sorted(words, key=lambda w: w["start_seconds"]):
+            ws, we = word["start_seconds"], word["end_seconds"]
+            if we <= clip["source_start_seconds"] or ws >= src_end:
+                continue
+            text = str(word.get("word") or word.get("text") or "").strip()
+            if not text:
+                continue
+            if line_start is None:
+                line_start = ws
+            line.append(text)
+            line_end = we
+            long_enough = (line_end - line_start) >= 3.5 or len(line) >= 7
+            ends_sentence = text.endswith((".", "?", "!", "…"))
+            if long_enough or ends_sentence:
+                index += 1
+                events.append(_caption_event(
+                    index, " ".join(line),
+                    max(clip["timeline_start_seconds"], line_start + offset),
+                    min(clip["timeline_start_seconds"] + clip["duration_seconds"],
+                        line_end + offset),
+                ))
+                line, line_start, line_end = [], None, None
+        if line and line_start is not None:
+            index += 1
+            events.append(_caption_event(
+                index, " ".join(line),
+                max(clip["timeline_start_seconds"], line_start + offset),
+                min(clip["timeline_start_seconds"] + clip["duration_seconds"],
+                    line_end + offset),
+            ))
+    return events
+
+
+def _caption_event(index: int, text: str, start: float, end: float) -> dict:
+    start = round(max(0.0, start), 3)
+    end = round(max(start + 0.3, end), 3)
+    return {
+        "event_id": f"cap-{index:03d}",
+        "asset_id": None,
+        "source_start_seconds": None,
+        "source_end_seconds": None,
+        "timeline_start_seconds": start,
+        "duration_seconds": round(end - start, 3),
+        "playback_rate": 1.0,
+        "intent": "caption",
+        "observed_content": None,
+        "confidence": 1.0,
+        "text": text[:120],
+        "volume_db": None,
+    }
+
+
+def _music_event(music: dict, timeline: float) -> dict:
+    return {
+        "event_id": "mus-01",
+        "asset_id": (music.get("bed") or {}).get("asset_id"),
+        "source_start_seconds": 0.0 if music.get("mode") == "bed" else None,
+        "source_end_seconds": round(timeline, 3) if music.get("mode") == "bed" else None,
+        "timeline_start_seconds": 0.0,
+        "duration_seconds": round(timeline, 3),
+        "playback_rate": 1.0,
+        "intent": "music",
+        "observed_content": None,
+        "confidence": 1.0,
+        "text": None,
+        "volume_db": (music.get("bed") or {}).get("gain_db"),
+        "music": music,
+    }
+
+
+def default_music_recommendation(
+    concept: dict, style_application: dict | None,
+) -> dict:
+    """A DEFAULT background-music recommendation (mode 'recommended' —
+    applied natively in-app when posting, no audio burned). Grounded in
+    the applied style's measured tempo/energy when present; otherwise a
+    conservative vibe from the concept's editorial tone."""
+    bpm = None
+    energy = "medium"
+    if style_application:
+        targets = style_application.get("targets") or {}
+        cpm = targets.get("cuts_per_minute")
+        # measured beat grid, when the style carried one
+        grammar = (style_application.get("_grammar") or {})
+        bpm = grammar.get("bpm_estimate")
+        if cpm is not None:
+            energy = "high" if cpm >= 40 else "low" if cpm <= 15 else "medium"
+    editorial = (concept.get("editorial") or {})
+    tone = editorial.get("tone") or []
+    if any(t in ("energetic", "upbeat", "chaotic", "intense") for t in tone):
+        energy = "high"
+    elif any(t in ("calm", "cozy", "nostalgic", "reflective") for t in tone):
+        energy = "low" if energy != "high" else energy
+    vibe = ", ".join(tone[:3]) or "acorde al tono del vlog"
+    return {
+        "mode": "recommended",
+        "recommended": {
+            "name": None,
+            "vibe": vibe,
+            "bpm": bpm,
+            "energy": energy,
+            "apply_in_app": True,
+        },
+        "bed": None,
+    }
+
+
+
 
 
 def envelopes_cover(
@@ -1336,6 +1474,7 @@ def compile_edit_plan(
                 "identidad) que ninguna observación aprobada respalda — "
                 "confirma la evidencia correspondiente o cambia el título"
             )
+    music = default_music_recommendation(concept, style_application)
     try:
         compiled = build_plan(
             project,
@@ -1349,6 +1488,7 @@ def compile_edit_plan(
             fps=fps,
             speech_words=speech_words,
             style_application=style_application,
+            music=music,
         )
     except PlanningError as exc:
         raise PlanningError(f"The selected concept is not compilable: {exc}") from exc
@@ -1613,14 +1753,30 @@ def validate_edit_plan(plan: dict, schema_path: Path, project: dict) -> None:
                 f"{duration:.3f}s"
             )
     audio_tracks = [t for t in plan["tracks"] if t["kind"] == "audio"]
-    if len(audio_tracks) > 2:
+    # The primary audio track carries role 'primary' or no role; voiceover and
+    # music are additional, role-tagged tracks (at most one of each).
+    voiceover_tracks = [t for t in audio_tracks if t.get("role") == "voiceover"]
+    music_tracks = [t for t in audio_tracks if t.get("role") == "music"]
+    primary_audio = [
+        t for t in audio_tracks
+        if t.get("role") in (None, "primary")
+    ]
+    extra_audio = [
+        t for t in audio_tracks
+        if t.get("role") not in (None, "primary", "voiceover", "music")
+    ]
+    if extra_audio:
+        raise PlanningError(
+            "Audio tracks may only be 'primary', 'voiceover', or 'music'"
+        )
+    if len(primary_audio) > 1:
+        raise PlanningError("At most one primary audio track is supported")
+    if len(voiceover_tracks) > 1:
         raise PlanningError("At most one voiceover track beyond the primary audio")
-    if len(audio_tracks) == 2:
-        if audio_tracks[1].get("role") != "voiceover":
-            raise PlanningError(
-                "A second audio track must declare role 'voiceover'"
-            )
-        for event in audio_tracks[1]["events"]:
+    if len(music_tracks) > 1:
+        raise PlanningError("At most one music track is supported")
+    for voiceover in voiceover_tracks:
+        for event in voiceover["events"]:
             asset = assets.get(event.get("asset_id"))
             if asset is not None and asset.get("media_type") != "audio":
                 raise PlanningError(
@@ -1632,6 +1788,16 @@ def validate_edit_plan(plan: dict, schema_path: Path, project: dict) -> None:
                 raise PlanningError(
                     f"Voiceover event {event['event_id']} extends past the "
                     "plan duration"
+                )
+    for music in music_tracks:
+        for event in music["events"]:
+            asset = assets.get(event.get("asset_id"))
+            if asset is not None and asset.get("media_type") not in (
+                "audio", "video"
+            ):
+                raise PlanningError(
+                    f"Music event {event['event_id']} must use an audio or "
+                    "video asset"
                 )
     for track in plan["tracks"]:
         if track.get("role") not in ("broll", "voiceover"):

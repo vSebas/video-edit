@@ -132,16 +132,27 @@ def test_compile_edit_plan_produces_valid_linked_plan() -> None:
     plan = compile_edit_plan(project, document, "concept_one")
     validate_edit_plan(plan, EDIT_PLAN_SCHEMA, project)
 
-    tracks = {track["kind"]: track["events"] for track in plan["tracks"]}
-    assert len(tracks["video"]) == len(tracks["audio"]) == 3
-    for video, audio in zip(tracks["video"], tracks["audio"]):
+    video_track = next(t for t in plan["tracks"] if t["kind"] == "video")
+    primary_audio = next(
+        t for t in plan["tracks"]
+        if t["kind"] == "audio" and t.get("role") in (None, "primary")
+    )
+    assert len(video_track["events"]) == len(primary_audio["events"]) == 3
+    for video, audio in zip(video_track["events"], primary_audio["events"]):
         assert video["asset_id"] == audio["asset_id"]
         assert video["source_start_seconds"] == audio["source_start_seconds"]
         assert video["source_end_seconds"] == audio["source_end_seconds"]
     assert plan["project"]["duration_seconds"] == pytest.approx(12.0)
-    starts = [event["timeline_start_seconds"] for event in tracks["video"]]
+    starts = [event["timeline_start_seconds"] for event in video_track["events"]]
     assert starts == [0.0, 4.0, 8.0]
-    assert tracks["title"][0]["text"] == "Concept one"
+    title_track = next(t for t in plan["tracks"] if t["kind"] == "title")
+    assert title_track["events"][0]["text"] == "Concept one"
+    # Vocabulary expansion: every compiled plan carries a caption track and a
+    # default (recommended-mode) music track.
+    caption_track = next(t for t in plan["tracks"] if t["kind"] == "caption")
+    assert caption_track is not None
+    music_track = next(t for t in plan["tracks"] if t.get("role") == "music")
+    assert music_track["events"][0]["music"]["mode"] == "recommended"
 
 
 def test_compile_edit_plan_rejects_unknown_concept() -> None:

@@ -119,6 +119,17 @@ class PlanCommandRequest(BaseModel):
     instruction: str = Field(min_length=2, max_length=500)
 
 
+# Ops exposed to deterministic UI controls (no LLM). Kept narrow on purpose:
+# these are the direct-manipulation controls the UI renders buttons for.
+_DIRECT_UI_OPS = {
+    "set_music_bed", "remove_music", "edit_caption", "remove_caption",
+}
+
+
+class PlanOpRequest(BaseModel):
+    op: dict = Field(description="A closed-set plan op, e.g. {'op': 'remove_music'}")
+
+
 class OpenTakeSyncRequest(BaseModel):
     # Host-side callers (CLI/browser) pass the get_timeline readback; when
     # omitted the server fetches it over MCP itself (host-run app only —
@@ -480,6 +491,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def plan_command_apply(project_id: str, proposal_id: str | None = None):
         return project_call(
             lambda: projects.plan_command_apply(project_id, proposal_id)
+        )
+
+    @application.post("/api/projects/{project_id}/plan/op")
+    def plan_op_propose(project_id: str, request: PlanOpRequest):
+        name = request.op.get("op")
+        if name not in _DIRECT_UI_OPS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Op '{name}' is not available through direct controls",
+            )
+        return project_call(
+            lambda: projects.plan_op_propose(project_id, request.op)
         )
 
     @application.post("/api/projects/{project_id}/opentake/place")

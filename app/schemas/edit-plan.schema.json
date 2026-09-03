@@ -90,7 +90,8 @@
             "enum": [
               "primary",
               "broll",
-              "voiceover"
+              "voiceover",
+              "music"
             ]
           },
           "events": {
@@ -398,6 +399,122 @@
           "items": {
             "type": "string",
             "maxLength": 64
+          }
+        },
+        "caption_style": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "font": {
+              "enum": [
+                "sans",
+                "handwritten",
+                "clean",
+                "display",
+                null
+              ]
+            },
+            "size": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 16,
+              "maximum": 120
+            },
+            "position": {
+              "enum": [
+                "lower",
+                "center",
+                "top",
+                null
+              ]
+            }
+          }
+        },
+        "music": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "enum": [
+                "recommended",
+                "bed"
+              ]
+            },
+            "recommended": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 200
+                },
+                "vibe": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 120
+                },
+                "bpm": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 30,
+                  "maximum": 300
+                },
+                "energy": {
+                  "enum": [
+                    "low",
+                    "medium",
+                    "high",
+                    null
+                  ]
+                },
+                "apply_in_app": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "bed": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "asset_id": {
+                  "type": "string"
+                },
+                "gain_db": {
+                  "type": "number",
+                  "minimum": -40,
+                  "maximum": 6
+                },
+                "duck_db": {
+                  "type": "number",
+                  "minimum": -40,
+                  "maximum": 0
+                },
+                "loop": {
+                  "type": "boolean"
+                }
+              }
+            }
           }
         }
       }
