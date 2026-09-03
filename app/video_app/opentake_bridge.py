@@ -431,16 +431,58 @@ def build_bridge(plan: dict, entries: list[dict], ref_for: dict[str, str],
     return bridge
 
 
+def ensure_project(client: OpenTakeMcp, name: str) -> str:
+    """Open the OpenTake bundle named after this vlog, creating it when it
+    does not exist yet — placement must land in THIS project's timeline,
+    never in whatever bundle happens to be open. Returns 'opened' or
+    'created'."""
+    try:
+        client.tool("open_project", {"name": name})
+        return "opened"
+    except OpenTakeMcpError as exc:
+        message = str(exc)
+        if "no bundle named" in message:
+            try:
+                client.tool("new_project", {"name": name})
+                return "created"
+            except OpenTakeMcpError as create_exc:
+                create_message = str(create_exc)
+                if "Unknown tool" in create_message or "unknown tool" in create_message:
+                    raise BridgeError(
+                        "Tu OpenTake no tiene la herramienta new_project — "
+                        "reinicia OpenTake con el binario recién compilado "
+                        "del fork (run.sh) y reintenta"
+                    ) from create_exc
+                raise BridgeError(
+                    f"No se pudo crear el proyecto en OpenTake: {create_message}"
+                ) from create_exc
+        if "projects folder is unknown" in message:
+            raise BridgeError(
+                "OpenTake no sabe dónde está tu carpeta de proyectos — abre "
+                "cualquier proyecto guardado una vez en OpenTake y reintenta"
+            ) from exc
+        raise BridgeError(
+            f"No se pudo abrir el proyecto en OpenTake: {message}"
+        ) from exc
+
+
 def place_plan(
     plan: dict, inventory: dict, project_id: str,
     client: OpenTakeMcp | None = None,
 ) -> tuple[dict, dict]:
-    """Clear the open OpenTake timeline and place the plan; returns
-    (summary, bridge). Raises BridgeError with an actionable message."""
+    """Open (or create) this vlog's OpenTake project, clear its timeline,
+    and place the plan; returns (summary, bridge). Raises BridgeError with
+    an actionable message."""
     try:
         client = client or OpenTakeMcp()
     except OpenTakeMcpError as exc:
-        raise BridgeError(str(exc)) from exc
+        message = str(exc)
+        if "unreachable" in message:
+            raise BridgeError(
+                "OpenTake no está abierto — inicia la aplicación OpenTake "
+                "(~/Documents/OpenTake/run.sh) y vuelve a pulsar «Colocar»"
+            ) from exc
+        raise BridgeError(message) from exc
     video_events = next(t for t in plan["tracks"] if t["kind"] == "video")["events"]
     audio_events = next(t for t in plan["tracks"] if t["kind"] == "audio")["events"]
     mirrored = len(video_events) == len(audio_events) and all(
@@ -471,6 +513,9 @@ def place_plan(
     broll = broll_entries(plan)
     voiceover = voiceover_entries(plan)
     needed = sorted({e["asset_id"] for e in entries + broll + voiceover})
+    # pure plan preflights are done — the FIRST OpenTake interaction is
+    # opening (or creating) THIS vlog's own project bundle
+    project_action = ensure_project(client, project_id)
     ref_for = map_media(client, inventory, needed)
 
     try:
@@ -658,12 +703,17 @@ def place_plan(
             for event, v_clip in zip(plan_audio, primary_final)
         ]
     summary = {
+        "opentake_project": {"name": project_id, "action": project_action},
         "placed_clips": len(entries),
         "placed_broll_clips": len(broll),
         "placed_voiceover_clips": len(voiceover),
         "total_frames": sum(e["durationFrames"] for e in entries),
         "removed_previous_clips": len(existing),
     }
+    try:
+        client.tool("save_project")
+    except OpenTakeMcpError:
+        pass  # placement succeeded; an autosave failure is not fatal
     return summary, bridge
 
 

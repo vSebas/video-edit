@@ -788,6 +788,24 @@ class FakeOpenTake:
 
     def tool(self, name, arguments=None):
         arguments = arguments or {}
+        if name == "open_project":
+            # the fake host "has" a bundle for every project name unless
+            # the test marks it missing — mirrors the fork's lifecycle
+            if getattr(self, "missing_bundle", False):
+                from video_app.opentake_mcp import OpenTakeMcpError
+
+                raise OpenTakeMcpError(
+                    f"open_project: no bundle named {arguments['name']!r}"
+                )
+            self.opened_project = arguments["name"]
+            return {"name": arguments["name"]}
+        if name == "new_project":
+            self.created_project = arguments["name"]
+            self.opened_project = arguments["name"]
+            return {"name": arguments["name"]}
+        if name == "save_project":
+            self.saved = True
+            return {"savedTo": f"/fake/{getattr(self, 'opened_project', 'x')}.opentake"}
         if name == "get_media":
             return {"entries": [
                 {"name": stem, "id": info["id"]}
@@ -1264,3 +1282,17 @@ class TestJLRoundTrip:
         partner["trimStartFrame"] = 5000
         with pytest.raises(SyncError, match="outside the placed audio envelope"):
             timeline_to_candidate_plan(plan, bridge, client.get_timeline())
+
+
+class TestEnsureProject:
+    def test_opens_existing_or_creates_missing(self) -> None:
+        from video_app.opentake_bridge import ensure_project
+
+        fake = FakeOpenTake({})
+        assert ensure_project(fake, "mi-vlog") == "opened"
+        assert fake.opened_project == "mi-vlog"
+
+        fake2 = FakeOpenTake({})
+        fake2.missing_bundle = True
+        assert ensure_project(fake2, "mi-vlog") == "created"
+        assert fake2.created_project == "mi-vlog"
