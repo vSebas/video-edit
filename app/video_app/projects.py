@@ -1688,17 +1688,20 @@ class ProjectService:
         except (PlanOpError, PlanningError) as exc:
             raise ProjectError(str(exc)) from exc
         proposal_id = uuid.uuid4().hex[:12]
-        write_json(
-            self.settings.runtime / project_id / "plan-command.json",
-            {
-                "proposal_id": proposal_id,
-                "base_revision": int(plan.get("revision", 1)),
-                "instruction": instruction,
-                "op": op,
-                "summary": summary,
-                "candidate": candidate,
-            },
-        )
+        # Write the proposal under the same lock apply uses, so a propose and a
+        # concurrent apply cannot interleave on the shared plan-command.json.
+        with self._project_write(project_id):
+            write_json(
+                self.settings.runtime / project_id / "plan-command.json",
+                {
+                    "proposal_id": proposal_id,
+                    "base_revision": int(plan.get("revision", 1)),
+                    "instruction": instruction,
+                    "op": op,
+                    "summary": summary,
+                    "candidate": candidate,
+                },
+            )
         return {
             "status": "proposed",
             "proposal_id": proposal_id,
@@ -1855,7 +1858,10 @@ class ProjectService:
             project_state["plan"] = new_plan
             project_state["status"] = "plan_ready"
             write_json(path, project_state)
-        stored_path.unlink(missing_ok=True)
+            # Consume the proposal INSIDE the lock: releasing first would let a
+            # concurrent propose write a new proposal that this unlink then
+            # deletes.
+            stored_path.unlink(missing_ok=True)
         return {
             "revision": new_plan["revision"],
             "summary": stored["summary"],

@@ -1812,8 +1812,10 @@ def _carry_user_captions(old_plan: dict, new_plan: dict) -> None:
     new_caps = _captions(new_plan)
     if not old_caps or not new_caps:
         return
-    def _tokens(text: str) -> set:
-        return {w for w in re.findall(r"\w+", (text or "").lower()) if w}
+    def _norm(text: str) -> str:
+        # normalized word sequence — fresh ASR of the SAME audio is
+        # deterministic, so identical footage yields an identical sequence
+        return " ".join(re.findall(r"\w+", (text or "").lower()))
 
     edited = [c for c in old_caps if c.get("user_authored")]
     for cue in edited:
@@ -1828,19 +1830,16 @@ def _carry_user_captions(old_plan: dict, new_plan: dict) -> None:
                 best, best_overlap = cand, overlap
         if best is None or best_overlap <= 0:
             continue
-        # Only paste the correction when the regenerated cue is plainly the SAME
-        # footage. The signal is the ORIGINAL ASR text captured when the user
-        # edited (asr_text): fresh ASR of the same footage reproduces it, so the
-        # tokens overlap. After a reorder the slot holds different words, the
-        # overlap collapses, and we refuse — never moving trusted text onto
-        # another scene. (Without a stored original we cannot prove sameness, so
-        # we also refuse.)
+        # Only paste the correction when the regenerated cue is provably the
+        # SAME footage. The signal is the ORIGINAL ASR text captured when the
+        # user edited (asr_text): fresh ASR of the same audio is deterministic,
+        # so it reproduces that text EXACTLY. We require exact normalized
+        # equality — a mere token overlap ("no lo sé" vs "no lo quiero") is not
+        # identity and could move trusted text onto another scene. Strictness is
+        # the safe side: a missed carry just asks the user to re-apply a fix,
+        # whereas a wrong carry burns unverified words over the wrong footage.
         original = cue.get("asr_text")
-        if not original:
-            continue
-        old_t, new_t = _tokens(original), _tokens(best.get("text"))
-        union = old_t | new_t
-        if not union or len(old_t & new_t) / len(union) < 0.4:
+        if not original or _norm(original) != _norm(best.get("text")):
             continue
         best["text"] = cue["text"]
         best["user_authored"] = True
