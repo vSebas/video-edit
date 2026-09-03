@@ -1492,7 +1492,10 @@ class ProjectService:
 
         warning = staleness_warning(readback, saved_bundle_state())
         try:
-            candidate, diff = timeline_to_candidate_plan(plan, bridge, readback)
+            candidate, diff = timeline_to_candidate_plan(
+                plan, bridge, readback,
+                speech_words=self._speech_words(project_id),
+            )
         except SyncError as exc:
             raise ProjectError(f"Sync rejected: {exc}") from exc
         # GUI-added B-roll of a known sideways asset must not lose its
@@ -2869,6 +2872,9 @@ class ProjectService:
                         {
                             "start_seconds": word["start_seconds"],
                             "end_seconds": word["end_seconds"],
+                            # Carry the token text — captions are built from it.
+                            # Dropping it left every caption event empty.
+                            "word": word.get("word", ""),
                         }
                     )
         return words

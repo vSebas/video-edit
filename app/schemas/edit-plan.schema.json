@@ -141,6 +141,10 @@
             "cuts_per_minute": {
               "type": "number",
               "minimum": 0
+            },
+            "bpm_estimate": {
+              "type": "number",
+              "minimum": 0
             }
           }
         },

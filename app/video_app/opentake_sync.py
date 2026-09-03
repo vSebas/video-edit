@@ -99,19 +99,26 @@ def _readback_tracks(readback: dict, kind: str) -> list[dict]:
 
 
 def _plan_audio_tracks(plan: dict) -> tuple[dict, dict | None]:
-    """The primary audio track plus an optional role-declared voiceover."""
+    """The primary audio track plus an optional role-declared voiceover.
+
+    Role-based selection: plans now also carry a music track (role 'music'),
+    which OpenTake does not consume — the bed/recommendation is a render-time
+    concern, so it is ignored here rather than treated as an illegal track.
+    """
     tracks = plan.get("tracks")
     if not isinstance(tracks, list):
         raise SyncError("plan tracks must be a list")
-    matches = [track for track in tracks if track.get("kind") == "audio"]
-    if not matches or len(matches) > 2:
-        raise SyncError("plan must contain one audio track plus at most one voiceover")
-    for match in matches:
+    audio = [track for track in tracks if track.get("kind") == "audio"]
+    primary = [t for t in audio if t.get("role") in (None, "primary")]
+    voiceovers = [t for t in audio if t.get("role") == "voiceover"]
+    if len(primary) != 1:
+        raise SyncError("plan must contain exactly one primary audio track")
+    if len(voiceovers) > 1:
+        raise SyncError("plan must contain at most one voiceover track")
+    for match in primary + voiceovers:
         if not isinstance(match.get("events"), list):
             raise SyncError("plan audio events must be a list")
-    if len(matches) == 2 and matches[1].get("role") != "voiceover":
-        raise SyncError("a second plan audio track must declare role 'voiceover'")
-    return matches[0], matches[1] if len(matches) == 2 else None
+    return primary[0], voiceovers[0] if voiceovers else None
 
 
 def _plan_video_tracks(plan: dict) -> tuple[dict, dict | None]:
@@ -323,9 +330,16 @@ def _build_diff(infos: list[dict], descendants: dict[str, list[dict]]) -> list[d
 
 
 def timeline_to_candidate_plan(
-    plan: dict, bridge: dict, readback: dict
+    plan: dict, bridge: dict, readback: dict,
+    speech_words: dict | None = None,
 ) -> tuple[dict, list[dict]]:
-    """Convert one supported OpenTake timeline readback into a plan revision."""
+    """Convert one supported OpenTake timeline readback into a plan revision.
+
+    When speech_words is supplied, the caption track is REGENERATED from ASR
+    through the rebuilt clip geometry — a hand-rearrange in OpenTake changes
+    which footage sits where, so captions must follow the footage rather than
+    stay frozen at their old timeline positions (which would leave them over
+    the wrong scene)."""
     if plan.get("schema_version") != "edit-plan.v1":
         raise SyncError("plan schema_version must be edit-plan.v1")
     if bridge.get("schema_version") != "opentake-bridge.v1":
@@ -1091,9 +1105,15 @@ def timeline_to_candidate_plan(
 
     candidate = deepcopy(plan)
     candidate_videos = [t for t in candidate["tracks"] if t.get("kind") == "video"]
-    candidate_videos[0]["events"] = rebuilt_video
-    if len(candidate_videos) == 2:
-        candidate_videos[1]["events"] = rebuilt_broll
+    primary_video = next(
+        t for t in candidate_videos if t.get("role") in (None, "primary")
+    )
+    primary_video["events"] = rebuilt_video
+    broll_track = next(
+        (t for t in candidate_videos if t.get("role") == "broll"), None
+    )
+    if broll_track is not None:
+        broll_track["events"] = rebuilt_broll
     elif rebuilt_broll:
         candidate["tracks"].append(
             {
@@ -1103,10 +1123,19 @@ def timeline_to_candidate_plan(
                 "events": rebuilt_broll,
             }
         )
+    # Role-based, not positional: a music track may sit among the audio tracks.
+    # It is not touched by sync-back (OpenTake never carried it), so we must not
+    # overwrite it with the voiceover or duplicate the voiceover past it.
     candidate_audios = [t for t in candidate["tracks"] if t.get("kind") == "audio"]
-    candidate_audios[0]["events"] = rebuilt_audio
-    if len(candidate_audios) == 2:
-        candidate_audios[1]["events"] = rebuilt_vo
+    primary_audio = next(
+        t for t in candidate_audios if t.get("role") in (None, "primary")
+    )
+    primary_audio["events"] = rebuilt_audio
+    vo_track = next(
+        (t for t in candidate_audios if t.get("role") == "voiceover"), None
+    )
+    if vo_track is not None:
+        vo_track["events"] = rebuilt_vo
     elif rebuilt_vo:
         candidate["tracks"].append(
             {
@@ -1121,6 +1150,17 @@ def timeline_to_candidate_plan(
     # after the last A-roll clip must not become black/silent seconds
     # (cross-review 4). totalFrames stays a bound check via _normalize_clip.
     candidate["project"]["duration_seconds"] = _seconds(primary_end, fps)
+    # Captions follow the (possibly rearranged) footage: regenerate them from
+    # ASR through the rebuilt geometry so they never sit over the wrong scene.
+    caption_track = next(
+        (t for t in candidate["tracks"] if t.get("kind") == "caption"), None
+    )
+    if caption_track is not None and speech_words is not None:
+        from .planning import _caption_events_from_speech
+
+        caption_track["events"] = _caption_events_from_speech(
+            rebuilt_video, speech_words
+        )
     # derived style grammar follows the mutation (stale numbers lie)
     from .planning import refresh_style_application
 

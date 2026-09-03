@@ -855,6 +855,8 @@ def style_targets(template: dict) -> dict:
         "broll_ratio": grammar.get("broll_ratio"),
         "median_shot_seconds": grammar.get("median_shot_seconds"),
         "cuts_per_minute": grammar.get("cuts_per_minute"),
+        # measured beat grid — the music recommendation binds to it
+        "bpm_estimate": grammar.get("bpm_estimate"),
     }
     return {
         "style_id": template.get("style_id"),

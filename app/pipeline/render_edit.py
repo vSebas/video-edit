@@ -47,27 +47,42 @@ def caption_events(plan):
 
 
 def music_bed_event(plan):
+    # A renderable bed needs the TOP-LEVEL asset_id the renderer indexes with
+    # (assets[event["asset_id"]]); a bed carrying only the nested bed.asset_id
+    # would crash the render, so it is not treated as renderable here.
     for t in plan["tracks"]:
         if t.get("kind") == "audio" and t.get("role") == "music":
             for e in t.get("events", []):
                 m = e.get("music") or {}
-                if m.get("mode") == "bed" and (m.get("bed") or {}).get("asset_id"):
+                if m.get("mode") == "bed" and e.get("asset_id"):
                     return e
     return None
 
 
 def srt_timestamp(seconds: float) -> str:
-    seconds = max(0.0, seconds)
-    h = int(seconds // 3600); m = int((seconds % 3600) // 60)
-    s = int(seconds % 60); ms = int(round((seconds - int(seconds)) * 1000))
+    # Round to whole milliseconds FIRST, then decompose — otherwise 59.9996
+    # formats as the invalid "00:00:59,1000" (the ms field must stay < 1000).
+    total_ms = max(0, int(round(seconds * 1000)))
+    ms = total_ms % 1000
+    total_s = total_ms // 1000
+    s = total_s % 60
+    m = (total_s // 60) % 60
+    h = total_s // 3600
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+def _srt_text(value: str) -> str:
+    # A cue's text must not contain a blank line (it terminates the cue) or a
+    # bare "-->" line (it looks like a timing line). Collapse newlines to
+    # spaces so caption text can never inject extra/malformed cues.
+    return " ".join(str(value or "").split())
 
 
 def write_caption_srt(events, path) -> bool:
     lines = []
     n = 0
     for e in sorted(events, key=lambda x: x["timeline_start_seconds"]):
-        text = str(e.get("text") or "").strip()
+        text = _srt_text(e.get("text"))
         if not text:
             continue
         n += 1
@@ -84,9 +99,11 @@ def write_caption_srt(events, path) -> bool:
 
 
 def voiceover_events(plan):
-    matches = [item for item in plan["tracks"] if item["kind"] == "audio"]
-    if len(matches) == 2 and matches[1].get("role") == "voiceover":
-        return matches[1]["events"]
+    # Role-based: a music track may now sit among the audio tracks, so the
+    # voiceover is no longer guaranteed to be the second audio track.
+    for item in plan["tracks"]:
+        if item["kind"] == "audio" and item.get("role") == "voiceover":
+            return item["events"]
     return []
 
 
@@ -383,8 +400,12 @@ def main() -> None:
         bed = (music_event.get("music") or {}).get("bed") or {}
         gain = bed.get("gain_db", -14)
         duck = bed.get("duck_db", -12)
+        # Duck only over ACTUAL speech, not the whole timeline. The primary
+        # audio clips normally span the entire cut, so ducking on their
+        # geometry would suppress the bed everywhere (bed + duck at all times).
+        # Caption events are the ASR-derived spoken intervals; add voiceover.
         speech_windows = []
-        for e in audio_events:
+        for e in caption_track:
             speech_windows.append(
                 (e["timeline_start_seconds"],
                  e["timeline_start_seconds"] + e["duration_seconds"])
@@ -394,8 +415,11 @@ def main() -> None:
                 (e["timeline_start_seconds"],
                  e["timeline_start_seconds"] + e["duration_seconds"])
             )
+        # Small pad so the duck opens just before a word and closes just after.
+        pad = 0.15
         enable = "+".join(
-            f"between(t\\,{s0}\\,{e0})" for s0, e0 in speech_windows
+            f"between(t\\,{round(max(0.0, s0 - pad), 3)}\\,{round(e0 + pad, 3)})"
+            for s0, e0 in speech_windows
         ) or "0"
         filters.append(
             f"[{music_input_index}:a:0]"

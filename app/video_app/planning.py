@@ -978,7 +978,16 @@ def build_plan(
         }
 
     caption_events = _caption_events_from_speech(video_events, speech_words)
-    music_events = [_music_event(music, timeline)] if music else []
+    music_events = []
+    if music:
+        bed_asset_id = (music.get("bed") or {}).get("asset_id")
+        bed_asset = next(
+            (a for a in project.get("inventory", {}).get("assets", [])
+             if a["asset_id"] == bed_asset_id),
+            None,
+        )
+        bed_duration = float(bed_asset["duration_seconds"]) if bed_asset else None
+        music_events = [_music_event(music, timeline, bed_duration)]
     plan = {
         "schema_version": "edit-plan.v1",
         "generated_at": utc_now(),
@@ -1024,22 +1033,42 @@ def _caption_events_from_speech(
     other plan event."""
     if not speech_words:
         return []
-    events: list[dict] = []
-    index = 0
+    # Gap (in seconds) that ends a caption line: a pause this long means the
+    # words on either side belong to separate cues, so they must not share one
+    # caption stretched across the silence.
+    SILENCE_GAP = 0.8
+    raw: list[tuple[float, float, str]] = []
     for clip in video_events:
         words = speech_words.get(clip["asset_id"]) or []
         offset = clip["timeline_start_seconds"] - clip["source_start_seconds"]
-        src_end = clip["source_start_seconds"] + clip["duration_seconds"]
+        clip_start = clip["timeline_start_seconds"]
+        clip_end = clip_start + clip["duration_seconds"]
+        src_start = clip["source_start_seconds"]
+        src_end = src_start + clip["duration_seconds"]
         line: list[str] = []
         line_start = None
         line_end = None
+
+        def flush() -> None:
+            nonlocal line, line_start, line_end
+            if line and line_start is not None:
+                raw.append((
+                    max(clip_start, line_start + offset),
+                    min(clip_end, line_end + offset),
+                    " ".join(line),
+                ))
+            line, line_start, line_end = [], None, None
+
         for word in sorted(words, key=lambda w: w["start_seconds"]):
             ws, we = word["start_seconds"], word["end_seconds"]
-            if we <= clip["source_start_seconds"] or ws >= src_end:
+            if we <= src_start or ws >= src_end:
                 continue
             text = str(word.get("word") or word.get("text") or "").strip()
             if not text:
                 continue
+            # A long pause since the previous word ends the current line.
+            if line_end is not None and ws - line_end >= SILENCE_GAP:
+                flush()
             if line_start is None:
                 line_start = ws
             line.append(text)
@@ -1047,28 +1076,30 @@ def _caption_events_from_speech(
             long_enough = (line_end - line_start) >= 3.5 or len(line) >= 7
             ends_sentence = text.endswith((".", "?", "!", "…"))
             if long_enough or ends_sentence:
-                index += 1
-                events.append(_caption_event(
-                    index, " ".join(line),
-                    max(clip["timeline_start_seconds"], line_start + offset),
-                    min(clip["timeline_start_seconds"] + clip["duration_seconds"],
-                        line_end + offset),
-                ))
-                line, line_start, line_end = [], None, None
-        if line and line_start is not None:
-            index += 1
-            events.append(_caption_event(
-                index, " ".join(line),
-                max(clip["timeline_start_seconds"], line_start + offset),
-                min(clip["timeline_start_seconds"] + clip["duration_seconds"],
-                    line_end + offset),
-            ))
+                flush()
+        flush()
+
+    # Bump each cue to a legible minimum, but never past the next cue's start or
+    # the project tail — re-clamping after the minimum, which a raw max() skips.
+    raw.sort(key=lambda c: c[0])
+    events: list[dict] = []
+    for i, (start, end, text) in enumerate(raw):
+        next_start = raw[i + 1][0] if i + 1 < len(raw) else None
+        events.append(_caption_event(i + 1, text, start, end, next_start))
     return events
 
 
-def _caption_event(index: int, text: str, start: float, end: float) -> dict:
-    start = round(max(0.0, start), 3)
-    end = round(max(start + 0.3, end), 3)
+def _caption_event(
+    index: int, text: str, start: float, end: float,
+    next_start: float | None = None,
+) -> dict:
+    start = max(0.0, start)
+    # Legible minimum, but never overrunning the next cue's start.
+    end = max(start + 0.3, end)
+    if next_start is not None and end > next_start:
+        end = max(start + 0.05, next_start)
+    start = round(start, 3)
+    end = round(end, 3)
     return {
         "event_id": f"cap-{index:03d}",
         "asset_id": None,
@@ -1085,20 +1116,47 @@ def _caption_event(index: int, text: str, start: float, end: float) -> dict:
     }
 
 
-def _music_event(music: dict, timeline: float) -> dict:
+def _current_music(plan: dict) -> dict | None:
+    """The plan's current music decision (the bed/recommendation block), or
+    None when music was explicitly removed. Used to carry the user's choice
+    across a cut revision instead of reverting to the default recommendation."""
+    for track in plan.get("tracks", []):
+        if track.get("kind") == "audio" and track.get("role") == "music":
+            events = track.get("events") or []
+            if events and events[0].get("music"):
+                return events[0]["music"]
+            return None
+    return None
+
+
+def _music_event(music: dict, timeline: float, asset_duration: float | None = None) -> dict:
+    is_bed = music.get("mode") == "bed"
+    bed = music.get("bed") or {}
+    source_start = 0.0 if is_bed else None
+    source_end = None
+    span = round(timeline, 3)
+    if is_bed:
+        loop = bed.get("loop", True)
+        if loop:
+            # loop fills the cut; the source range is the asset itself
+            source_end = round(asset_duration, 3) if asset_duration else span
+        else:
+            # a one-shot bed occupies only min(asset, cut)
+            span = round(min(timeline, asset_duration), 3) if asset_duration else span
+            source_end = span
     return {
         "event_id": "mus-01",
-        "asset_id": (music.get("bed") or {}).get("asset_id"),
-        "source_start_seconds": 0.0 if music.get("mode") == "bed" else None,
-        "source_end_seconds": round(timeline, 3) if music.get("mode") == "bed" else None,
+        "asset_id": bed.get("asset_id") if is_bed else None,
+        "source_start_seconds": source_start,
+        "source_end_seconds": source_end,
         "timeline_start_seconds": 0.0,
-        "duration_seconds": round(timeline, 3),
+        "duration_seconds": span,
         "playback_rate": 1.0,
         "intent": "music",
         "observed_content": None,
         "confidence": 1.0,
         "text": None,
-        "volume_db": (music.get("bed") or {}).get("gain_db"),
+        "volume_db": bed.get("gain_db") if is_bed else None,
         "music": music,
     }
 
@@ -1116,8 +1174,7 @@ def default_music_recommendation(
         targets = style_application.get("targets") or {}
         cpm = targets.get("cuts_per_minute")
         # measured beat grid, when the style carried one
-        grammar = (style_application.get("_grammar") or {})
-        bpm = grammar.get("bpm_estimate")
+        bpm = targets.get("bpm_estimate")
         if cpm is not None:
             energy = "high" if cpm >= 40 else "low" if cpm <= 15 else "medium"
     editorial = (concept.get("editorial") or {})
@@ -1704,6 +1761,10 @@ events. Every range must stay at least {MIN_EVENT_SECONDS}s long."""
             k: v for k, v in (plan.get("style_application") or {}).items()
             if k not in ("achieved_plan",)
         } or None,
+        # the user's music choice (a chosen bed, or an explicit removal) is
+        # NOT a story decision — it must survive a cut revision unchanged
+        # rather than silently reverting to the default recommendation.
+        music=_current_music(plan),
     )
     if plan.get("lineage_contract"):
         new_plan["lineage_contract"] = True
@@ -1769,8 +1830,10 @@ def validate_edit_plan(plan: dict, schema_path: Path, project: dict) -> None:
         raise PlanningError(
             "Audio tracks may only be 'primary', 'voiceover', or 'music'"
         )
-    if len(primary_audio) > 1:
-        raise PlanningError("At most one primary audio track is supported")
+    if audio_tracks and len(primary_audio) != 1:
+        # Voiceover/music are additions to a primary bed, never a substitute:
+        # a plan with audio must anchor on exactly one primary track.
+        raise PlanningError("A plan with audio needs exactly one primary audio track")
     if len(voiceover_tracks) > 1:
         raise PlanningError("At most one voiceover track beyond the primary audio")
     if len(music_tracks) > 1:
@@ -1798,6 +1861,33 @@ def validate_edit_plan(plan: dict, schema_path: Path, project: dict) -> None:
                 raise PlanningError(
                     f"Music event {event['event_id']} must use an audio or "
                     "video asset"
+                )
+            if (event["timeline_start_seconds"] + event["duration_seconds"]
+                    > duration + 0.05):
+                raise PlanningError(
+                    f"Music event {event['event_id']} extends past the plan "
+                    "duration"
+                )
+    # Caption and music tracks are not covered by the primary-only cursor
+    # scan above, so validate their self-overlap and plan-end here.
+    for track in plan["tracks"]:
+        if track["kind"] not in ("caption",) and track.get("role") != "music":
+            continue
+        ordered = sorted(
+            track["events"], key=lambda e: e["timeline_start_seconds"]
+        )
+        cursor = 0.0
+        for event in ordered:
+            if event["timeline_start_seconds"] < cursor - epsilon:
+                raise PlanningError(
+                    f"{track['kind']} track overlaps itself at "
+                    f"{event['timeline_start_seconds']:.3f}s"
+                )
+            cursor = event["timeline_start_seconds"] + event["duration_seconds"]
+            if cursor > duration + 0.05:
+                raise PlanningError(
+                    f"{track['kind']} event {event['event_id']} extends past "
+                    "the plan duration"
                 )
     for track in plan["tracks"]:
         if track.get("role") not in ("broll", "voiceover"):
@@ -1841,6 +1931,15 @@ def validate_edit_plan(plan: dict, schema_path: Path, project: dict) -> None:
             asset = assets.get(asset_id)
             if asset is None:
                 raise PlanningError(f"Plan references unknown asset: {asset_id}")
+            # A looping music bed intentionally covers more timeline than the
+            # source has (the renderer loops it with -stream_loop), so its
+            # source range is not required to fit inside the asset.
+            music = event.get("music") or {}
+            if (music.get("mode") == "bed"
+                    and (music.get("bed") or {}).get("loop", True)):
+                continue
+            if event.get("source_end_seconds") is None:
+                continue
             duration = float(asset.get("duration_seconds") or 0.0)
             if duration and event["source_end_seconds"] > duration + 0.05:
                 raise PlanningError(

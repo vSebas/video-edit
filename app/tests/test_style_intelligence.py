@@ -779,7 +779,7 @@ class TestCompilerBinding:
         contract = style_targets(template)
         assert contract["targets"] == {
             "broll_ratio": 0.65, "median_shot_seconds": 3.0,
-            "cuts_per_minute": 55.0}
+            "cuts_per_minute": 55.0, "bpm_estimate": 68.0}
         assert contract["owners"]["broll_ratio"] == "compiler"
         # only what the compiler actually binds may claim compiler ownership
         assert contract["owners"]["cuts_per_minute"] == "planner"

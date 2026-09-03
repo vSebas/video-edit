@@ -531,3 +531,54 @@ class TestMusicAndCaptions:
              "-f", "rawvideo", "-pix_fmt", "gray", "-"],
             check=True, capture_output=True).stdout
         assert max(band) > 150, "burned captions should brighten the lower band"
+
+
+class TestSrtAndCaptionMapping:
+    def _render_edit(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "render_edit_mod", str(PIPELINE / "render_edit.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_srt_timestamp_millisecond_carry(self) -> None:
+        m = self._render_edit()
+        # 59.9996s must not format as the invalid "...59,1000"; it carries.
+        assert m.srt_timestamp(59.9996) == "00:01:00,000"
+        assert m.srt_timestamp(0.0) == "00:00:00,000"
+        assert m.srt_timestamp(3661.5) == "01:01:01,500"
+
+    def test_srt_text_cannot_inject_cues(self) -> None:
+        m = self._render_edit()
+        # newlines/blank lines in caption text are collapsed so they can't
+        # terminate a cue or forge a timing line.
+        assert "\n" not in m._srt_text("línea uno\n\n00:00:01,000 --> x")
+
+    def test_captions_carry_real_asr_text(self) -> None:
+        from video_app.planning import _caption_events_from_speech
+        video_events = [{
+            "asset_id": "a1", "timeline_start_seconds": 0.0,
+            "source_start_seconds": 0.0, "duration_seconds": 5.0,
+        }]
+        speech = {"a1": [
+            {"start_seconds": 0.2, "end_seconds": 0.6, "word": "hola"},
+            {"start_seconds": 0.6, "end_seconds": 1.0, "word": "mundo."},
+        ]}
+        events = _caption_events_from_speech(video_events, speech)
+        assert events, "ASR words must produce caption events"
+        assert events[0]["text"] == "hola mundo."
+
+    def test_captions_split_on_silence(self) -> None:
+        from video_app.planning import _caption_events_from_speech
+        video_events = [{
+            "asset_id": "a1", "timeline_start_seconds": 0.0,
+            "source_start_seconds": 0.0, "duration_seconds": 12.0,
+        }]
+        # a 9s gap between the two words must not become one caption.
+        speech = {"a1": [
+            {"start_seconds": 0.5, "end_seconds": 0.9, "word": "antes"},
+            {"start_seconds": 10.0, "end_seconds": 10.4, "word": "después"},
+        ]}
+        events = _caption_events_from_speech(video_events, speech)
+        assert len(events) == 2

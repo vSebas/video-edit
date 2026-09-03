@@ -32,9 +32,11 @@ def track(plan, kind: str):
 
 
 def voiceover_track_events(plan):
-    matches = [item for item in plan["tracks"] if item["kind"] == "audio"]
-    if len(matches) == 2 and matches[1].get("role") == "voiceover":
-        return matches[1]["events"]
+    # Role-based, not positional: a music track can now sit among the audio
+    # tracks, so the voiceover is no longer guaranteed to be at index 1.
+    for item in plan["tracks"]:
+        if item["kind"] == "audio" and item.get("role") == "voiceover":
+            return item["events"]
     return []
 
 

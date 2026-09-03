@@ -26,8 +26,16 @@ class PlanOpError(RuntimeError):
 
 
 def _primary_tracks(plan: dict) -> tuple[dict, dict]:
-    video = next(t for t in plan["tracks"] if t["kind"] == "video")
-    audio = next(t for t in plan["tracks"] if t["kind"] == "audio")
+    video = next(
+        t for t in plan["tracks"]
+        if t["kind"] == "video" and t.get("role") in (None, "primary")
+    )
+    # Role-based: voiceover and music tracks also have kind 'audio', so pick
+    # the primary explicitly rather than "the first audio track".
+    audio = next(
+        t for t in plan["tracks"]
+        if t["kind"] == "audio" and t.get("role") in (None, "primary")
+    )
     return video, audio
 
 
@@ -90,9 +98,23 @@ def _op_number(op: dict, key: str) -> float:
     return value
 
 
+def _caption_events(plan: dict) -> list[dict]:
+    cap = next((t for t in plan["tracks"] if t.get("kind") == "caption"), None)
+    return cap["events"] if cap else []
+
+
+def _music_events(plan: dict) -> list[dict]:
+    mus = next(
+        (t for t in plan["tracks"]
+         if t.get("kind") == "audio" and t.get("role") == "music"),
+        None,
+    )
+    return mus["events"] if mus else []
+
+
 def _ripple(plan: dict, from_seconds: float, delta: float) -> None:
-    """Shift everything at/after a timeline position; overlays and titles
-    ride along so they stay glued to their content."""
+    """Shift everything at/after a timeline position; overlays, titles and
+    captions ride along so they stay glued to their content."""
     video, audio = _primary_tracks(plan)
     voiceover = _voiceover_track(plan)
     for events in (
@@ -104,7 +126,9 @@ def _ripple(plan: dict, from_seconds: float, delta: float) -> None:
                 event["timeline_start_seconds"] = _r(
                     event["timeline_start_seconds"] + delta
                 )
-    for event in _title_events(plan):
+    # Titles and captions are timeline-anchored cues, not clips: a caption left
+    # in place while its scene moves would end up over the wrong footage.
+    for event in _title_events(plan) + _caption_events(plan):
         if event["timeline_start_seconds"] >= from_seconds - 1e-6:
             event["timeline_start_seconds"] = _r(
                 max(0.0, event["timeline_start_seconds"] + delta)
@@ -112,6 +136,23 @@ def _ripple(plan: dict, from_seconds: float, delta: float) -> None:
     plan["project"]["duration_seconds"] = _r(
         plan["project"]["duration_seconds"] + delta
     )
+    # The music bed spans the whole cut (it starts at 0, so the shift above
+    # never touches it); re-fit it to the new duration. A looping bed keeps its
+    # source range (the asset segment it loops) and only its timeline span
+    # changes; a one-shot bed plays min(itself, the cut).
+    new_duration = plan["project"]["duration_seconds"]
+    for event in _music_events(plan):
+        if event["timeline_start_seconds"] > 1e-6:
+            continue
+        music = event.get("music") or {}
+        bed = music.get("bed") or {}
+        if music.get("mode") != "bed" or bed.get("loop", True):
+            event["duration_seconds"] = _r(new_duration)
+        else:
+            span = _r(min(event["duration_seconds"], new_duration))
+            event["duration_seconds"] = span
+            if event.get("source_end_seconds") is not None:
+                event["source_end_seconds"] = span
 
 
 def _check_overlays_fit(plan: dict) -> None:
@@ -336,9 +377,11 @@ def _apply_title(plan: dict, op: dict, assets: dict) -> str:
 
 
 def _voiceover_track(plan: dict, create: bool = False) -> dict | None:
-    audios = [t for t in plan["tracks"] if t["kind"] == "audio"]
-    if len(audios) == 2 and audios[1].get("role") == "voiceover":
-        return audios[1]
+    # Role-based: a music track can also live among the audio tracks, so the
+    # voiceover is not necessarily the second one.
+    for track in plan["tracks"]:
+        if track["kind"] == "audio" and track.get("role") == "voiceover":
+            return track
     if create:
         track = {"track_id": "a2", "kind": "audio", "role": "voiceover",
                  "events": []}
@@ -567,26 +610,53 @@ def _music_track(plan: dict, create: bool = False) -> dict | None:
     return None
 
 
+def _finite(value, default: float, name: str) -> float:
+    if value is None:
+        return default
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        raise PlanOpError(f"{name} must be a number")
+    if result != result or result in (float("inf"), float("-inf")):
+        raise PlanOpError(f"{name} must be a finite number")
+    return result
+
+
 def _apply_set_music_bed(plan: dict, op: dict, assets: dict) -> str:
     asset_id = op["asset_id"]
     asset = assets.get(asset_id)
     if asset is None or asset.get("media_type") not in ("audio", "video"):
         raise PlanOpError(f"{asset_id} is not a usable music source")
-    duration = plan["project"]["duration_seconds"]
-    gain = float(op.get("gain_db") if op.get("gain_db") is not None else -14)
-    duck = float(op.get("duck_db") if op.get("duck_db") is not None else -12)
+    # A silent video (B-roll with no audio stream) has nothing to mix — the
+    # renderer would reference a nonexistent :a:0 and fail.
+    if not asset.get("audio"):
+        raise PlanOpError(f"{asset.get('filename', asset_id)} has no audio to use as music")
+    duration = float(plan["project"]["duration_seconds"])
+    asset_duration = float(asset.get("duration_seconds") or 0.0)
+    gain = _finite(op.get("gain_db"), -14.0, "gain_db")
+    duck = _finite(op.get("duck_db"), -12.0, "duck_db")
     if not -40 <= gain <= 6 or not -40 <= duck <= 0:
         raise PlanOpError("gain_db must be -40..6 and duck_db -40..0")
+    loop = bool(op.get("loop", True))
+    # Looping fills the whole cut from a source of any length; a one-shot bed
+    # occupies only min(asset, cut) so its source range stays inside the asset
+    # and the plan validator accepts it.
+    if loop:
+        source_end = round(asset_duration, 3) if asset_duration else round(duration, 3)
+        span = round(duration, 3)
+    else:
+        span = round(min(duration, asset_duration or duration), 3)
+        source_end = span
     track = _music_track(plan, create=True)
     track["events"] = [{
         "event_id": "mus-01", "asset_id": asset_id,
-        "source_start_seconds": 0.0, "source_end_seconds": round(duration, 3),
-        "timeline_start_seconds": 0.0, "duration_seconds": round(duration, 3),
+        "source_start_seconds": 0.0, "source_end_seconds": source_end,
+        "timeline_start_seconds": 0.0, "duration_seconds": span,
         "playback_rate": 1.0, "intent": "music", "observed_content": None,
         "confidence": 1.0, "text": None, "volume_db": gain,
         "music": {"mode": "bed", "recommended": None,
                   "bed": {"asset_id": asset_id, "gain_db": gain,
-                          "duck_db": duck, "loop": bool(op.get("loop", True))}},
+                          "duck_db": duck, "loop": loop}},
     }]
     return f"Música de fondo puesta ({asset['filename']}, {gain:g}dB, ducking {duck:g}dB)"
 
@@ -612,6 +682,9 @@ def _apply_edit_caption(plan: dict, op: dict, assets: dict) -> str:
     if not 1 <= len(text) <= 200:
         raise PlanOpError("Caption text must be 1-200 characters")
     event["text"] = text
+    # Provenance: this text was typed by the user through the direct caption
+    # control, not authored by a model — it is trusted rendered language.
+    event["user_authored"] = True
     return f"Subtítulo {event['event_id']} ahora dice: «{text}»"
 
 
@@ -741,8 +814,6 @@ Respond with EXACTLY one JSON object, nothing else. One of:
 {"op":"set_title","event_id":"...","text":"...","font":"sans|handwritten|clean|display (optional)","size":"24-140 (optional)","position":"top|center|lower (optional)"}
 {"op":"set_music_bed","asset_id":"<an audio asset>","gain_db":<-40..6, opt>,"duck_db":<-40..0, opt>,"loop":<bool, opt>}
 {"op":"remove_music"}
-{"op":"edit_caption","event_id":"cap-...","text":"corrected caption text"}
-{"op":"remove_caption","event_id":"cap-..."}
 {"op":"add_voiceover","asset_id":"<an available voiceover audio asset>","timeline_start_seconds":<number>}
 {"op":"remove_voiceover","event_id":"vo-.."}
 {"op":"add_broll","asset_id":"<a footage asset>","timeline_start_seconds":<number>,"duration_seconds":<optional, default up to 4>,"source_start_seconds":<optional, default 0>}
@@ -782,4 +853,12 @@ def instruction_to_op(
     op = parse_json_content(response["content"])
     if not isinstance(op, dict) or not isinstance(op.get("op"), str):
         raise PlanOpError(f"Model returned no operation: {json.dumps(op)[:200]}")
+    # Caption text is a rendered claim: it may only be authored by the user
+    # through the direct caption controls, never by the instruction model.
+    # If the model emits one anyway, refuse rather than burn unverified text.
+    if op.get("op") in ("edit_caption", "remove_caption"):
+        return {
+            "op": "reject",
+            "reason": "los subtítulos se editan directamente en cada línea",
+        }
     return op

@@ -662,7 +662,8 @@ class TestMusicAndCaptionOps:
 
     def test_set_and_remove_music_bed(self) -> None:
         inv = {"assets": [{"asset_id": "song", "filename": "song.mp3",
-                           "media_type": "audio", "duration_seconds": 90}]}
+                           "media_type": "audio", "duration_seconds": 90,
+                           "audio": True}]}
         candidate, summary = apply_op(
             _plan(), {"op": "set_music_bed", "asset_id": "song",
                       "gain_db": -12, "duck_db": -10}, inv)
@@ -692,3 +693,78 @@ class TestMusicAndCaptionOps:
                                           "event_id": "cap-001"}, INVENTORY)
         cap2 = next(t for t in removed["tracks"] if t["kind"] == "caption")
         assert cap2["events"] == []
+
+    def test_looping_short_song_is_accepted(self) -> None:
+        # A 4s song on a 10s cut with loop:true must NOT be rejected for being
+        # shorter than the timeline — the renderer loops it (-stream_loop).
+        inv = {"assets": [{"asset_id": "loopsong", "filename": "loop.mp3",
+                           "media_type": "audio", "duration_seconds": 4.0,
+                           "audio": True}]}
+        candidate, _ = apply_op(
+            _plan(), {"op": "set_music_bed", "asset_id": "loopsong",
+                      "loop": True}, inv)
+        # bed source range exceeds asset duration on purpose; validation
+        # exempts looping beds elsewhere, so this must not raise.
+        ev = _music_events_of(candidate)[0]
+        assert ev["duration_seconds"] == 10.0
+        assert ev["music"]["bed"]["loop"] is True
+
+    def test_silent_video_is_rejected_as_music(self) -> None:
+        inv = {"assets": [{"asset_id": "silent", "filename": "broll.mp4",
+                           "media_type": "video", "duration_seconds": 20.0,
+                           "audio": False}]}
+        with pytest.raises(PlanOpError, match="no audio"):
+            apply_op(_plan(), {"op": "set_music_bed", "asset_id": "silent"}, inv)
+
+    def test_non_numeric_gain_is_rejected(self) -> None:
+        inv = {"assets": [{"asset_id": "song", "filename": "s.mp3",
+                           "media_type": "audio", "duration_seconds": 90,
+                           "audio": True}]}
+        with pytest.raises(PlanOpError, match="number"):
+            apply_op(_plan(), {"op": "set_music_bed", "asset_id": "song",
+                               "gain_db": "loud"}, inv)
+
+    def test_delete_ripples_captions(self) -> None:
+        plan = _plan()
+        plan["tracks"].append({
+            "track_id": "cap1", "kind": "caption", "events": [
+                {"event_id": "cap-001", "asset_id": None,
+                 "source_start_seconds": None, "source_end_seconds": None,
+                 "timeline_start_seconds": 8.0, "duration_seconds": 1.5,
+                 "playback_rate": 1.0, "intent": "caption",
+                 "observed_content": None, "confidence": 1.0,
+                 "text": "última escena", "volume_db": None},
+            ]})
+        # Delete v01 (0-3s): the 4s clip length ripples everything after by -3s.
+        candidate, _ = apply_op(
+            plan, {"op": "delete_event", "event_id": "v01"}, INVENTORY)
+        cap = next(t for t in candidate["tracks"] if t["kind"] == "caption")
+        assert cap["events"][0]["timeline_start_seconds"] == 5.0
+
+    def test_caption_edit_is_marked_user_authored(self) -> None:
+        plan = self._plan_with_captions_and_music_source()
+        candidate, _ = apply_op(
+            plan, {"op": "edit_caption", "event_id": "cap-001",
+                   "text": "texto corregido"}, INVENTORY)
+        cap = next(t for t in candidate["tracks"] if t["kind"] == "caption")
+        assert cap["events"][0]["user_authored"] is True
+
+
+def _music_events_of(plan):
+    mus = next(t for t in plan["tracks"]
+               if t.get("kind") == "audio" and t.get("role") == "music")
+    return mus["events"]
+
+
+class TestCaptionOpsNotModelAuthored:
+    def test_model_cannot_author_caption_text(self) -> None:
+        # Even if the instruction model emits edit_caption, it is refused —
+        # caption text is a rendered claim, authored only by the user.
+        class _StubClient:
+            def chat(self, *a, **k):
+                return {"content": json.dumps(
+                    {"op": "edit_caption", "event_id": "cap-001",
+                     "text": "Ganamos el premio"})}
+        op = instruction_to_op(_StubClient(), _plan(),
+                               "corrige el subtítulo", INVENTORY)
+        assert op["op"] == "reject"
