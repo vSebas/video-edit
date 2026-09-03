@@ -63,13 +63,17 @@ def _video_tracks(readback: dict) -> list[dict]:
     )
 
 
-def map_media(client: OpenTakeMcp, inventory: dict, needed: list[str]) -> dict[str, str]:
+def map_media(
+    client: OpenTakeMcp, inventory: dict, needed: list[str],
+    media_root: str | None = None,
+) -> dict[str, str]:
     """asset_id → OpenTake mediaRef by filename stem for the WHOLE inventory
     (best effort), so sync can attribute B-roll the user adds in the GUI
-    from any known asset. Assets the plan needs must resolve or this raises
-    with the user action (the GUI picker — never an agent-side import);
-    ambiguous stems are skipped unless needed, keeping the bridge's
-    ref→asset reverse map unambiguous."""
+    from any known asset. Assets the plan needs that are absent from the
+    library are IMPORTED automatically (per-file import_media, synchronous
+    for local paths) when media_root is known; only unresolvable assets
+    raise with the manual action. Ambiguous stems are skipped unless
+    needed, keeping the bridge's ref→asset reverse map unambiguous."""
     assets = {a["asset_id"]: a for a in inventory["assets"]}
     entries = client.tool("get_media").get("entries", [])
     seen: dict[str, int] = {}
@@ -95,6 +99,27 @@ def map_media(client: OpenTakeMcp, inventory: dict, needed: list[str]) -> dict[s
                 + (" (ambiguous duplicate name — rename one copy)"
                    if ambiguous else "")
             )
+    if missing and media_root is not None:
+        # auto-import exactly the files the plan needs — per-file (not the
+        # whole folder) so converted-JPG/HEIC stem twins cannot create
+        # ambiguity — then re-map once
+        imported_any = False
+        for asset_id in needed:
+            if asset_id in ref_for:
+                continue
+            asset = assets.get(asset_id)
+            if asset is None:
+                continue
+            source = str(Path(media_root) / asset["source_path"])
+            try:
+                client.tool("import_media", {"source": {"path": source}})
+                imported_any = True
+            except OpenTakeMcpError as exc:
+                raise BridgeError(
+                    f"OpenTake no pudo importar {asset['filename']}: {exc}"
+                ) from exc
+        if imported_any:
+            return map_media(client, inventory, needed, media_root=None)
     if missing:
         raise BridgeError(
             "Import these files into OpenTake's media library first "
@@ -475,6 +500,7 @@ def ensure_project(client: OpenTakeMcp, name: str) -> str:
 def place_plan(
     plan: dict, inventory: dict, project_id: str,
     client: OpenTakeMcp | None = None,
+    media_root: str | None = None,
 ) -> tuple[dict, dict]:
     """Open (or create) this vlog's OpenTake project, clear its timeline,
     and place the plan; returns (summary, bridge). Raises BridgeError with
@@ -522,7 +548,7 @@ def place_plan(
     # pure plan preflights are done — the FIRST OpenTake interaction is
     # opening (or creating) THIS vlog's own project bundle
     project_action = ensure_project(client, project_id)
-    ref_for = map_media(client, inventory, needed)
+    ref_for = map_media(client, inventory, needed, media_root=media_root)
 
     try:
         before = client.get_timeline()

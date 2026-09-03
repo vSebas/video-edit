@@ -1352,7 +1352,10 @@ class ProjectService:
         if not self._opentake_place_lock.acquire(blocking=False):
             raise ProjectError("A placement is already running — wait for it")
         try:
-            summary, bridge = place_plan(plan, inventory, project_id)
+            _pp, _ip, media_root = self._plan_sources(project_id)
+            summary, bridge = place_plan(
+                plan, inventory, project_id, media_root=str(media_root)
+            )
         except BridgeError as exc:
             raise ProjectError(str(exc)) from exc
         finally:

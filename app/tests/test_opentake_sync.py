@@ -805,6 +805,12 @@ class FakeOpenTake:
         if name == "save_project":
             self.saved = True
             return {"savedTo": f"/fake/{getattr(self, 'opened_project', 'x')}.opentake"}
+        if name == "import_media":
+            from pathlib import Path as _P
+            stem = _P(arguments["source"]["path"]).stem
+            self.media[stem] = {"id": f"media-{stem}"}
+            self.imported = getattr(self, "imported", []) + [stem]
+            return {"assetId": f"media-{stem}"}
         if name == "get_media":
             return {"entries": [
                 {"name": stem, "id": info["id"]}
@@ -1314,3 +1320,32 @@ class TestEnsureProject:
         import pytest as _pytest
         with _pytest.raises(BridgeError, match="abrir el proyecto"):
             ensure_project(fake, "mi-vlog")
+
+
+class TestAutoImport:
+    def test_missing_needed_media_is_imported_per_file(self) -> None:
+        from video_app.opentake_bridge import map_media
+
+        fake = FakeOpenTake({})  # empty library
+        inventory = {"assets": [
+            {"asset_id": "clip_0", "filename": "IMG_2343.MOV",
+             "source_path": "IMG_2343.MOV"},
+            {"asset_id": "clip_1", "filename": "IMG_2345.MOV",
+             "source_path": "IMG_2345.MOV"},
+        ]}
+        refs = map_media(fake, inventory, ["clip_0", "clip_1"],
+                         media_root="/footage/x")
+        assert set(refs) == {"clip_0", "clip_1"}
+        assert sorted(fake.imported) == ["IMG_2343", "IMG_2345"]
+
+    def test_without_media_root_the_manual_message_remains(self) -> None:
+        import pytest as _pytest
+        from video_app.opentake_bridge import BridgeError, map_media
+
+        fake = FakeOpenTake({})
+        inventory = {"assets": [
+            {"asset_id": "clip_0", "filename": "IMG_2343.MOV",
+             "source_path": "IMG_2343.MOV"},
+        ]}
+        with _pytest.raises(BridgeError, match="Import these files"):
+            map_media(fake, inventory, ["clip_0"])
