@@ -1824,50 +1824,40 @@ def _carry_user_captions(old_plan: dict, new_plan: dict) -> None:
     new_caps = _captions(new_plan)
     if not old_caps or not new_caps:
         return
-    def _iou(a: dict | None, b: dict | None) -> float:
-        # Proof of identity is the SOURCE the cue transcribes, not its words or
-        # timeline slot: same asset AND a source interval that substantially
-        # coincides. Intersection-over-union (not coverage-of-smaller, which
-        # scores a containment 1.0) so a cue that was SPLIT into halves matches
-        # neither half — only a cue whose extent barely changed scores high.
-        # Missing fields (schema allows a partial object) → no match, never a
-        # KeyError.
+    # Carrying REPLACES the whole cue text, so the regenerated cue must be the
+    # SAME line — proven by an envelope that matches within rounding tolerance,
+    # not merely one that overlaps. Deterministic ASR of unchanged footage
+    # reproduces the identical (asset, source_start, source_end) envelope, so
+    # equality is exactly the right test: any real content change (a trimmed or
+    # newly-exposed word) moves an endpoint well beyond TOL and is refused.
+    TOL = 0.05
+
+    def _same_envelope(a: dict | None, b: dict | None) -> bool:
+        # Missing fields (schema allows a null object) → no match, never KeyError.
         if not a or not b or a.get("asset_id") != b.get("asset_id"):
-            return 0.0
+            return False
         a0, a1 = a.get("source_start_seconds"), a.get("source_end_seconds")
         b0, b1 = b.get("source_start_seconds"), b.get("source_end_seconds")
         if None in (a0, a1, b0, b1):
-            return 0.0
-        inter = min(a1, b1) - max(a0, b0)
-        if inter <= 0:
-            return 0.0
-        union = max(a1, b1) - min(a0, b0)
-        return inter / union if union > 0 else 0.0
+            return False
+        return abs(a0 - b0) <= TOL and abs(a1 - b1) <= TOL
 
     edited = [c for c in old_caps if c.get("user_authored")]
     for cue in edited:
         src = cue.get("caption_source")
         if not src:
             continue
-        # Score every regenerated cue; carry only when ONE candidate clearly
-        # coincides. Fail closed on ambiguity: if a second candidate is nearly
-        # as good (a re-segmentation into similar pieces), we cannot tell which
-        # is the same line, so we refuse rather than guess.
-        scored = sorted(
-            ((_iou(src, c.get("caption_source")), c) for c in new_caps
-             if not c.get("user_authored")),
-            key=lambda s: s[0], reverse=True,
-        )
-        # Carrying REPLACES the whole cue text, so the envelope must be NEARLY
-        # IDENTICAL, not merely substantial: deterministic ASR of the same
-        # footage reproduces the same envelope (IoU ~1.0), whereas a trimmed or
-        # re-segmented cue ([10,13] -> [11,13], IoU 0.67) is a materially
-        # different line and must not inherit the old correction.
-        if not scored or scored[0][0] < 0.9:
+        # Carry only when EXACTLY ONE regenerated cue has the same envelope. Zero
+        # → the footage changed; more than one → ambiguous. Fail closed either
+        # way rather than paste trusted text onto an uncertain line.
+        matches = [
+            c for c in new_caps
+            if not c.get("user_authored")
+            and _same_envelope(src, c.get("caption_source"))
+        ]
+        if len(matches) != 1:
             continue
-        if len(scored) > 1 and scored[1][0] > scored[0][0] - 0.2:
-            continue  # ambiguous — two comparably-overlapping cues
-        best = scored[0][1]
+        best = matches[0]
         best["text"] = cue["text"]
         best["user_authored"] = True
         best["asr_text"] = cue.get("asr_text")
