@@ -1157,7 +1157,7 @@ def timeline_to_candidate_plan(
     # (cross-review 4). totalFrames stays a bound check via _normalize_clip.
     candidate["project"]["duration_seconds"] = _seconds(primary_end, fps)
     # Open/close fades must fit the NEW duration — a hand-edit that shortened the
-    # cut in OpenTake could otherwise leave a fade longer than a third of it.
+    # cut in OpenTake could otherwise leave a fade longer than half of it.
     if candidate.get("transitions"):
         from .planning import _scale_transitions
 
@@ -1166,6 +1166,12 @@ def timeline_to_candidate_plan(
             candidate["transitions"].get("outro_fade_seconds") or 0.0,
             candidate["project"]["duration_seconds"],
         )
+    # Per-cut dips must match the rearranged geometry — a hand-edit in OpenTake
+    # can open a gap or move a successor, so re-fit them exactly as a structural
+    # edit here does (a dip whose seam vanished becomes a plain cut).
+    from .plan_ops import _reconcile_dips
+
+    _reconcile_dips(candidate)
     # Captions follow the (possibly rearranged) footage: regenerate them from
     # ASR through the rebuilt geometry so they never sit over the wrong scene.
     caption_track = next(

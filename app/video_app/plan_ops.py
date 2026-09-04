@@ -14,6 +14,7 @@ does not map cleanly onto exactly one op.
 from __future__ import annotations
 
 import json
+import math
 from copy import deepcopy
 
 from .providers import parse_json_content
@@ -98,6 +99,13 @@ def _op_number(op: dict, key: str) -> float:
     return value
 
 
+def _floor_ms(value: float) -> float:
+    """Floor to the millisecond grid, so a duration clamped to a limit can never
+    round back UP past that limit (the renderer clamps again and would deliver
+    less than the plan claims)."""
+    return math.floor(max(0.0, float(value)) * 1000) / 1000
+
+
 def _reconcile_dips(plan: dict) -> None:
     """After a structural edit, make each per-cut dip match the new geometry: a
     dip survives only on a clip that still has a CONTIGUOUS successor, and its
@@ -123,9 +131,10 @@ def _reconcile_dips(plan: dict) -> None:
         def _span(e):
             return e["source_end_seconds"] - e["source_start_seconds"]
 
-        dur = min(float(t.get("duration_seconds") or 0.0), _span(ev), _span(nxt))
+        dur = _floor_ms(min(float(t.get("duration_seconds") or 0.0),
+                            _span(ev), _span(nxt)))
         ev["transition_out"] = (
-            {"type": t["type"], "duration_seconds": round(dur, 3)}
+            {"type": t["type"], "duration_seconds": dur}
             if dur > 0 else cut
         )
 
@@ -844,10 +853,10 @@ def _apply_set_transition(plan: dict, op: dict, assets: dict) -> str:
 
     # A dip is split across the two adjacent clips, so it cannot exceed the
     # shorter of their rendered lengths — store only what renders.
-    dur = min(dur, _span(event), _span(successor))
+    dur = _floor_ms(min(dur, _span(event), _span(successor)))
     if dur <= 0:
         raise PlanOpError("this scene is too short for a fade")
-    event["transition_out"] = {"type": kind, "duration_seconds": round(dur, 3)}
+    event["transition_out"] = {"type": kind, "duration_seconds": dur}
     colour = "negro" if kind == "fade_black" else "blanco"
     return f"Escena {event['event_id']}: fundido a {colour} ({dur:g}s)"
 
@@ -869,9 +878,10 @@ def _apply_set_fades(plan: dict, op: dict, assets: dict) -> str:
     # the compiler/revision/sync use — one policy, so the stored value renders.
     from .planning import _fade_cap
 
-    cap = _fade_cap(plan["project"]["duration_seconds"])
-    # Touch (clamp + round) ONLY the supplied side; an omitted side is carried
-    # over byte-identical, so it is never even re-rounded.
+    # Floor the cap to the ms grid so a supplied fade can never round back above
+    # half the cut. Touch ONLY the supplied side; an omitted side is carried over
+    # byte-identical.
+    cap = _floor_ms(_fade_cap(plan["project"]["duration_seconds"]))
     if op.get("intro_seconds") is not None:
         intro = round(min(intro, cap), 3)
     if op.get("outro_seconds") is not None:
