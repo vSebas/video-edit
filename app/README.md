@@ -91,13 +91,20 @@ proposal and editable exports:
      captioned preview; renders are cached per plan content.
    - **Music** ("recommend + bed", default recommend): the Publicar **🎵 Música**
      card is always present. **"Sugerir música"** (`POST /plan/music/suggest`)
-     asks the model to name a concrete, buscable track that fits the concept's
-     tone and the MEASURED pacing (BPM/energy), installed as a `recommended`
-     annotation to add natively when posting — no audio burned, no licensing.
-     `set_music_bed` instead burns a looped, speech-ducked bed for a
-     self-contained MP4; `set_music_recommendation` installs a recommendation
-     directly. A plan compiled before 2026-09-03 has no music track — the card's
-     "add music" state (Sugerir / Incorporar al MP4) upgrades it in place.
+     separates creative INTENT (mood/energy/tempo, from the concept and the
+     MEASURED style) from the platform CATALOG (`video_app/music.py`): a real
+     provider is queried first, otherwise the language model NAMES plausible
+     tracks as a fallback. The default real provider is the **official Instagram
+     Audio API** (`/ig_audio` — search, and trending when the query is omitted;
+     `video_app/music_providers.py`), enabled by setting `INSTAGRAM_ACCESS_TOKEN`
+     (IG Business/Creator account + Meta app with `instagram_basic` /
+     `instagram_content_publish`); unset, the model fallback is used. Suggestions
+     are **late-bound** — a `recommended` annotation carrying the platform audio
+     id + timing, added natively when posting, nothing burned — and the card
+     offers alternate candidates to switch between. `set_music_bed` instead burns
+     a looped, speech-ducked bed for a self-contained MP4. A plan compiled before
+     the music feature has no music track — the card's "add music" state upgrades
+     it in place.
    - **Transitions** (geometry-preserving): a light default open/close fade on
      every cut (`set_fades`), plus per-cut `fade_black`/`fade_white` dips
      (`set_transition`). True crossfade (`dissolve`) is deferred and refused

@@ -804,36 +804,55 @@ def _apply_remove_music(plan: dict, op: dict, assets: dict) -> str:
 
 
 def _apply_set_music_recommendation(plan: dict, op: dict, assets: dict) -> str:
-    """Install a recommended-mode music track (a track suggestion to add
-    natively when posting — no audio burned). The values are proposed by the
-    suggestion model; this applier validates and bounds them. Replaces any
-    existing music track so re-suggesting overwrites rather than stacking."""
+    """Install a recommended-mode music track (a track to add natively when
+    posting — no audio burned). Values are proposed by the discovery model or a
+    real platform provider; this applier validates and BOUNDS a whitelisted set
+    of fields, so nothing outside the vocabulary reaches the plan. Accepts either
+    a full `recommended` dict (from a normalized candidate) or the individual
+    name/vibe/bpm/energy fields. Replaces any existing music track (re-suggesting
+    overwrites, never stacks)."""
     from .planning import _music_event
+
+    src = op.get("recommended") if isinstance(op.get("recommended"), dict) else op
 
     def _text(value, limit):
         text = str(value).strip() if value is not None else ""
         return text[:limit] or None
 
-    name = _text(op.get("name"), 200)
-    vibe = _text(op.get("vibe"), 120)
-    bpm = op.get("bpm")
+    bpm = src.get("bpm")
     if bpm is not None:
         bpm = _finite(bpm, 0.0, "bpm")
         bpm = round(bpm) if 30 <= bpm <= 300 else None
-    energy = op.get("energy")
+    energy = src.get("energy")
     if energy not in ("low", "medium", "high"):
         energy = None
-    music = {
-        "mode": "recommended",
-        "recommended": {
-            "name": name, "vibe": vibe, "bpm": bpm,
-            "energy": energy, "apply_in_app": True,
-        },
-        "bed": None,
+    offset = src.get("source_offset_seconds")
+    if offset is not None:
+        offset = max(0.0, _finite(offset, 0.0, "source_offset_seconds"))
+    recommended = {
+        "name": _text(src.get("name"), 200),
+        "vibe": _text(src.get("vibe"), 120),
+        "bpm": bpm,
+        "energy": energy,
+        "apply_in_app": True,
+        "platform": _text(src.get("platform"), 32),
+        "provider": _text(src.get("provider"), 64),
+        "platform_audio_id": _text(src.get("platform_audio_id"), 128),
+        "artist": _text(src.get("artist"), 200),
+        "source_offset_seconds": offset,
+        "trend_state": _text(src.get("trend_state"), 16),
+        "late_bound": bool(src.get("platform_audio_id")),
     }
+    # drop keys that are None/False-empty to keep the block tidy (schema allows
+    # them absent); always keep apply_in_app.
+    recommended = {
+        k: v for k, v in recommended.items()
+        if v is not None or k == "apply_in_app"
+    }
+    music = {"mode": "recommended", "recommended": recommended, "bed": None}
     track = _music_track(plan, create=True)
     track["events"] = [_music_event(music, plan["project"]["duration_seconds"])]
-    shown = name or vibe or "según el ritmo del corte"
+    shown = recommended.get("name") or recommended.get("vibe") or "según el ritmo del corte"
     return f"Recomendación de música: {shown}"
 
 

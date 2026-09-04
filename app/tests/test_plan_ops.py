@@ -1131,8 +1131,8 @@ class TestMusicRecommendationOp:
             _plan(), {"op": "set_music_recommendation", "name": "x",
                       "bpm": 999, "energy": "supersonic"}, INVENTORY)
         rec = _music_events_of(candidate)[0]["music"]["recommended"]
-        assert rec["bpm"] is None                # out of [30,300] -> null
-        assert rec["energy"] is None             # not a valid enum -> null
+        assert rec.get("bpm") is None            # out of [30,300] -> dropped
+        assert rec.get("energy") is None         # not a valid enum -> dropped
 
     def test_recommendation_replaces_existing_music(self) -> None:
         c1, _ = apply_op(_plan(), {"op": "set_music_recommendation",

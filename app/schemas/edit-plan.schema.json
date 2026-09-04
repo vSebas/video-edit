@@ -542,6 +542,72 @@
                 },
                 "apply_in_app": {
                   "type": "boolean"
+                },
+                "platform": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 32
+                },
+                "provider": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 64
+                },
+                "platform_audio_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 128
+                },
+                "artist": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 200
+                },
+                "source_offset_seconds": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0
+                },
+                "beat_zero_seconds": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0
+                },
+                "beat_grid_seconds": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "maxItems": 512,
+                  "items": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                },
+                "trend_state": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 16
+                },
+                "late_bound": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
                 }
               }
             },

@@ -811,3 +811,11 @@ input[type="file"] {
 .step-times { color: var(--muted, #a89e8c); font-size: 13px; line-height: 1.7; }
 .step-times strong { color: var(--accent); font-variant-numeric: tabular-nums; }
 .stateless-hint { font-size: 12px; margin-top: 4px; }
+
+/* music discovery: platform/trend chips + alternate candidate buttons */
+.chip { display: inline-block; font-size: 0.72em; line-height: 1; padding: 3px 7px;
+  margin-left: 6px; border-radius: 999px; background: var(--accent-soft, rgba(255,255,255,0.08));
+  color: var(--muted, #bbb); vertical-align: middle; }
+.music-reco { margin: 8px 0; padding-left: 18px; }
+.music-reco li { margin: 3px 0; }
+.music-alts { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }

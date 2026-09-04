@@ -944,7 +944,27 @@ function musicRecommendation(plan) {
     vibe: reco.vibe || null,
     bpm: reco.bpm || null,
     energy: reco.energy || null,
+    platform: reco.platform || null,
+    artist: reco.artist || null,
+    platformAudioId: reco.platform_audio_id || null,
+    trendState: reco.trend_state || null,
   };
+}
+
+// Alternate candidates from the last suggestion, minus the one already applied.
+function musicAlternatesHtml(current) {
+  const alts = (state.musicCandidates || [])
+    .map((c, i) => ({ c, i }))
+    .filter(({ c }) => (c.name || '') !== (current.name || ''));
+  if (!alts.length) return '';
+  return `
+    <p class="muted" style="margin-top:.4rem">Otras opciones:</p>
+    <div class="music-alts">
+      ${alts.slice(0, 4).map(({ c, i }) => `
+        <button class="ghost compact" data-music-use="${i}">
+          ${escapeHtml(c.name || c.vibe || 'opción')}${c.bpm ? ` · ${Math.round(c.bpm)} BPM` : ''}
+        </button>`).join('')}
+    </div>`;
 }
 
 // Deterministic op → propose (no LLM) → apply → re-render. Mirrors the AI-edit
@@ -989,16 +1009,31 @@ async function setFades(intro, outro) {
 async function musicSuggest() {
   const projectId = state.activeProjectId;
   try {
-    setBusy('Buscando música', ['El modelo sugiere una pista acorde al corte'], 0);
-    await api(`/api/projects/${projectId}/plan/music/suggest`, { method: 'POST' });
+    setBusy('Buscando música', ['Buscando pistas acordes al corte'], 0);
+    const result = await api(`/api/projects/${projectId}/plan/music/suggest`, { method: 'POST' });
+    // remember the alternates so the user can switch without re-searching
+    state.musicCandidates = Array.isArray(result?.candidates) ? result.candidates : [];
+    state.musicSource = result?.source || '';
     state.busy = null;
-    notice('Sugerencia de música lista — mírala en Publicar.');
+    const via = state.musicSource === 'instagram' ? ' (Instagram)' : '';
+    notice(`Sugerencia de música lista${via} — mírala en Publicar.`);
     await loadProject(projectId);
   } catch (error) {
     state.busy = null;
     notice(error.message, true);
     await loadProject(projectId);
   }
+}
+
+// Switch to one of the alternate candidates returned by the last suggestion.
+async function musicUseCandidate(index) {
+  const candidate = (state.musicCandidates || [])[index];
+  if (!candidate) return;
+  try {
+    await applyPlanOp(
+      { op: 'set_music_recommendation', recommended: candidate },
+      'Cambiando la música');
+  } catch (error) { notice(error.message, true); }
 }
 
 async function musicRemove() {
@@ -1220,11 +1255,15 @@ function publishWorkspace(project) {
           <em>dentro de la app</em> — favorece el alcance y evita reclamos de
           copyright:</p>
           <ul class="music-reco">
-            ${music.name ? `<li><strong>Pista:</strong> ${escapeHtml(music.name)}</li>` : ''}
+            ${music.name ? `<li><strong>Pista:</strong> ${escapeHtml(music.name)}
+              ${music.platform === 'instagram' ? '<span class="chip">Instagram</span>' : ''}
+              ${music.trendState === 'rising' ? '<span class="chip">tendencia</span>' : ''}</li>` : ''}
             ${music.vibe ? `<li><strong>Vibra:</strong> ${escapeHtml(music.vibe)}</li>` : ''}
             ${music.bpm ? `<li><strong>Tempo:</strong> ~${Math.round(music.bpm)} BPM</li>` : ''}
             ${music.energy ? `<li><strong>Energía:</strong> ${escapeHtml(music.energy)}</li>` : ''}
+            ${music.platformAudioId ? '<li class="muted">Se agrega nativamente al publicar — no se incrusta audio.</li>' : ''}
           </ul>
+          ${musicAlternatesHtml(music)}
           <div class="review-actions">
             <button class="secondary compact" id="music-suggest">Otra sugerencia</button>
             <button class="secondary compact" id="music-set-bed">Incorporar al MP4…</button>
@@ -1526,6 +1565,9 @@ function wireHandlers() {
   $('#music-suggest')?.addEventListener('click', musicSuggest);
   $('#music-remove')?.addEventListener('click', musicRemove);
   $('#music-set-bed')?.addEventListener('click', musicSetBed);
+  document.querySelectorAll('[data-music-use]').forEach((btn) => {
+    btn.addEventListener('click', () => musicUseCandidate(Number(btn.dataset.musicUse)));
+  });
   document.querySelectorAll('[data-fades]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const [intro, outro] = btn.dataset.fades.split(',').map(Number);

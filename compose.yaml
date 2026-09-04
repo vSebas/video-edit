@@ -28,6 +28,11 @@ services:
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       OPENTAKE_MCP_TOKEN: "${OPENTAKE_MCP_TOKEN:-}"
       OPENTAKE_PROJECTS_DIR: /opentake-projects
+      # Music discovery via the official Instagram Audio API (optional; unset =
+      # the model fallback suggests tracks from its own knowledge).
+      INSTAGRAM_ACCESS_TOKEN: "${INSTAGRAM_ACCESS_TOKEN:-}"
+      INSTAGRAM_GRAPH_URL: "${INSTAGRAM_GRAPH_URL:-}"
+      INSTAGRAM_API_VERSION: "${INSTAGRAM_API_VERSION:-}"
       # Set this before exposing the port beyond localhost: without it the
       # API is open to anyone who can reach it (footage, deletion, paid calls).
       VIDEO_EDITING_TOKEN: "${VIDEO_EDITING_TOKEN:-}"
