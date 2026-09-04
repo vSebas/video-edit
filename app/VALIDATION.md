@@ -934,17 +934,22 @@ darkens t=0, mid-clips bright, dip to black at the seam). Suite: 277 passed.
 
 A read-only audit of the Python codebase against the current schema surfaced two
 real OpenTake sync-back gaps, both the SAME class fixed this session for
-captions/transitions but still open for other tracks — recorded here, not yet
-fixed:
+captions/transitions. **Both fixed the same day (2026-09-03); Codex verification
+deferred at the user's request:**
 
-- **Titles are not re-anchored on sync-back.** `timeline_to_candidate_plan`
-  rewrites video/audio/broll/voiceover/caption tracks and rescales transitions,
-  but leaves the title track frozen at its old timeline positions after an
-  OpenTake rearrange (captions were explicitly fixed for this; titles were not).
-- **The music bed / voiceover ducking go stale on a sync duration change.** The
-  in-app `_ripple` re-fits the bed span and would recompute ducking; sync-back
-  sets the new duration but does neither, so a synced cut can leave a looping bed
-  pinned to the old length.
+- **Titles are now clamped to the new duration on sync-back.**
+  `timeline_to_candidate_plan` had left the title track frozen at its old
+  positions after an OpenTake rearrange. It now calls `_clamp_titles_to_duration`
+  — a title past the shorter cut's end is dropped, one that overruns is clamped.
+  (The compiler produces only the hook title at timeline 0, whose position is
+  stable; the clamp bounds its duration and guards hypothetical mid-titles.)
+- **The music bed now follows a sync duration change.** `_refit_music_bed`
+  (extracted from the in-app `_ripple`, now shared) re-fits the looping bed's
+  timeline span / one-shot bed's source range to the new duration. Voiceover
+  ducking needed no change — it is not stored; the renderer derives it live from
+  the rebuilt voiceover events, so it follows automatically.
+
+Both are unit-tested (`TestSyncBackRefitHelpers`); full suite 282 passed.
 
 By-design silent drops (documented, not bugs): OpenTake placement and OTIO/XMEML
 export carry cut geometry only — transitions, music, and reframe stay

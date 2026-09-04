@@ -193,10 +193,16 @@ def _ripple(plan: dict, from_seconds: float, delta: float) -> None:
             plan["project"]["duration_seconds"],
         )
     _reconcile_dips(plan)
-    # The music bed spans the whole cut (it starts at 0, so the shift above
-    # never touches it); re-fit it to the new duration. A looping bed keeps its
-    # source range (the asset segment it loops) and only its timeline span
-    # changes; a one-shot bed plays min(itself, the cut).
+    _refit_music_bed(plan)
+    _clamp_titles_to_duration(plan)
+
+
+def _refit_music_bed(plan: dict) -> None:
+    """Re-fit the music bed to the plan's current duration. The bed spans the
+    whole cut and starts at 0, so a ripple/sync that changed the duration leaves
+    it stale otherwise: a looping bed (or a recommended-mode annotation) keeps
+    its source range and only its timeline span follows the new duration; a
+    one-shot bed plays min(itself, the cut)."""
     new_duration = plan["project"]["duration_seconds"]
     for event in _music_events(plan):
         if event["timeline_start_seconds"] > 1e-6:
@@ -210,6 +216,27 @@ def _ripple(plan: dict, from_seconds: float, delta: float) -> None:
             event["duration_seconds"] = span
             if event.get("source_end_seconds") is not None:
                 event["source_end_seconds"] = span
+
+
+def _clamp_titles_to_duration(plan: dict) -> None:
+    """Keep every title inside the plan's current duration. Titles are authored
+    on-screen cues with no clip anchor (the hook sits at timeline 0, which is
+    stable), so a shortened cut can't re-derive their position — but it must not
+    leave one overrunning the end. A title that now starts at/after the end is
+    dropped; one that partially overruns is clamped."""
+    new_duration = plan["project"]["duration_seconds"]
+    for track in plan["tracks"]:
+        if track.get("kind") != "title":
+            continue
+        kept = []
+        for event in track["events"]:
+            start = event["timeline_start_seconds"]
+            if start >= new_duration - 1e-6:
+                continue  # its moment is past the new end
+            end = min(start + event["duration_seconds"], new_duration)
+            event["duration_seconds"] = _r(end - start)
+            kept.append(event)
+        track["events"] = kept
 
 
 def _check_overlays_fit(plan: dict) -> None:

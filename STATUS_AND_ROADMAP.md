@@ -540,12 +540,14 @@ docs consolidation.
    docs/UI reconciliation after each acceptance run; writer seat stays
    deepseek-v4-pro (retained blind 2026-09-01); trending-audio matching
    arrives via the accepted style design, not separately.
-5. **OpenTake sync-back completeness (2026-09-03 deep check):** extend
-   `timeline_to_candidate_plan` to re-anchor the **title track** to the
-   rearranged geometry (captions already do this; titles do not) and to re-fit
-   the **music bed span / voiceover ducking** on a duration change (the in-app
-   `_ripple` already does this). Both are the same class this session fixed for
-   captions and transitions — small, well-scoped, not yet done.
+5. **OpenTake sync-back completeness (2026-09-03 deep check):** FIXED
+   2026-09-03 (Codex verification pending — deferred at the user's request).
+   `timeline_to_candidate_plan` now re-fits the **music bed span** and clamps
+   the **title track** to the new duration via shared helpers
+   (`_refit_music_bed`, `_clamp_titles_to_duration`) also used by the in-app
+   `_ripple`. Voiceover ducking needed no change — the renderer derives it live
+   from the rebuilt voiceover events, so it follows automatically. Unit-tested;
+   full suite 282.
 
 ### Trust system (afirmaciones) — fail-closed at the claim level
 

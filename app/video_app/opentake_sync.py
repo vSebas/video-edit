@@ -1166,12 +1166,21 @@ def timeline_to_candidate_plan(
             candidate["transitions"].get("outro_fade_seconds") or 0.0,
             candidate["project"]["duration_seconds"],
         )
-    # Per-cut dips must match the rearranged geometry — a hand-edit in OpenTake
-    # can open a gap or move a successor, so re-fit them exactly as a structural
-    # edit here does (a dip whose seam vanished becomes a plain cut).
-    from .plan_ops import _reconcile_dips
+    # Per-cut dips, the music bed span, and titles must all match the rearranged
+    # geometry and the new duration — re-fit them exactly as an in-app structural
+    # edit does (a dip whose seam vanished becomes a cut; a looping bed follows
+    # the new length; a title that would overrun the shorter cut is clamped or
+    # dropped). Voiceover ducking is not stored — the renderer derives it live
+    # from the rebuilt voiceover events — so it follows automatically.
+    from .plan_ops import (
+        _clamp_titles_to_duration,
+        _reconcile_dips,
+        _refit_music_bed,
+    )
 
     _reconcile_dips(candidate)
+    _refit_music_bed(candidate)
+    _clamp_titles_to_duration(candidate)
     # Captions follow the (possibly rearranged) footage: regenerate them from
     # ASR through the rebuilt geometry so they never sit over the wrong scene.
     caption_track = next(

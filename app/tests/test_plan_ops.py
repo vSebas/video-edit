@@ -1051,3 +1051,63 @@ class TestTransitionPrecision:
         _reconcile_dips(plan)
         v01 = plan["tracks"][0]["events"][0]
         assert v01["transition_out"]["type"] == "fade_black"  # NOT reset to cut
+
+
+class TestSyncBackRefitHelpers:
+    def _music_plan(self, mode, loop=True, dur=10.0, span=10.0):
+        bed = {"asset_id": "song", "gain_db": -14, "duck_db": -12, "loop": loop}
+        music = {"mode": mode, "recommended": None if mode == "bed" else {},
+                 "bed": bed if mode == "bed" else None}
+        plan = _plan()
+        plan["tracks"].append({
+            "track_id": "mus1", "kind": "audio", "role": "music", "events": [{
+                "event_id": "mus-01",
+                "asset_id": "song" if mode == "bed" else None,
+                "source_start_seconds": 0.0 if mode == "bed" else None,
+                "source_end_seconds": span if mode == "bed" else None,
+                "timeline_start_seconds": 0.0, "duration_seconds": dur,
+                "playback_rate": 1.0, "intent": "music", "observed_content": None,
+                "confidence": 1.0, "text": None, "volume_db": -14, "music": music}]})
+        return plan
+
+    def test_refit_looping_bed_follows_new_duration(self) -> None:
+        from video_app.plan_ops import _refit_music_bed
+        plan = self._music_plan("bed", loop=True, dur=10.0, span=4.0)
+        plan["project"]["duration_seconds"] = 6.0  # cut lengthened
+        _refit_music_bed(plan)
+        ev = _music_events_of(plan)[0]
+        assert ev["duration_seconds"] == 6.0        # timeline span follows
+        assert ev["source_end_seconds"] == 4.0      # loop source range unchanged
+
+    def test_refit_one_shot_bed_clamps_to_new_duration(self) -> None:
+        from video_app.plan_ops import _refit_music_bed
+        plan = self._music_plan("bed", loop=False, dur=8.0, span=8.0)
+        plan["project"]["duration_seconds"] = 5.0   # cut shortened
+        _refit_music_bed(plan)
+        ev = _music_events_of(plan)[0]
+        assert ev["duration_seconds"] == 5.0
+        assert ev["source_end_seconds"] == 5.0
+
+    def test_refit_recommended_annotation_follows_duration(self) -> None:
+        from video_app.plan_ops import _refit_music_bed
+        plan = self._music_plan("recommended", dur=10.0)
+        plan["project"]["duration_seconds"] = 7.0
+        _refit_music_bed(plan)
+        assert _music_events_of(plan)[0]["duration_seconds"] == 7.0
+
+    def test_clamp_hook_title_to_short_cut(self) -> None:
+        from video_app.plan_ops import _clamp_titles_to_duration
+        plan = _plan()
+        plan["tracks"][2]["events"][0]["timeline_start_seconds"] = 0.0
+        plan["tracks"][2]["events"][0]["duration_seconds"] = 2.5
+        plan["project"]["duration_seconds"] = 2.0  # cut shorter than the title
+        _clamp_titles_to_duration(plan)
+        assert plan["tracks"][2]["events"][0]["duration_seconds"] == 2.0
+
+    def test_title_past_new_end_is_dropped(self) -> None:
+        from video_app.plan_ops import _clamp_titles_to_duration
+        plan = _plan()
+        plan["tracks"][2]["events"][0]["timeline_start_seconds"] = 8.0
+        plan["project"]["duration_seconds"] = 6.0  # title starts past the end
+        _clamp_titles_to_duration(plan)
+        assert plan["tracks"][2]["events"] == []
