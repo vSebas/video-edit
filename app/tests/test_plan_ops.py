@@ -985,3 +985,16 @@ class TestFadePolicyConsistency:
             plan, {"op": "set_fades", "intro_seconds": 0.5}, INVENTORY)
         assert candidate["transitions"] == {
             "intro_fade_seconds": 0.5, "outro_fade_seconds": 2.0}
+
+
+class TestRippleRescalesFades:
+    def test_delete_reclamps_large_fade_to_new_duration(self) -> None:
+        plan = _plan()  # 10s
+        plan["transitions"] = {"intro_fade_seconds": 0.4, "outro_fade_seconds": 3.0}
+        # delete v02 (4s) -> duration 6s, cap 3.0; outro 3.0 still fits
+        c1, _ = apply_op(plan, {"op": "delete_event", "event_id": "v02"}, INVENTORY)
+        assert c1["transitions"]["outro_fade_seconds"] == 3.0
+        # delete another (v03, 3s) -> duration 3s, cap 1.5; outro clamps to 1.5
+        c2, _ = apply_op(c1, {"op": "delete_event", "event_id": "v03"}, INVENTORY)
+        assert c2["project"]["duration_seconds"] == 3.0
+        assert c2["transitions"]["outro_fade_seconds"] == 1.5

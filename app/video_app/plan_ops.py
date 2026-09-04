@@ -136,6 +136,16 @@ def _ripple(plan: dict, from_seconds: float, delta: float) -> None:
     plan["project"]["duration_seconds"] = _r(
         plan["project"]["duration_seconds"] + delta
     )
+    # Open/close fades must fit the NEW duration — a trim/delete that shortened
+    # the cut can't leave a fade longer than half of it.
+    if plan.get("transitions"):
+        from .planning import _scale_transitions
+
+        plan["transitions"] = _scale_transitions(
+            plan["transitions"].get("intro_fade_seconds") or 0.0,
+            plan["transitions"].get("outro_fade_seconds") or 0.0,
+            plan["project"]["duration_seconds"],
+        )
     # The music bed spans the whole cut (it starts at 0, so the shift above
     # never touches it); re-fit it to the new duration. A looping bed keeps its
     # source range (the asset segment it loops) and only its timeline span
@@ -827,11 +837,12 @@ def _apply_set_fades(plan: dict, op: dict, assets: dict) -> str:
     from .planning import _fade_cap
 
     cap = _fade_cap(plan["project"]["duration_seconds"])
+    # Touch (clamp + round) ONLY the supplied side; an omitted side is carried
+    # over byte-identical, so it is never even re-rounded.
     if op.get("intro_seconds") is not None:
-        intro = min(intro, cap)
+        intro = round(min(intro, cap), 3)
     if op.get("outro_seconds") is not None:
-        outro = min(outro, cap)
-    intro, outro = round(intro, 3), round(outro, 3)
+        outro = round(min(outro, cap), 3)
     plan["transitions"] = {
         "intro_fade_seconds": intro,
         "outro_fade_seconds": outro,
