@@ -1025,3 +1025,29 @@ class TestDipReconciliation:
         v02 = next(e for e in candidate["tracks"][0]["events"]
                    if e["event_id"] == "v02")
         assert v02["transition_out"]["type"] == "cut"  # no successor -> no dip
+
+
+class TestTransitionPrecision:
+    def test_floor_ms_keeps_grid_values(self) -> None:
+        from video_app.plan_ops import _floor_ms
+        assert _floor_ms(1.005) == 1.005      # already on grid, not under-floored
+        assert _floor_ms(0.5166665) == 0.516  # floored below half, never above
+        assert _floor_ms(0.4) == 0.4
+
+    def test_24fps_frame_contiguous_dip_survives(self) -> None:
+        from video_app.plan_ops import _reconcile_dips
+        # two frame-quantized 24fps clips whose float ends accumulate error > 1e-6
+        plan = {
+            "project": {"fps": 24, "duration_seconds": 0.625},
+            "tracks": [{"track_id": "v1", "kind": "video", "events": [
+                {"event_id": "v01", "asset_id": "a", "source_start_seconds": 0.0,
+                 "source_end_seconds": 0.208333, "timeline_start_seconds": 0.0,
+                 "duration_seconds": 0.208333,
+                 "transition_out": {"type": "fade_black", "duration_seconds": 0.1}},
+                {"event_id": "v02", "asset_id": "a", "source_start_seconds": 0.0,
+                 "source_end_seconds": 0.416667, "timeline_start_seconds": 0.208333,
+                 "duration_seconds": 0.416667, "transition_out": None}]},
+                {"track_id": "a1", "kind": "audio", "events": []}]}
+        _reconcile_dips(plan)
+        v01 = plan["tracks"][0]["events"][0]
+        assert v01["transition_out"]["type"] == "fade_black"  # NOT reset to cut

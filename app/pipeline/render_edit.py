@@ -3,6 +3,7 @@
 
 import argparse
 import json
+import math
 import os
 import subprocess
 from pathlib import Path
@@ -375,10 +376,13 @@ def main() -> None:
             return None, 0.0  # a gap sits between them — not a seam
         colour = "black" if kind == "fade_black" else "white"
         # clamp by the RENDERED length of both segments so the fade can never
-        # start before the clip or run past its decoded frames
+        # start before the clip or run past its decoded frames, then FLOOR each
+        # half to the ms grid so the two halves of an odd-ms dip (0.501 -> two
+        # 0.2505) can't round up to more than the stored duration.
         half = min(float(t.get("duration_seconds") or 0.0) / 2.0,
                    _rendered_len(prev_ev) / 2.0,
                    _rendered_len(this_ev) / 2.0)
+        half = math.floor(half * 1000 + 1e-6) / 1000
         return (colour, half) if half > 0 else (None, 0.0)
 
     for index, video in enumerate(video_events):

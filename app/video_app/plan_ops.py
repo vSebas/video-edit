@@ -102,8 +102,9 @@ def _op_number(op: dict, key: str) -> float:
 def _floor_ms(value: float) -> float:
     """Floor to the millisecond grid, so a duration clamped to a limit can never
     round back UP past that limit (the renderer clamps again and would deliver
-    less than the plan claims)."""
-    return math.floor(max(0.0, float(value)) * 1000) / 1000
+    less than the plan claims). A tiny epsilon absorbs binary-FP noise so a value
+    already on the grid (1.005) isn't under-floored to 1.004."""
+    return math.floor(max(0.0, float(value)) * 1000 + 1e-6) / 1000
 
 
 def _reconcile_dips(plan: dict) -> None:
@@ -113,6 +114,10 @@ def _reconcile_dips(plan: dict) -> None:
     disappeared (the successor was deleted or a gap opened) or that no longer
     fits becomes a plain cut — so the plan never claims a dip the renderer drops."""
     video, _ = _primary_tracks(plan)
+    # Half-frame tolerance, matching the renderer: frame-quantized timelines
+    # accumulate float error well above 1e-6 (0.208333+0.208333 vs 0.416667 at
+    # 24 fps), so a stricter check would wrongly cut a frame-contiguous dip.
+    epsilon = 0.5 / float(plan["project"]["fps"] or 30)
     ordered = sorted(video["events"], key=lambda e: e["timeline_start_seconds"])
     for i, ev in enumerate(ordered):
         t = ev.get("transition_out") or {}
@@ -124,7 +129,7 @@ def _reconcile_dips(plan: dict) -> None:
             continue
         nxt = ordered[i + 1]
         this_end = ev["timeline_start_seconds"] + ev["duration_seconds"]
-        if abs(nxt["timeline_start_seconds"] - this_end) > 1e-6:
+        if abs(nxt["timeline_start_seconds"] - this_end) > epsilon:
             ev["transition_out"] = cut
             continue
 
@@ -844,7 +849,8 @@ def _apply_set_transition(plan: dict, op: dict, assets: dict) -> str:
         raise PlanOpError("esta escena es la última — no hay corte que fundir")
     successor = ordered[pos + 1]
     this_end = event["timeline_start_seconds"] + event["duration_seconds"]
-    if abs(successor["timeline_start_seconds"] - this_end) > 1e-6:
+    epsilon = 0.5 / float(plan["project"]["fps"] or 30)  # half-frame, like the renderer
+    if abs(successor["timeline_start_seconds"] - this_end) > epsilon:
         raise PlanOpError("hay un hueco tras esta escena — no hay corte contiguo")
 
     def _span(e):
