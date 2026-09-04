@@ -851,3 +851,104 @@ lineage → server-owned contract → live approval with envelopes → union
 coverage. Every claim that reaches rendered pixels in a contract plan is
 now backed by currently-approved evidence identity whose observed
 envelope covers the cut. Suite: 221 passed.
+
+## OpenTake orchestration end-to-end — LIVE (2026-09-03)
+
+"Colocar en OpenTake" drives the fork over external MCP with no manual
+steps: `ensure_project` decides open-vs-create from `list_projects` (external
+MCP redacts tool errors, so a failed `open` could not be distinguished from
+"absent" — the list read is authoritative); placement auto-imports only the
+missing footage per-file under the user-granted path root; `set_project_settings`
+aligns the OpenTake canvas/fps to the plan; the cut is placed; and a save
+failure is now FATAL — a swallowed `save_project` timeout previously left a
+bridge written with zero clips persisted (Codex review, `72e2d0f`). The GUI
+navigates to the MCP-opened project via OpenTake's own sync-convergence handler.
+Idempotent: repeated Colocar → open-not-create, import-only-missing,
+clear-then-place → 24 media / 60 clips, zero duplicates. The `.opentake` bundle
+IS the store (`project.json` = timeline, `media.json` = library); no database.
+
+## Music + first-class captions — edit-plan.v1 vocabulary expansion (2026-09-03)
+
+Additive expansion of the canonical schema (no edit-plan.v2): a `music`
+audio-track role and event-level `music` (mode `recommended` | `bed`),
+`caption_style`, `asr_text`, and `caption_source` fields.
+
+- **Music, "recommend + bed" (default recommend):** every compiled cut carries a
+  music track. Default is a `recommended` annotation (track vibe + measured BPM
+  from the style beat grid + energy) surfaced in Publicar — applied natively
+  in-app when posting (no audio burned, no copyright risk). Optional `bed` mode
+  mixes a real audio file, looped (`-stream_loop`) and sidechain-ducked under
+  speech. Proven by a real render: the 1500 Hz bed is audible (`mean_volume`
+  above −70 dB) and ducks under the caption/voiceover windows.
+- **Captions, first-class + editable:** the caption track is seeded from the ASR
+  transcript (`_speech_words` now carries the word text — it had been dropping
+  it, so captions were silently empty on the real path), grouped into readable
+  lines (≤7 words / ≤3.5 s / sentence-end, split on ≥0.8 s silence), each mapped
+  through its clip's trim and burned via ffmpeg `subtitles`. Editable per line
+  through the direct `/plan/op` controls; corrections are marked `user_authored`
+  and the LLM instruction model is FORBIDDEN from authoring caption text (it is a
+  rendered claim). Captions ripple with delete/trim/jl and regenerate through the
+  new geometry on OpenTake sync-back; a user correction survives a revision only
+  when the regenerated cue proves SAME-footage identity — same asset, source
+  envelope equal within 1 ms, genuine overlap, exactly one match, else fail
+  closed.
+- **Trust + role-based consumers:** adding the `music` role broke every consumer
+  that selected tracks positionally ("second audio = voiceover"); fixed across
+  render, ripple/edit ops, OpenTake sync + sync-back + placement, and DaVinci
+  export, plus the validator now enforces primary-audio-first.
+
+Codex adversarial cadence (2026-09-03): first review found 15 (2 blocker);
+successive verify rounds rated fixes and found new defects the fixes
+introduced; converged after multiple rounds to Codex's "no material correctness
+or safety defects remain." Direct-op endpoint `/plan/op` (deterministic,
+LLM-free) added with a closed allowlist. Suite: 253 passed.
+
+## Light transitions — opening/closing fades + per-cut dips (2026-09-03)
+
+Made the `transition_out` vocabulary real and added plan-level open/close fades.
+All GEOMETRY-PRESERVING (no timeline position changes):
+
+- Plan-level `transitions {intro_fade_seconds, outro_fade_seconds}` — VIDEO-ONLY
+  fades on the final composited picture (fading the mixed audio clipped an
+  opening hook or a closing sentence). Every compiled vlog gets a light default
+  0.4/0.6, scaled down on short cuts. One budget policy everywhere (`_fade_cap`
+  = half the cut, which also prevents the two fades overlapping): compiler
+  default, `revise_plan`, `_ripple` (delete/trim/jl), OpenTake sync-back, and
+  `set_fades`.
+- Per-cut `fade_black` / `fade_white` dips rendered per-clip at a real seam only
+  (contiguous successor required, half-frame tolerance); `_reconcile_dips` re-fits
+  every dip after a structural edit (drops a dip whose seam vanished, re-clamps to
+  source spans). `dissolve` (true crossfade) needs the clips to overlap on the
+  timeline — a compiler-level model change — so it stays in the schema (archived
+  plans restorable) but the renderer FAILS LOUDLY on it and `set_transition`
+  refuses it. All dip/fade durations floor to the ms grid so the plan claims
+  exactly what renders. New ops `set_transition` / `set_fades`; UI "Estilo de
+  edición" card.
+
+Codex adversarial cadence: 8 verify rounds (15 findings → progressively finer,
+ending on negligible sub-frame quantization); final verdict "no material
+correctness or safety defects remain." Verified by real renders (intro fade
+darkens t=0, mid-clips bright, dip to black at the seam). Suite: 277 passed.
+
+## Cross-codebase deep check (2026-09-03) — known gaps
+
+A read-only audit of the Python codebase against the current schema surfaced two
+real OpenTake sync-back gaps, both the SAME class fixed this session for
+captions/transitions but still open for other tracks — recorded here, not yet
+fixed:
+
+- **Titles are not re-anchored on sync-back.** `timeline_to_candidate_plan`
+  rewrites video/audio/broll/voiceover/caption tracks and rescales transitions,
+  but leaves the title track frozen at its old timeline positions after an
+  OpenTake rearrange (captions were explicitly fixed for this; titles were not).
+- **The music bed / voiceover ducking go stale on a sync duration change.** The
+  in-app `_ripple` re-fits the bed span and would recompute ducking; sync-back
+  sets the new duration but does neither, so a synced cut can leave a looping bed
+  pinned to the old length.
+
+By-design silent drops (documented, not bugs): OpenTake placement and OTIO/XMEML
+export carry cut geometry only — transitions, music, and reframe stay
+render-side (the MP4 has them). Dead/unreachable today: the event-level
+`caption_style` ASS render path (no producer sets it yet), `reframe` fill/scale
+(only `fit` is produced), and `pipeline/validate_edit.py` (orphaned CLI, drifted
+from the schema).

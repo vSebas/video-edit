@@ -27,7 +27,9 @@ cards), **Edición** (player, ONE natural-language edit input with an inline
 proposal, scene strip with B-roll/voice lanes, revision history with
 restore), **Metraje** (clips with usage badges and value scores), and
 **Publicar** (download, freshness warnings, OpenTake placement/sync,
-DaVinci exports) — plus **Diagnóstico** behind the ⋯ menu (capabilities,
+DaVinci exports, the music recommendation / burned-bed control, and the
+open/close-fade "Estilo de edición" card) — plus **Diagnóstico** behind the
+⋯ menu (capabilities,
 forced re-runs, jobs, reference analysis, raw telemetry). Phone-first at
 ≤900px.
 
@@ -67,15 +69,34 @@ proposal and editable exports:
 6. `POST /plan/revise` — natural-language re-cuts without re-analysis;
    prior revisions kept.
 7. `POST /plan/command` + `/plan/command/apply` — atomic natural-language
-   edits: one instruction → one operation from a closed set (delete, trim,
-   volume, J/L cut, styled title — font/size/position over bundled OFL
-   fonts, voiceover add/remove, B-roll add/remove/replace/move with
-   evidence-caption content hints), computed and bounds-checked
-   deterministically; the LLM only picks the op. Revision-guarded
-   propose/apply with single-use proposal tokens.
-8. `POST /render?burn_captions=true` — review render with timeline-aligned
-   Spanish captions burned in. Renders are cached per plan content: an
-   unchanged plan returns the existing file instantly.
+   edits: one instruction → one operation from a closed set of 17 ops
+   (delete, trim, volume, J/L cut, styled title — font/size/position over
+   bundled OFL fonts; voiceover add/remove; B-roll add/remove/replace/move
+   with evidence-caption content hints; music bed set/remove; transition
+   set / open-close fades), computed and bounds-checked deterministically;
+   the LLM only picks the op. Revision-guarded propose/apply with single-use
+   proposal tokens (the token is REQUIRED on apply). `POST /plan/op` applies a
+   deterministic UI-driven op directly (no LLM) — the same revision-guarded
+   path, used by the Publicar music/fade controls; its allowlist is
+   `set_music_bed`, `remove_music`, `edit_caption`, `remove_caption`,
+   `set_transition`, `set_fades`. Caption text is a rendered claim: it can be
+   edited only through this direct path, never authored by the instruction
+   model.
+8. **Captions, music, and transitions** are first-class parts of the plan:
+   - **Captions** are seeded from the ASR transcript into a caption track,
+     grouped into readable lines, burned into the render, and editable per line
+     (`edit_caption`/`remove_caption`). They ripple with edits, regenerate on
+     OpenTake sync-back, and a correction survives a revision only on proven
+     same-footage identity. `POST /render?burn_captions=true` forces a
+     captioned preview; renders are cached per plan content.
+   - **Music** ("recommend + bed", default recommend): every cut carries a
+     `recommended` annotation (vibe / measured BPM / energy) to add natively
+     when posting; `set_music_bed` optionally burns a looped, speech-ducked bed
+     for a self-contained MP4. Surfaced in Publicar.
+   - **Transitions** (geometry-preserving): a light default open/close fade on
+     every cut (`set_fades`), plus per-cut `fade_black`/`fade_white` dips
+     (`set_transition`). True crossfade (`dissolve`) is deferred and refused
+     rather than faked.
 9. `POST /opentake/cleanup` + `/opentake/cleanup/apply` — Spanish dialogue
    cleanup: conservative filler/dead-air candidates from the local word
    transcript, reviewed as a checklist in the workbench, applied as ONE

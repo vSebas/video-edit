@@ -8,9 +8,15 @@ timestamped observation — not a new timeline engine.
 The execution decision is hybrid: OpenTake is the adopted editing surface
 over MCP, the owned FFmpeg renderer produces final pixels, and Resolve remains
 the editable-export escape hatch. The full loop is integrated into the
-daily app (2026-09-01): placement (with track creation, B-roll, voiceover,
-and J/L re-tiling), revision-guarded timeline-to-plan sync, dialogue
-cleanup, and atomic instruction edits are all workbench features.
+daily app: placement (with track creation, B-roll, voiceover, and J/L
+re-tiling), revision-guarded timeline-to-plan sync, dialogue cleanup, and
+atomic instruction edits are all workbench features, and OpenTake
+orchestration is end-to-end live (2026-09-03). The canonical `edit-plan.v1`
+now expresses a near-finished vlog, not a clip reel: first-class editable
+**captions**, background **music** (a post-time recommendation or a burned,
+speech-ducked bed), and light **transitions** (open/close fades and per-cut
+dips) — all added additively (no schema v2). See `STATUS_AND_ROADMAP.md`
+→ "edit-plan.v1 capabilities".
 
 **Repository:** <https://github.com/vSebas/video-edit> (private)
 

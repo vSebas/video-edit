@@ -1,22 +1,28 @@
 # AI-Assisted Video Editing — Status and Roadmap
 
-**Updated:** 2026-09-01
+**Updated:** 2026-09-03
 **Current phase:** Full daily loop operational and phone-first. Footage
 reaches the tool from the iPhone (browser upload with live progress,
 Tailscale from anywhere, or a Google Drive VlogInbox that carries title and
 nota/prompt); analysis is audiovisual (gemini-3.6-flash) with GPU Spanish
 ASR; stories are written by deepseek-v4-pro (blind video-screening
 verdict, retained blind against gpt-5.6-sol); cuts are frame-exact with
-word-snapped edges, SRT captions, and verified DaVinci exports with DNxHR
-proxies. The ratified execution direction is hybrid: OpenTake edits over MCP,
-the owned renderer produces final pixels, and Resolve remains the escape
-hatch. That direction is fully integrated as of 2026-09-01: placement,
-timeline-to-plan sync (including B-roll, voiceover, and J/L divergent
-pairs), dialogue cleanup, and instruction edits are all workbench buttons. The morning-routine POC
-fixture and all Phase 2A archive machinery were removed at the user's
-request (2026-08-18), and the POC directory itself on 2026-08-19 — its
-render, export, and validation scripts now live in `app/pipeline/` and its
-schemas in `app/schemas/`, where the app actually uses them.
+word-snapped edges and verified DaVinci exports with DNxHR proxies. The
+ratified execution direction is hybrid: OpenTake edits over MCP, the owned
+renderer produces final pixels, and Resolve remains the escape hatch. That
+direction is fully integrated: placement, timeline-to-plan sync (including
+B-roll, voiceover, and J/L divergent pairs), dialogue cleanup, and instruction
+edits are all workbench buttons; OpenTake orchestration is end-to-end LIVE
+(2026-09-03: open/create, auto-import, canvas-align, place, durable save, GUI
+nav). **The edit-plan.v1 vocabulary was materially expanded (2026-09-03):**
+first-class editable **captions**, background **music** (recommend + optional
+burned bed with ducking), and light **transitions** (open/close fades and
+per-cut dips) — the cut is no longer a flat hard-cut clip reel. See "edit-plan.v1
+capabilities" below. The morning-routine POC fixture and all Phase 2A archive
+machinery were removed at the user's request (2026-08-18), and the POC directory
+itself on 2026-08-19 — its render, export, and validation scripts now live in
+`app/pipeline/` and its schemas in `app/schemas/`, where the app actually uses
+them.
 
 **Product target (2026-08-04):** daily personal vlogs, a few minutes each,
 from raw phone footage. Every edit must produce BOTH a rendered review video
@@ -128,6 +134,51 @@ clear-then-place) — repeated Colocar never duplicates. The `.opentake`
 bundle IS the project store (project.json = timeline, media.json =
 library); there is no separate database.
 
+### edit-plan.v1 capabilities (current surface, 2026-09-03)
+
+`edit-plan.v1` is no longer the flat hard-cut compiler the 2026-08-20 audit
+described. It stayed at v1 and grew additively (no v2 — a breaking migration is
+reserved for genuinely incompatible changes). What the canonical plan can express
+and what actually renders today:
+
+- **Tracks:** video (primary + optional B-roll overlay), audio (primary +
+  optional voiceover + optional music), caption, title. Consumers select tracks
+  by ROLE, and the validator enforces exactly one primary audio, first.
+- **Cuts:** frame-exact source trims, word-snapped edges, per-clip `volume_db`,
+  auto-detected rotation.
+- **Captions** (first-class, editable): seeded from ASR, grouped into readable
+  lines, burned via `subtitles`, correctable per line through `/plan/op`
+  (`edit_caption`/`remove_caption`) — corrections are `user_authored` and the LLM
+  cannot author caption text. Captions ripple with edits, regenerate on
+  OpenTake sync-back, and carry `caption_source` so a correction survives a
+  revision only on proven same-footage identity.
+- **Music** (recommend + bed, default recommend): a `recommended` annotation
+  (vibe / measured BPM / energy) to add natively when posting, or a burned `bed`
+  looped and ducked under speech. Ops `set_music_bed` / `remove_music`.
+- **Transitions** (geometry-preserving): plan-level open/close fades
+  (`transitions`, video-only) defaulted on every cut, and per-cut `fade_black` /
+  `fade_white` dips at real seams. Ops `set_transition` / `set_fades`. `dissolve`
+  (true crossfade) is deferred — it needs timeline overlap — and the renderer
+  fails loudly on it rather than faking a cut.
+- **B-roll / voiceover / J-L cuts:** overlay a cutaway over held audio; place a
+  voice note on a ducked voiceover track; desync a scene's audio from its picture.
+- **Editing:** a closed set of 17 atomic ops (`/plan/command` picks one via the
+  LLM; `/plan/op` applies a deterministic one directly), each computed and
+  bounds-checked in `plan_ops.py`; the LLM only chooses the op.
+
+Style hooks present in the schema but not yet PRODUCED (dormant, not wired):
+event-level `caption_style` (the renderer has a full per-cue ASS path, but no
+producer sets the field yet), and `reframe` fill/scale for true
+subject-fill vertical framing (only `fit`/letterbox is produced today). Both are
+schema-ready for when a producer needs them.
+
+Known consumer gaps from the 2026-09-03 deep check (honest, not yet fixed):
+OpenTake sync-back does not re-anchor the **title track** after a rearrange
+(the same class fixed for captions), and does not re-fit the **music bed /
+voiceover ducking** on a duration change. OpenTake placement and OTIO/XMEML
+export carry cut geometry only — transitions, music, and reframe stay render-side
+(the MP4 has them); these drops are by design but silent.
+
 ## Standing Today
 
 ### Third-party handoff memo, reviewed (2026-08-31)
@@ -220,6 +271,20 @@ Where we are genuinely behind, in the order it costs daily quality:
 7. **Rotation and framing are brittle** — sideways clips stay sideways,
    framing is fit/pad rather than subject-aware.
 8. **Daily reliability is underbuilt** (in-memory jobs, no dedup).
+
+**Progress on this list since the audit (updated 2026-09-03):** the
+"impoverished vocabulary" diagnosis (line above) has been substantially closed —
+see "edit-plan.v1 capabilities" above. Specifically: **#2 closed** (B-roll over
+held audio and J/L cuts ship); **#3 largely closed** (voiceover placement with
+−9 dB ducking, and background music with sidechain-style ducking under speech —
+denoise/per-clip levelling still open); **#5 closed** (captions are first-class,
+editable per-line, and burned — no longer an export-only artifact); **#7
+partially closed** (rotation is auto-detected and applied; subject-aware framing
+is still `fit`/letterbox — the `reframe` fill path exists in schema+renderer but
+has no producer). Still open as stated: **#1** (no filler/false-start/repeated-
+take removal — the single largest remaining daily-quality gap), **#4** (partly:
+atomic ops exist for many edits, but a story rewrite still replans), **#6**
+(nothing learns from the finishing pass), **#8** (in-memory jobs, no dedup).
 
 Explicitly *not* priorities despite being feature-count wins: avatars, voice
 cloning, generated video, multicam, motion graphics, object removal,
@@ -422,6 +487,10 @@ docs consolidation.
    metric: would you post it? The same day covers: the first REAL B-roll
    and J-cut session, and the sealed P7 sidecar A/B (the judge packet is
    already waiting at `bench/results-context/last-spring-quarter-class/judge/`).
+   As of 2026-09-03 the cut is materially more postable than at the last
+   status: captions burn in, a music recommendation surfaces at publish time,
+   and light open/close fades ship — so the acceptance run now judges a
+   near-finished vlog, not a clip reel.
 2. **Reference-style intelligence** — design accepted (v2 handoff is
    current: `docs/designs/SOCIAL_TREND_AND_REFERENCE_STYLE_INTELLIGENCE_IMPLEMENTATION_HANDOFF_v2.md`,
    measurement-first; v1 kept for history). MVP #1 slice is BUILT (2026-09-01): schemas
@@ -471,6 +540,12 @@ docs consolidation.
    docs/UI reconciliation after each acceptance run; writer seat stays
    deepseek-v4-pro (retained blind 2026-09-01); trending-audio matching
    arrives via the accepted style design, not separately.
+5. **OpenTake sync-back completeness (2026-09-03 deep check):** extend
+   `timeline_to_candidate_plan` to re-anchor the **title track** to the
+   rearranged geometry (captions already do this; titles do not) and to re-fit
+   the **music bed span / voiceover ducking** on a duration change (the in-app
+   `_ripple` already does this). Both are the same class this session fixed for
+   captions and transitions — small, well-scoped, not yet done.
 
 ### Trust system (afirmaciones) — fail-closed at the claim level
 
