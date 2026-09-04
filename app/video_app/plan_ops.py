@@ -821,13 +821,17 @@ def _apply_set_fades(plan: dict, op: dict, assets: dict) -> str:
                     float(current.get("outro_fade_seconds") or 0.0), "outro_seconds")
     if not 0 <= intro <= 3 or not 0 <= outro <= 3:
         raise PlanOpError("intro_seconds and outro_seconds must be 0..3")
-    # Clamp each side to what the renderer will actually deliver (it caps each
-    # fade at half the cut), so the stored/announced value is honest. Clamp per
-    # side, NOT as a rescaled pair — rescaling would silently change the side
-    # the caller did not touch.
-    cap = float(plan["project"]["duration_seconds"]) / 2.0
-    intro = round(min(intro, cap), 3)
-    outro = round(min(outro, cap), 3)
+    # Clamp ONLY the side the caller supplied to the renderer's cap (half the
+    # cut); a side left unspecified keeps its stored value untouched. Same cap
+    # the compiler/revision/sync use — one policy, so the stored value renders.
+    from .planning import _fade_cap
+
+    cap = _fade_cap(plan["project"]["duration_seconds"])
+    if op.get("intro_seconds") is not None:
+        intro = min(intro, cap)
+    if op.get("outro_seconds") is not None:
+        outro = min(outro, cap)
+    intro, outro = round(intro, 3), round(outro, 3)
     plan["transitions"] = {
         "intro_fade_seconds": intro,
         "outro_fade_seconds": outro,

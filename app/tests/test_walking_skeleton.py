@@ -337,12 +337,12 @@ def test_snap_spans_moves_cut_out_of_spoken_words() -> None:
     assert snapped[0]["source_start_seconds"] == 0.0
 
 
-def test_scale_transitions_clamps_short_cuts() -> None:
+def test_scale_transitions_clamps_each_side_to_half() -> None:
     from video_app.planning import _scale_transitions
-    # on a long cut the requested fades pass through
+    # on a long cut the requested fades pass through untouched
     assert _scale_transitions(0.4, 0.6, 30.0) == {
         "intro_fade_seconds": 0.4, "outro_fade_seconds": 0.6}
-    # on a 1.5s cut the pair is clamped to a third (0.5s), keeping the 0.4:0.6 ratio
-    scaled = _scale_transitions(0.4, 0.6, 1.5)
-    assert scaled["intro_fade_seconds"] + scaled["outro_fade_seconds"] <= 0.5 + 1e-6
-    assert scaled["intro_fade_seconds"] < scaled["outro_fade_seconds"]
+    # on a 0.6s cut each side is capped at half (0.3s) — independently, so the
+    # two fades still can't overlap
+    scaled = _scale_transitions(0.4, 0.6, 0.6)
+    assert scaled == {"intro_fade_seconds": 0.3, "outro_fade_seconds": 0.3}

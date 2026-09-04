@@ -335,10 +335,15 @@ def main() -> None:
     ordered_video = sorted(video_events, key=lambda e: e["timeline_start_seconds"])
 
     # Fail closed on any transition this build can't render — on EVERY clip,
-    # including the last or only one — rather than silently dropping it.
+    # including the last or only one — rather than silently dropping it. A
+    # non-null transition_out MUST name a renderable type; a malformed object
+    # ({} or {"type": null}) is rejected, not treated as "no transition".
     for ev in ordered_video:
-        kind = (ev.get("transition_out") or {}).get("type")
-        if kind not in (None, "cut", "fade_black", "fade_white"):
+        transition = ev.get("transition_out")
+        if transition is None:
+            continue
+        kind = transition.get("type")
+        if kind not in ("cut", "fade_black", "fade_white"):
             raise ValueError(
                 f"transition type {kind!r} on {ev['event_id']} is not "
                 "renderable in this build"

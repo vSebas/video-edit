@@ -1027,20 +1027,22 @@ def build_plan(
     return plan
 
 
+def _fade_cap(timeline: float) -> float:
+    """The most a single fade may last: half the cut. Each side capped this way
+    also guarantees the intro and outro fades cannot overlap (their spans meet
+    at most in the middle). This is exactly the renderer's own clamp, so the
+    stored value is always what renders — one policy everywhere (compiler
+    default, revision, OpenTake sync, and the set_fades op)."""
+    return max(0.0, float(timeline) / 2.0)
+
+
 def _scale_transitions(intro: float, outro: float, timeline: float) -> dict:
-    """Clamp an intro/outro fade pair to at most a third of the cut, preserving
-    their ratio, so the fades never eat a meaningful fraction of a short video.
-    Used both for the compiler default and when carrying a fade choice across a
-    revision that changed the duration."""
-    intro = max(0.0, float(intro))
-    outro = max(0.0, float(outro))
-    budget = max(0.0, timeline / 3.0)
-    total = intro + outro
-    if total > budget:
-        scale = budget / total if total else 0.0
-        intro, outro = intro * scale, outro * scale
-    return {"intro_fade_seconds": round(intro, 3),
-            "outro_fade_seconds": round(outro, 3)}
+    """Clamp each fade independently to half the cut, so a fade choice carried
+    across a duration change stays valid without silently shrinking a side that
+    still fits."""
+    cap = _fade_cap(timeline)
+    return {"intro_fade_seconds": round(min(max(0.0, float(intro)), cap), 3),
+            "outro_fade_seconds": round(min(max(0.0, float(outro)), cap), 3)}
 
 
 def _default_transitions(timeline: float) -> dict:

@@ -972,3 +972,16 @@ class TestTransitionSeamGuards:
         with pytest.raises(PlanOpError, match="hueco"):
             apply_op(plan, {"op": "set_transition", "event_id": "v01",
                             "type": "fade_black"}, INVENTORY)
+
+
+class TestFadePolicyConsistency:
+    def test_intro_only_update_keeps_large_outro(self) -> None:
+        # one policy everywhere: an intro-only update must not clamp/alter the
+        # stored outro, even if the outro is at the per-side cap.
+        plan = _plan()
+        plan["project"]["duration_seconds"] = 4.0  # cap 2.0
+        plan["transitions"] = {"intro_fade_seconds": 0.4, "outro_fade_seconds": 2.0}
+        candidate, _ = apply_op(
+            plan, {"op": "set_fades", "intro_seconds": 0.5}, INVENTORY)
+        assert candidate["transitions"] == {
+            "intro_fade_seconds": 0.5, "outro_fade_seconds": 2.0}
