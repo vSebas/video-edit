@@ -512,6 +512,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             lambda: projects.plan_op_propose(project_id, request.op)
         )
 
+    @application.get("/api/projects/{project_id}/opentake/status")
+    def opentake_status(project_id: str):
+        return project_call(lambda: projects.opentake_status(project_id))
+
     @application.post("/api/projects/{project_id}/opentake/place")
     def opentake_place(project_id: str):
         return project_call(lambda: projects.opentake_place(project_id))

@@ -1338,6 +1338,48 @@ class ProjectService:
             write_json(path, stored)
         return {"plan": new_plan, "revision_note": note}
 
+    def opentake_status(self, project_id: str) -> dict:
+        """Best-effort staleness signal for the phone, WITHOUT a live MCP call:
+        compare this project's saved OpenTake bundle on disk against what the
+        bridge placed. `opentake_changed` means OpenTake was edited and saved
+        since the last placement/sync (so there are edits to pull); it is only
+        reported when THIS project's bundle is the one currently open in OpenTake
+        (matched by name), never guessed for another project. Unsaved OpenTake
+        edits are invisible to disk, so this is a hint, not a guarantee."""
+        from .opentake_bridge import saved_bundle_state
+
+        self.get_project(project_id)
+        plan_path = self.settings.runtime / project_id / "plan" / "edit-plan.json"
+        plan = load_json(plan_path) if plan_path.is_file() else {}
+        plan_revision = int(plan.get("revision", 0) or 0)
+        bridge_path = self.settings.runtime / project_id / "opentake-bridge.json"
+        if not bridge_path.is_file():
+            return {
+                "placed": False, "opentake_changed": False,
+                "bundle_visible": False, "plan_revision": plan_revision,
+            }
+        bridge = load_json(bridge_path)
+        bridge_revision = int(bridge.get("plan_revision", 0) or 0)
+        placed_primary = len(bridge.get("events") or [])
+        expected_video = placed_primary + len(bridge.get("broll_events") or [])
+        expected_audio = placed_primary + len(bridge.get("voiceover_events") or [])
+        saved = saved_bundle_state()
+        bundle_visible = bool(saved and saved.get("bundle") == f"{project_id}.opentake")
+        opentake_changed = bool(
+            bundle_visible and (
+                saved.get("saved_video_clips") != expected_video
+                or saved.get("saved_audio_clips") != expected_audio
+            )
+        )
+        return {
+            "placed": True,
+            "bundle_visible": bundle_visible,
+            "opentake_changed": opentake_changed,
+            "plan_revision": plan_revision,
+            "bridge_revision": bridge_revision,
+            "plan_advanced": plan_revision != bridge_revision,
+        }
+
     def opentake_place(self, project_id: str) -> dict:
         """Place the compiled plan into the open OpenTake project and persist
         the bridge for later sync. Destructive to that timeline by contract."""

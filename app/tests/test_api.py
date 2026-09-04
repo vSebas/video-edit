@@ -108,3 +108,41 @@ def test_pwa_shell_is_served(tmp_path):
     assert "/api/" in sw.text
 
     assert c.get("/icons/icon-192.png").status_code == 200
+
+
+def test_opentake_status_best_effort(tmp_path):
+    """opentake_status reports placement/staleness from disk without a live MCP
+    call: no bridge -> not placed; with a bridge from an older revision ->
+    plan_advanced, and no false 'changed' when the bundle isn't visible."""
+    from video_app.config import Settings
+    from video_app.projects import ProjectService
+
+    runtime = tmp_path / "runtime"
+    pid = "vlog-x"
+    pdir = runtime / pid
+    (pdir / "plan").mkdir(parents=True)
+    write_json(pdir / "project.json", {"project_id": pid, "name": "Vlog X"})
+    write_json(pdir / "plan" / "edit-plan.json", {
+        "schema_version": "edit-plan.v1", "revision": 5,
+        "project": {"width": 1080, "height": 1920, "fps": 30,
+                    "duration_seconds": 10.0, "background_color": "black"},
+        "tracks": [],
+    })
+    svc = ProjectService(Settings(root=PROJECT_ROOT, runtime=runtime))
+
+    before = svc.opentake_status(pid)
+    assert before["placed"] is False
+    assert before["opentake_changed"] is False
+
+    write_json(pdir / "opentake-bridge.json", {
+        "schema_version": "opentake-bridge.v1", "plan_revision": 3,
+        "events": [{"event_id": "v01"}, {"event_id": "v02"}],
+    })
+    after = svc.opentake_status(pid)
+    assert after["placed"] is True
+    assert after["plan_revision"] == 5
+    assert after["bridge_revision"] == 3
+    assert after["plan_advanced"] is True
+    # no OPENTAKE_PROJECTS_DIR bundle visible in a test -> never a false positive
+    assert after["opentake_changed"] is False
+    assert after["bundle_visible"] is False

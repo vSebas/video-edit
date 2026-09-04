@@ -822,3 +822,7 @@ input[type="file"] {
 .music-group { margin-top: 6px; }
 .music-group-label { display: block; font-size: 0.75em; color: var(--muted, #bbb);
   text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 3px; }
+.stale-banner { display: flex; flex-direction: column; gap: 5px; padding: 10px 12px;
+  margin-bottom: 10px; border-radius: 10px; border: 1px solid var(--warn, #c2701c);
+  background: rgba(194,112,28,0.10); }
+.stale-banner strong { color: var(--warn, #e0913f); }

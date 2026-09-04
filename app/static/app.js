@@ -47,6 +47,36 @@ function notice(message, error = false) {
   if (!error) noticeTimer = window.setTimeout(() => element.classList.add('hidden'), 6000);
 }
 
+// Ask once for permission to notify — called when a long op starts, so the
+// prompt appears in context (never on load).
+function requestNotifyPermission() {
+  try {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {});
+    }
+  } catch { /* unsupported */ }
+}
+
+// Notify the outcome of a long op. Fires a system notification when the app is
+// backgrounded (so the phone buzzes while you're elsewhere) and permission was
+// granted; always also shows the in-app banner. No push server — Web
+// Notifications only, per the design's MVP (polling/current APIs are enough).
+function notify(message, { error = false, title = 'Vlog Studio' } = {}) {
+  notice(message, error);
+  try {
+    if (
+      'Notification' in window &&
+      Notification.permission === 'granted' &&
+      document.visibilityState === 'hidden'
+    ) {
+      const n = new Notification(title, {
+        body: message, icon: '/icons/icon-192.png', tag: 'vlog-studio',
+      });
+      n.onclick = () => { window.focus(); n.close(); };
+    }
+  } catch { /* unsupported */ }
+}
+
 /* ------------------------------------------------------------------ */
 /* State helpers                                                       */
 
@@ -1236,6 +1266,7 @@ function publishWorkspace(project) {
       </article>
       <article class="card">
         <h3>Seguir editando en OpenTake</h3>
+        <div id="opentake-stale"></div>
         <p class="muted">Coloca este corte en la línea de tiempo abierta de OpenTake
         (reemplaza lo que haya allí), edita a mano, y trae los cambios de vuelta.</p>
         <div class="review-actions">
@@ -1580,6 +1611,7 @@ function wireHandlers() {
   $('#prepare-export')?.addEventListener('click', prepareExport);
   $('#opentake-place')?.addEventListener('click', openTakePlace);
   $('#opentake-sync')?.addEventListener('click', openTakeSyncPreview);
+  loadOpenTakeStale();
   $('#music-suggest')?.addEventListener('click', musicSuggest);
   $('#music-remove')?.addEventListener('click', musicRemove);
   $('#music-set-bed')?.addEventListener('click', musicSetBed);
@@ -1770,6 +1802,7 @@ async function createVlog() {
   if (!hasRun('owned-live-visual')) steps.push({ label: 'Mirando tu metraje (unos minutos)', path: 'analysis/visual' });
   if (!hasRun('local-asr')) steps.push({ label: 'Escuchando el habla (local)', path: 'analysis/speech' });
   steps.push({ label: 'Escribiendo ideas de historia', path: 'concepts' });
+  requestNotifyPermission();  // long op — you may leave the tab
   try {
     for (let index = 0; index < steps.length; index += 1) {
       setBusy('Creando tu vlog', steps.map((step) => step.label), index);
@@ -1777,11 +1810,11 @@ async function createVlog() {
     }
     state.busy = null;
     state.workspace = 'story';
-    notice('Ideas listas — elige una.');
+    notify('Ideas listas — elige una.');
     await loadProject(projectId);
   } catch (error) {
     state.busy = null;
-    notice(error.message, true);
+    notify(error.message, { error: true });
     await loadProject(projectId);
   }
 }
@@ -1801,6 +1834,7 @@ function startStory(conceptId) {
 async function makeStory(conceptId) {
   const projectId = state.activeProjectId;
   const steps = ['Fijando la historia', 'Cortando el video', 'Renderizando la vista previa', 'Preparando archivos de editor'];
+  requestNotifyPermission();  // long op — you may leave the tab
   try {
     setBusy('Haciendo tu vlog', steps, 0);
     await api(`/api/projects/${projectId}/selection`, {
@@ -1817,11 +1851,11 @@ async function makeStory(conceptId) {
     state.busy = null;
     state.workspace = 'edit';
     localStorage.setItem(`workspace:${projectId}`, 'edit');
-    notice('Tu vlog está listo.');
+    notify('Tu vlog está listo — míralo.', { title: 'Corte listo' });
     await loadProject(projectId);
   } catch (error) {
     state.busy = null;
-    notice(error.message, true);
+    notify(error.message, { error: true, title: 'Falló el render' });
     await loadProject(projectId);
   }
 }
@@ -1933,6 +1967,32 @@ async function openTakePlace() {
   } catch (error) {
     notice(error.message, true);
   }
+}
+
+// Stale-session state (design §9): OpenTake was edited & saved since the last
+// placement/sync, so there are changes to pull before continuing. A best-effort,
+// no-live-MCP signal from the saved bundle on disk; shown as a designed banner,
+// not a raw error.
+async function loadOpenTakeStale() {
+  const box = $('#opentake-stale');
+  if (!box) return;
+  try {
+    const status = await api(`/api/projects/${state.activeProjectId}/opentake/status`);
+    if (status?.opentake_changed) {
+      box.innerHTML = `
+        <div class="stale-banner">
+          <strong>OpenTake cambió</strong>
+          <span class="muted">Editaste en OpenTake desde la última vez.
+          Trae esos cambios antes de seguir, o se perderán al colocar de nuevo.</span>
+          <div class="review-actions">
+            <button class="primary compact" id="stale-sync">Traer cambios de OpenTake</button>
+          </div>
+        </div>`;
+      $('#stale-sync')?.addEventListener('click', openTakeSyncPreview);
+    } else {
+      box.innerHTML = '';
+    }
+  } catch { box.innerHTML = ''; }
 }
 
 async function openTakeSyncPreview() {
