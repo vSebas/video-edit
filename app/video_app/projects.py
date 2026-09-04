@@ -27,7 +27,13 @@ from .planning import (
     revise_plan,
     validate_edit_plan,
 )
-from .providers import ChatClient, ProviderError, make_client, resolve_provider
+from .providers import (
+    ChatClient,
+    ProviderError,
+    make_client,
+    parse_json_content,
+    resolve_provider,
+)
 from .semantic import SemanticEvidenceError, validate_semantic_evidence
 from .visual import (
     PROMPT_VERSION as VISUAL_PROMPT_VERSION,
@@ -1667,6 +1673,81 @@ class ProjectService:
         return self._propose_op(
             project_id, project, plan, op, f"op:{op.get('op')}"
         )
+
+    def suggest_music(
+        self,
+        project_id: str,
+        provider: str = "qwen",
+        model: str | None = None,
+    ) -> dict:
+        """Ask the model to name background music that fits THIS cut, grounded in
+        the concept's tone and the measured pacing (BPM/energy), then install it
+        as a recommended-mode music track. The suggestion is a track to add
+        natively when posting (no audio burned, no licensing) — the model
+        proposes; the deterministic op validates and installs."""
+        from .planning import default_music_recommendation
+
+        project = self.get_project(project_id)
+        plan = project.get("plan")
+        if not plan:
+            raise ProjectError("This project does not have an approved edit plan")
+        concept = next(
+            (c for c in project.get("concepts", [])
+             if c["concept_id"] == plan.get("concept_id")),
+            {},
+        )
+        # measured grounding: BPM/energy from the applied style / cut pacing
+        baseline = default_music_recommendation(
+            concept, plan.get("style_application")
+        )["recommended"]
+        editorial = concept.get("editorial") or {}
+        tone = ", ".join((editorial.get("tone") or [])[:4]) or "sin tono marcado"
+        duration = plan["project"]["duration_seconds"]
+        title = str(concept.get("title") or "").strip()
+
+        client = ChatClient(resolve_provider(
+            provider, model or PLANNER_DEFAULT_MODELS.get(provider)
+        ))
+        messages = [
+            {"role": "system", "content": (
+                "Sugieres MÚSICA DE FONDO para un vlog corto que el creador "
+                "agregará como audio nativo al publicar en Instagram/TikTok "
+                "(no se incrusta audio, no hay licencias). Propón una pista "
+                "concreta y buscable: un nombre de canción + artista real y "
+                "conocido, o un término de búsqueda muy específico para la "
+                "biblioteca de audio de la app. Ajústate al tempo y energía "
+                "medidos. Responde SOLO un objeto JSON: "
+                '{"name":"<canción + artista, o término de búsqueda>",'
+                '"vibe":"<breve, en español>","bpm":<entero 30-300 o null>,'
+                '"energy":"low|medium|high"}'
+            )},
+            {"role": "user", "content": (
+                f"Vlog: «{title or 'sin título'}» · {duration:.0f}s · tono: {tone}. "
+                f"Ritmo medido: BPM {baseline.get('bpm') or 'desconocido'}, "
+                f"energía {baseline.get('energy') or 'medium'}. "
+                "Sugiere una pista que encaje."
+            )},
+        ]
+        try:
+            response = client.chat(messages, json_object=True, temperature=0.7)
+            suggestion = parse_json_content(response["content"])
+        except ProviderError as exc:
+            raise ProjectError(f"The music model failed: {exc}") from exc
+        except json.JSONDecodeError as exc:
+            raise ProjectError(f"Music suggestion was not valid JSON: {exc}") from exc
+        if not isinstance(suggestion, dict):
+            raise ProjectError("Music suggestion was not an object")
+
+        op = {
+            "op": "set_music_recommendation",
+            "name": suggestion.get("name"),
+            "vibe": suggestion.get("vibe") or baseline.get("vibe"),
+            "bpm": suggestion.get("bpm") if suggestion.get("bpm") is not None
+            else baseline.get("bpm"),
+            "energy": suggestion.get("energy") or baseline.get("energy"),
+        }
+        proposed = self._propose_op(project_id, project, plan, op, "op:suggest_music")
+        return self.plan_command_apply(project_id, proposed["proposal_id"])
 
     def _propose_op(
         self,

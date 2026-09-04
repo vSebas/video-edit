@@ -803,6 +803,40 @@ def _apply_remove_music(plan: dict, op: dict, assets: dict) -> str:
     return "Música de fondo quitada"
 
 
+def _apply_set_music_recommendation(plan: dict, op: dict, assets: dict) -> str:
+    """Install a recommended-mode music track (a track suggestion to add
+    natively when posting — no audio burned). The values are proposed by the
+    suggestion model; this applier validates and bounds them. Replaces any
+    existing music track so re-suggesting overwrites rather than stacking."""
+    from .planning import _music_event
+
+    def _text(value, limit):
+        text = str(value).strip() if value is not None else ""
+        return text[:limit] or None
+
+    name = _text(op.get("name"), 200)
+    vibe = _text(op.get("vibe"), 120)
+    bpm = op.get("bpm")
+    if bpm is not None:
+        bpm = _finite(bpm, 0.0, "bpm")
+        bpm = round(bpm) if 30 <= bpm <= 300 else None
+    energy = op.get("energy")
+    if energy not in ("low", "medium", "high"):
+        energy = None
+    music = {
+        "mode": "recommended",
+        "recommended": {
+            "name": name, "vibe": vibe, "bpm": bpm,
+            "energy": energy, "apply_in_app": True,
+        },
+        "bed": None,
+    }
+    track = _music_track(plan, create=True)
+    track["events"] = [_music_event(music, plan["project"]["duration_seconds"])]
+    shown = name or vibe or "según el ritmo del corte"
+    return f"Recomendación de música: {shown}"
+
+
 def _apply_edit_caption(plan: dict, op: dict, assets: dict) -> str:
     cap = next((t for t in plan["tracks"] if t["kind"] == "caption"), None)
     if cap is None:
@@ -942,6 +976,7 @@ _APPLIERS = {
     "replace_broll": (_apply_replace_broll, {"event_id", "asset_id"}),
     "move_broll": (_apply_move_broll, {"event_id", "timeline_start_seconds"}),
     "set_music_bed": (_apply_set_music_bed, {"asset_id"}),
+    "set_music_recommendation": (_apply_set_music_recommendation, set()),
     "remove_music": (_apply_remove_music, set()),
     "edit_caption": (_apply_edit_caption, {"event_id", "text"}),
     "remove_caption": (_apply_remove_caption, {"event_id"}),

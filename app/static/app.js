@@ -986,6 +986,21 @@ async function setFades(intro, outro) {
   } catch (error) { notice(error.message, true); }
 }
 
+async function musicSuggest() {
+  const projectId = state.activeProjectId;
+  try {
+    setBusy('Buscando música', ['El modelo sugiere una pista acorde al corte'], 0);
+    await api(`/api/projects/${projectId}/plan/music/suggest`, { method: 'POST' });
+    state.busy = null;
+    notice('Sugerencia de música lista — mírala en Publicar.');
+    await loadProject(projectId);
+  } catch (error) {
+    state.busy = null;
+    notice(error.message, true);
+    await loadProject(projectId);
+  }
+}
+
 async function musicRemove() {
   try {
     await applyPlanOp({ op: 'remove_music' }, 'Quitando música incorporada');
@@ -1185,27 +1200,37 @@ function publishWorkspace(project) {
           <code>runtime/projects/${escapeHtml(project.project_id)}/outputs/timeline-davinci-proxies.xml</code></p>` : ''}
         <button class="secondary compact" id="prepare-export">${proxyExport ? 'Reconstruir archivos' : 'Preparar archivos'}</button>
       </article>
-      ${music ? `
       <article class="card music-card">
         <h3>🎵 Música para este video</h3>
-        ${music.mode === 'bed' ? `
+        ${!music ? `
+          <p class="muted">Este corte no tiene música todavía. Deja que el
+          modelo sugiera una pista acorde al ritmo y el tono, para agregarla
+          como audio nativo al publicar en IG/TikTok (sin incrustar audio, sin
+          reclamos de copyright).</p>
+          <div class="review-actions">
+            <button class="primary compact" id="music-suggest">Sugerir música</button>
+            <button class="secondary compact" id="music-set-bed">Incorporar música al MP4…</button>
+          </div>`
+        : music.mode === 'bed' ? `
           <p class="muted">Este corte lleva música incorporada en el MP4
           (mezclada y bajada bajo la voz). Para IG/TikTok, considera quitarla y
           usar audio nativo — mejor alcance y sin reclamos de copyright.</p>
           <button class="secondary compact" id="music-remove">Quitar música incorporada</button>` : `
-          <p class="muted">Al publicar en IG/TikTok, agrega audio de tendencia
+          <p class="muted">Al publicar en IG/TikTok, agrega esta música
           <em>dentro de la app</em> — favorece el alcance y evita reclamos de
-          copyright. Sugerencia según el ritmo de este corte:</p>
+          copyright:</p>
           <ul class="music-reco">
             ${music.name ? `<li><strong>Pista:</strong> ${escapeHtml(music.name)}</li>` : ''}
             ${music.vibe ? `<li><strong>Vibra:</strong> ${escapeHtml(music.vibe)}</li>` : ''}
             ${music.bpm ? `<li><strong>Tempo:</strong> ~${Math.round(music.bpm)} BPM</li>` : ''}
             ${music.energy ? `<li><strong>Energía:</strong> ${escapeHtml(music.energy)}</li>` : ''}
           </ul>
-          <p class="muted">¿Prefieres un MP4 autónomo (YouTube/vista previa)?
-          Incorpora una pista de fondo:</p>
-          <button class="secondary compact" id="music-set-bed">Incorporar música al MP4…</button>`}
-      </article>` : ''}
+          <div class="review-actions">
+            <button class="secondary compact" id="music-suggest">Otra sugerencia</button>
+            <button class="secondary compact" id="music-set-bed">Incorporar al MP4…</button>
+            <button class="ghost compact" id="music-remove">Quitar</button>
+          </div>`}
+      </article>
       <article class="card style-card">
         <h3>🎬 Estilo de edición</h3>
         <p class="muted">Apertura y cierre con fundido a negro. ${fadesLabel(project.plan)}</p>
@@ -1498,6 +1523,7 @@ function wireHandlers() {
   $('#prepare-export')?.addEventListener('click', prepareExport);
   $('#opentake-place')?.addEventListener('click', openTakePlace);
   $('#opentake-sync')?.addEventListener('click', openTakeSyncPreview);
+  $('#music-suggest')?.addEventListener('click', musicSuggest);
   $('#music-remove')?.addEventListener('click', musicRemove);
   $('#music-set-bed')?.addEventListener('click', musicSetBed);
   document.querySelectorAll('[data-fades]').forEach((btn) => {

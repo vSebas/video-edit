@@ -1111,3 +1111,34 @@ class TestSyncBackRefitHelpers:
         plan["project"]["duration_seconds"] = 6.0  # title starts past the end
         _clamp_titles_to_duration(plan)
         assert plan["tracks"][2]["events"] == []
+
+
+class TestMusicRecommendationOp:
+    def test_set_music_recommendation_installs_recommended_track(self) -> None:
+        candidate, summary = apply_op(
+            _plan(), {"op": "set_music_recommendation",
+                      "name": "Sunset Lover — Petit Biscuit", "vibe": "chill",
+                      "bpm": 95, "energy": "medium"}, INVENTORY)
+        ev = _music_events_of(candidate)[0]
+        assert ev["music"]["mode"] == "recommended"
+        assert ev["music"]["recommended"]["name"] == "Sunset Lover — Petit Biscuit"
+        assert ev["music"]["recommended"]["bpm"] == 95
+        assert ev["asset_id"] is None            # nothing burned
+        assert "Petit Biscuit" in summary
+
+    def test_recommendation_bounds_bpm_and_energy(self) -> None:
+        candidate, _ = apply_op(
+            _plan(), {"op": "set_music_recommendation", "name": "x",
+                      "bpm": 999, "energy": "supersonic"}, INVENTORY)
+        rec = _music_events_of(candidate)[0]["music"]["recommended"]
+        assert rec["bpm"] is None                # out of [30,300] -> null
+        assert rec["energy"] is None             # not a valid enum -> null
+
+    def test_recommendation_replaces_existing_music(self) -> None:
+        c1, _ = apply_op(_plan(), {"op": "set_music_recommendation",
+                                   "name": "first"}, INVENTORY)
+        c2, _ = apply_op(c1, {"op": "set_music_recommendation",
+                              "name": "second"}, INVENTORY)
+        music_tracks = [t for t in c2["tracks"] if t.get("role") == "music"]
+        assert len(music_tracks) == 1            # overwrites, never stacks
+        assert music_tracks[0]["events"][0]["music"]["recommended"]["name"] == "second"

@@ -122,8 +122,8 @@ class PlanCommandRequest(BaseModel):
 # Ops exposed to deterministic UI controls (no LLM). Kept narrow on purpose:
 # these are the direct-manipulation controls the UI renders buttons for.
 _DIRECT_UI_OPS = {
-    "set_music_bed", "remove_music", "edit_caption", "remove_caption",
-    "set_transition", "set_fades",
+    "set_music_bed", "set_music_recommendation", "remove_music",
+    "edit_caption", "remove_caption", "set_transition", "set_fades",
 }
 
 
@@ -493,6 +493,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return project_call(
             lambda: projects.plan_command_apply(project_id, proposal_id)
         )
+
+    @application.post("/api/projects/{project_id}/plan/music/suggest")
+    def plan_music_suggest(project_id: str):
+        return project_call(lambda: projects.suggest_music(project_id))
 
     @application.post("/api/projects/{project_id}/plan/op")
     def plan_op_propose(project_id: str, request: PlanOpRequest):
