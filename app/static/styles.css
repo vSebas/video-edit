@@ -819,3 +819,6 @@ input[type="file"] {
 .music-reco { margin: 8px 0; padding-left: 18px; }
 .music-reco li { margin: 3px 0; }
 .music-alts { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+.music-group { margin-top: 6px; }
+.music-group-label { display: block; font-size: 0.75em; color: var(--muted, #bbb);
+  text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 3px; }

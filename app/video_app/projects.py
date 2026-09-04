@@ -1680,16 +1680,19 @@ class ProjectService:
         provider: str = "qwen",
         model: str | None = None,
     ) -> dict:
-        """Discover background music for THIS cut and install the top pick as a
-        recommended-mode track. Separates INTENT (mood/energy/tempo, from the
-        concept and the measured style) from CATALOG (real tracks from a
-        provider): a real platform provider (the official Instagram Audio API,
-        when a token is configured) is preferred; otherwise the language model
-        NAMES plausible tracks as a fallback. Late-bound — a track to add
-        natively when posting, no audio burned. Returns the ranked candidate list
-        so the UI can offer alternates."""
+        """Discover background music for THIS cut, PER PLATFORM (a couple for
+        TikTok, a couple for Instagram — the same track is not always on both),
+        and install the top pick. Separates INTENT (mood/energy/tempo, from the
+        concept and the measured style) from CATALOG (real tracks): a real
+        platform provider is preferred (the official Instagram Audio API and a
+        config-driven TikTok source, when configured); otherwise the language
+        model NAMES plausible tracks for that platform as a fallback. Late-bound
+        — a track to add natively when posting, no audio burned. Returns the
+        candidates so the UI can group by platform and offer alternates."""
+        import dataclasses
+
         from .music import ModelMusicProvider, build_intent, discover
-        from .music_providers import InstagramMusicProvider
+        from .music_providers import InstagramMusicProvider, TikTokMusicProvider
 
         project = self.get_project(project_id)
         plan = project.get("plan")
@@ -1700,10 +1703,10 @@ class ProjectService:
              if c["concept_id"] == plan.get("concept_id")),
             {},
         )
-        intent = build_intent(
+        base_intent = build_intent(
             concept, plan.get("style_application"),
             plan["project"]["duration_seconds"],
-            platform_targets=["instagram"],
+            platform_targets=["tiktok", "instagram"],
         )
 
         client = ChatClient(resolve_provider(
@@ -1713,14 +1716,25 @@ class ProjectService:
         def chat(messages: list[dict]) -> str:
             return client.chat(messages, json_object=True, temperature=0.7)["content"]
 
-        # real platform provider first, model fallback second
-        providers = [InstagramMusicProvider(), ModelMusicProvider(chat)]
-        try:
-            candidates, source = discover(intent, providers)
-        except ProviderError as exc:
-            raise ProjectError(f"The music model failed: {exc}") from exc
-        except Exception as exc:  # noqa: BLE001
-            raise ProjectError(f"Music discovery failed: {exc}") from exc
+        real = {
+            "instagram": InstagramMusicProvider(),
+            "tiktok": TikTokMusicProvider(),
+        }
+        candidates: list = []
+        sources: dict[str, str] = {}
+        for platform in ("tiktok", "instagram"):
+            intent = dataclasses.replace(base_intent, platform_targets=[platform])
+            providers = [real[platform], ModelMusicProvider(chat, platform=platform)]
+            try:
+                found, source = discover(intent, providers)
+            except ProviderError as exc:
+                raise ProjectError(f"The music model failed: {exc}") from exc
+            except Exception as exc:  # noqa: BLE001
+                raise ProjectError(f"Music discovery failed ({platform}): {exc}") from exc
+            for cand in found[:2]:
+                cand.platform = cand.platform or platform
+                candidates.append(cand)
+            sources[platform] = source
         if not candidates:
             raise ProjectError("No se encontró música para este corte")
 
@@ -1730,7 +1744,7 @@ class ProjectService:
         applied = self.plan_command_apply(project_id, proposed["proposal_id"])
         return {
             **applied,
-            "source": source,
+            "sources": sources,
             "candidates": [c.to_recommended() for c in candidates],
         }
 

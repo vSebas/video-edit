@@ -33,6 +33,11 @@ services:
       INSTAGRAM_ACCESS_TOKEN: "${INSTAGRAM_ACCESS_TOKEN:-}"
       INSTAGRAM_GRAPH_URL: "${INSTAGRAM_GRAPH_URL:-}"
       INSTAGRAM_API_VERSION: "${INSTAGRAM_API_VERSION:-}"
+      MUSIC_TIKTOK_API_URL: "${MUSIC_TIKTOK_API_URL:-}"
+      MUSIC_TIKTOK_TRENDING_URL: "${MUSIC_TIKTOK_TRENDING_URL:-}"
+      MUSIC_TIKTOK_API_KEY: "${MUSIC_TIKTOK_API_KEY:-}"
+      MUSIC_TIKTOK_REGION: "${MUSIC_TIKTOK_REGION:-}"
+      MUSIC_TIKTOK_FIELD_MAP: "${MUSIC_TIKTOK_FIELD_MAP:-}"
       # Set this before exposing the port beyond localhost: without it the
       # API is open to anyone who can reach it (footage, deletion, paid calls).
       VIDEO_EDITING_TOKEN: "${VIDEO_EDITING_TOKEN:-}"

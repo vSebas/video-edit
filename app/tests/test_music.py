@@ -107,3 +107,30 @@ def test_instagram_provider_normalizes_official_fields() -> None:
     assert cand.account_usable is True
     assert cand.trend_state == "rising"
     assert cand.provenance == "instagram_audio_api"
+
+
+def test_model_provider_tags_platform() -> None:
+    payload = {"candidates": [{"title": "TT track", "artist": "A", "bpm": 130}]}
+    provider = ModelMusicProvider(lambda m: json.dumps(payload), platform="tiktok")
+    out = provider.search_audio(MusicIntent(platform_targets=["tiktok"]))
+    assert out[0].platform == "tiktok"
+    assert out[0].to_recommended()["platform"] == "tiktok"
+
+
+def test_tiktok_provider_disabled_without_url() -> None:
+    from video_app.music_providers import TikTokMusicProvider
+    assert TikTokMusicProvider(env={}).available() is False
+    assert TikTokMusicProvider(env={"MUSIC_TIKTOK_API_URL": "https://x"}).available() is True
+
+
+def test_tiktok_provider_normalizes_with_field_map() -> None:
+    from video_app.music_providers import TikTokMusicProvider
+    tt = TikTokMusicProvider(env={
+        "MUSIC_TIKTOK_API_URL": "https://x",
+        "MUSIC_TIKTOK_FIELD_MAP": '{"id":"clip_id","artist":"author_name"}',
+    })
+    cand = tt._normalize({"clip_id": "77", "title": "Boom", "author_name": "DJ"}, trending=True)
+    assert cand.platform == "tiktok"
+    assert cand.platform_audio_id == "77"
+    assert cand.artist == "DJ"
+    assert cand.trend_state == "rising"

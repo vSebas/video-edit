@@ -951,20 +951,39 @@ function musicRecommendation(plan) {
   };
 }
 
-// Alternate candidates from the last suggestion, minus the one already applied.
+// Alternate candidates from the last suggestion, grouped by platform (TikTok /
+// Instagram) since the same track is not always available on both.
 function musicAlternatesHtml(current) {
-  const alts = (state.musicCandidates || [])
-    .map((c, i) => ({ c, i }))
-    .filter(({ c }) => (c.name || '') !== (current.name || ''));
-  if (!alts.length) return '';
-  return `
-    <p class="muted" style="margin-top:.4rem">Otras opciones:</p>
+  const all = (state.musicCandidates || []).map((c, i) => ({ c, i }));
+  if (!all.length) return '';
+  const groups = [
+    ['tiktok', 'TikTok'],
+    ['instagram', 'Instagram'],
+  ];
+  const sections = groups.map(([key, label]) => {
+    const opts = all.filter(({ c }) => (c.platform || '') === key);
+    if (!opts.length) return '';
+    return `
+      <div class="music-group">
+        <span class="music-group-label">Para ${label}</span>
+        <div class="music-alts">
+          ${opts.slice(0, 3).map(({ c, i }) => `
+            <button class="${(c.name || '') === (current.name || '') ? 'secondary' : 'ghost'} compact" data-music-use="${i}">
+              ${escapeHtml(c.name || c.vibe || 'opción')}${c.bpm ? ` · ${Math.round(c.bpm)} BPM` : ''}
+            </button>`).join('')}
+        </div>
+      </div>`;
+  }).join('');
+  // candidates with no platform tag (older model-only) fall back to a flat list
+  const untagged = all.filter(({ c }) => !c.platform);
+  const flat = untagged.length && !sections ? `
     <div class="music-alts">
-      ${alts.slice(0, 4).map(({ c, i }) => `
-        <button class="ghost compact" data-music-use="${i}">
-          ${escapeHtml(c.name || c.vibe || 'opción')}${c.bpm ? ` · ${Math.round(c.bpm)} BPM` : ''}
-        </button>`).join('')}
-    </div>`;
+      ${untagged.slice(0, 4).map(({ c, i }) => `
+        <button class="ghost compact" data-music-use="${i}">${escapeHtml(c.name || c.vibe || 'opción')}</button>`).join('')}
+    </div>` : '';
+  return (sections || flat)
+    ? `<p class="muted" style="margin-top:.4rem">Opciones por plataforma:</p>${sections}${flat}`
+    : '';
 }
 
 // Deterministic op → propose (no LLM) → apply → re-render. Mirrors the AI-edit
@@ -1011,12 +1030,11 @@ async function musicSuggest() {
   try {
     setBusy('Buscando música', ['Buscando pistas acordes al corte'], 0);
     const result = await api(`/api/projects/${projectId}/plan/music/suggest`, { method: 'POST' });
-    // remember the alternates so the user can switch without re-searching
+    // remember the alternates (per platform) so the user can switch without re-searching
     state.musicCandidates = Array.isArray(result?.candidates) ? result.candidates : [];
-    state.musicSource = result?.source || '';
+    state.musicSources = result?.sources || {};
     state.busy = null;
-    const via = state.musicSource === 'instagram' ? ' (Instagram)' : '';
-    notice(`Sugerencia de música lista${via} — mírala en Publicar.`);
+    notice('Opciones de música listas — TikTok e Instagram en Publicar.');
     await loadProject(projectId);
   } catch (error) {
     state.busy = null;

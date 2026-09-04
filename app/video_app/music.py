@@ -232,8 +232,9 @@ class ModelMusicProvider:
 
     name = "model"
 
-    def __init__(self, chat: Callable[[list[dict]], str]):
+    def __init__(self, chat: Callable[[list[dict]], str], platform: str | None = None):
         self._chat = chat
+        self._platform = platform
 
     def available(self) -> bool:
         return True
@@ -241,13 +242,21 @@ class ModelMusicProvider:
     def _ask(self, intent: MusicIntent, want: int) -> list[MusicCandidate]:
         bpm = intent.bpm_preferred or "desconocido"
         mood = ", ".join(intent.mood) or "sin tono marcado"
+        # per-platform prompting: TikTok and Instagram surface different sounds,
+        # and the same track is not always on both, so ask for the platform's own
+        platform = self._platform or (intent.platform_targets or [None])[0]
+        where = {
+            "tiktok": "TikTok (biblioteca de sonidos de TikTok)",
+            "instagram": "Instagram Reels (biblioteca de audio de Instagram)",
+        }.get(platform, "Instagram/TikTok")
         messages = [
             {"role": "system", "content": (
-                "Sugieres MÚSICA DE FONDO para un vlog corto que el creador "
-                "agregará como audio nativo al publicar en Instagram/TikTok (no "
-                "se incrusta audio, no hay licencias). Propón pistas concretas y "
-                "buscables: nombre de canción + artista real, ajustadas al tempo "
-                "y energía. Responde SOLO JSON: "
+                f"Sugieres MÚSICA DE FONDO para un vlog corto que el creador "
+                f"agregará como audio nativo en {where} al publicar (no se "
+                "incrusta audio, no hay licencias). Propón pistas concretas y "
+                "buscables que probablemente estén disponibles en esa "
+                "plataforma: nombre de canción + artista real, ajustadas al "
+                "tempo y energía. Responde SOLO JSON: "
                 '{"candidates":[{"title":"...","artist":"...","vibe":"<breve, es>",'
                 '"bpm":<30-300 o null>,"energy":"low|medium|high"}]}'
             )},
@@ -268,6 +277,7 @@ class ModelMusicProvider:
                 continue
             out.append(MusicCandidate(
                 provider=self.name,
+                platform=platform,
                 title=(str(row.get("title")).strip() or None) if row.get("title") else None,
                 artist=(str(row.get("artist")).strip() or None) if row.get("artist") else None,
                 vibe=(str(row.get("vibe")).strip()[:120] or None) if row.get("vibe") else None,
