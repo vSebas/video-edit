@@ -2,10 +2,18 @@
 <html lang="es">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="color-scheme" content="dark" />
     <title>Vlog Studio</title>
     <meta http-equiv="Cache-Control" content="no-cache" />
+    <!-- PWA: installable phone app (Safari → Compartir → Añadir a inicio) -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#1a1410" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Vlog Studio" />
+    <link rel="apple-touch-icon" href="/icons/icon-180.png" />
+    <link rel="icon" type="image/png" href="/icons/icon-192.png" />
     <link rel="stylesheet" href="/styles.css?v=28" />
   </head>
   <body>
@@ -88,6 +96,15 @@
       </form>
     </dialog>
 
-    <script type="module" src="/app.js?v=53"></script>
+    <script type="module" src="/app.js?v=54"></script>
+    <script>
+      // Register the service worker for the installable PWA shell. Kept out of
+      // app.js so a shell update doesn't depend on the module bundle loading.
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js').catch(() => {});
+        });
+      }
+    </script>
   </body>
 </html>

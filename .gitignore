@@ -25,6 +25,9 @@
 *.jpg
 *.jpeg
 *.png
+# but the PWA app icons ARE committed app assets, not generated media
+!app/static/icons/
+!app/static/icons/*.png
 *.opentake/
 
 # Local environments, caches, dependencies, and logs

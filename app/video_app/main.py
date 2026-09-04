@@ -730,6 +730,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return FileResponse(path, media_type=media_type, filename=path.name if kind != "render" else None)
 
     static_dir = Path(__file__).resolve().parent.parent / "static"
+
+    # PWA shell files need explicit content types / cache headers that the plain
+    # static mount can't guarantee (esp. the .webmanifest MIME). Registered
+    # before the catch-all mount so they take precedence.
+    @application.get("/manifest.webmanifest")
+    def manifest():
+        return FileResponse(
+            static_dir / "manifest.webmanifest",
+            media_type="application/manifest+json",
+        )
+
+    @application.get("/sw.js")
+    def service_worker():
+        # no-cache so a shell/service-worker update is picked up promptly
+        return FileResponse(
+            static_dir / "sw.js",
+            media_type="application/javascript",
+            headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"},
+        )
+
     application.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
     return application
 

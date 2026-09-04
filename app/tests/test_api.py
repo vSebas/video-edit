@@ -88,3 +88,23 @@ def test_generic_media_folder_is_indexed_without_inventing_semantics(tmp_path):
         if source.exists():
             source.rmdir()
 
+
+
+def test_pwa_shell_is_served(tmp_path):
+    """The installable-PWA shell files serve with the right content types."""
+    c = client(tmp_path)
+    manifest = c.get("/manifest.webmanifest")
+    assert manifest.status_code == 200
+    assert manifest.headers["content-type"].startswith("application/manifest+json")
+    body = manifest.json()
+    assert body["display"] == "standalone"
+    assert any(i["sizes"] == "512x512" for i in body["icons"])
+
+    sw = c.get("/sw.js")
+    assert sw.status_code == 200
+    assert "javascript" in sw.headers["content-type"]
+    assert sw.headers.get("Service-Worker-Allowed") == "/"
+    # the worker must never cache dynamic /api content (review freshness)
+    assert "/api/" in sw.text
+
+    assert c.get("/icons/icon-192.png").status_code == 200
