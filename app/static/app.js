@@ -2161,9 +2161,23 @@ async function refreshDriveInbox() {
 }
 
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') refreshDriveInbox();
-  else clearTimeout(inboxPollTimer);
+  if (document.visibilityState === 'visible') {
+    refreshDriveInbox();
+    maybeRefreshActiveProject();
+  } else clearTimeout(inboxPollTimer);
 });
+
+// Reopening the installed PWA must never show a stale cut: re-fetch the active
+// project when the app regains focus — unless the user is mid-action (a job is
+// running, a dialog is open, or they're typing an edit), and stay on the cached
+// view when offline.
+async function maybeRefreshActiveProject() {
+  if (!state.activeProjectId || state.busy) return;
+  if (document.querySelector('dialog[open]')) return;
+  const el = document.activeElement;
+  if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') && el.value) return;
+  try { await loadProject(state.activeProjectId); } catch { /* offline: keep cached view */ }
+}
 
 async function importFromDrive(folder) {
   // progress lives in the Drive banner — the import belongs to its own
