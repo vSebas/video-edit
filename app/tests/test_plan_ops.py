@@ -937,11 +937,38 @@ class TestTransitionClamping:
         assert v01["transition_out"]["duration_seconds"] <= 3.0
         assert v01["transition_out"]["duration_seconds"] == 3.0  # min(3, v01=3, v02=4)
 
-    def test_set_fades_clamps_to_budget(self) -> None:
+    def test_set_fades_clamps_per_side_to_half(self) -> None:
+        # Each side is clamped to half the cut (the renderer's cap); the sides
+        # are clamped INDEPENDENTLY so one never mutates the other.
         plan = _plan()
-        plan["project"]["duration_seconds"] = 3.0  # third-of-cut budget = 1.0s
+        plan["project"]["duration_seconds"] = 3.0  # per-side cap = 1.5s
         candidate, _ = apply_op(
             plan, {"op": "set_fades", "intro_seconds": 3, "outro_seconds": 0},
             INVENTORY)
         t = candidate["transitions"]
-        assert t["intro_fade_seconds"] + t["outro_fade_seconds"] <= 1.0 + 1e-6
+        assert t["intro_fade_seconds"] == 1.5
+        assert t["outro_fade_seconds"] == 0.0
+
+    def test_partial_set_fades_never_mutates_other_side(self) -> None:
+        # Regression: rescaling a pair silently changed the untouched side.
+        plan = _plan()
+        plan["project"]["duration_seconds"] = 1.5
+        plan["transitions"] = {"intro_fade_seconds": 0.2, "outro_fade_seconds": 0.3}
+        candidate, _ = apply_op(
+            plan, {"op": "set_fades", "intro_seconds": 0.4}, INVENTORY)
+        assert candidate["transitions"]["outro_fade_seconds"] == 0.3  # untouched
+
+
+class TestTransitionSeamGuards:
+    def test_set_transition_refused_on_final_scene(self) -> None:
+        with pytest.raises(PlanOpError, match="última"):
+            apply_op(_plan(), {"op": "set_transition", "event_id": "v03",
+                               "type": "fade_black"}, INVENTORY)
+
+    def test_set_transition_refused_across_gap(self) -> None:
+        plan = _plan()
+        # push v02 later so v01 -> v02 is no longer contiguous
+        plan["tracks"][0]["events"][1]["timeline_start_seconds"] = 4.0
+        with pytest.raises(PlanOpError, match="hueco"):
+            apply_op(plan, {"op": "set_transition", "event_id": "v01",
+                            "type": "fade_black"}, INVENTORY)

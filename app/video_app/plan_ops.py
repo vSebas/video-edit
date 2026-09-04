@@ -783,15 +783,25 @@ def _apply_set_transition(plan: dict, op: dict, assets: dict) -> str:
     dur = _finite(op.get("duration_seconds"), 0.5, "duration_seconds")
     if not 0 < dur <= 3:
         raise PlanOpError("duration_seconds must be within (0, 3]")
-    # A dip is split across the two adjacent clips, so it cannot exceed the
-    # shorter of them — store only what the renderer can actually deliver, so
-    # the plan and the confirmation don't overstate the fade.
+    # A dip lives on the seam to the NEXT scene, so it only renders when there
+    # is a contiguous successor. Refuse it on the final scene or across a gap
+    # rather than storing a fade the renderer will drop.
     ordered = sorted(video["events"], key=lambda e: e["timeline_start_seconds"])
     pos = ordered.index(event)
-    limits = [event["duration_seconds"]]
-    if pos + 1 < len(ordered):
-        limits.append(ordered[pos + 1]["duration_seconds"])
-    dur = min(dur, *limits)
+    if pos + 1 >= len(ordered):
+        raise PlanOpError("esta escena es la última — no hay corte que fundir")
+    successor = ordered[pos + 1]
+    this_end = event["timeline_start_seconds"] + event["duration_seconds"]
+    if abs(successor["timeline_start_seconds"] - this_end) > 1e-6:
+        raise PlanOpError("hay un hueco tras esta escena — no hay corte contiguo")
+
+    def _span(e):
+        # the fade sits on the rendered (source-span) length, not timeline time
+        return e["source_end_seconds"] - e["source_start_seconds"]
+
+    # A dip is split across the two adjacent clips, so it cannot exceed the
+    # shorter of their rendered lengths — store only what renders.
+    dur = min(dur, _span(event), _span(successor))
     if dur <= 0:
         raise PlanOpError("this scene is too short for a fade")
     event["transition_out"] = {"type": kind, "duration_seconds": round(dur, 3)}
@@ -811,15 +821,17 @@ def _apply_set_fades(plan: dict, op: dict, assets: dict) -> str:
                     float(current.get("outro_fade_seconds") or 0.0), "outro_seconds")
     if not 0 <= intro <= 3 or not 0 <= outro <= 3:
         raise PlanOpError("intro_seconds and outro_seconds must be 0..3")
-    # Store only what the renderer will deliver (fades are capped to a third of
-    # the cut), so a 3s fade on a 2s vlog isn't recorded/announced as 3s.
-    from .planning import _scale_transitions
-
-    plan["transitions"] = _scale_transitions(
-        intro, outro, float(plan["project"]["duration_seconds"])
-    )
-    intro = plan["transitions"]["intro_fade_seconds"]
-    outro = plan["transitions"]["outro_fade_seconds"]
+    # Clamp each side to what the renderer will actually deliver (it caps each
+    # fade at half the cut), so the stored/announced value is honest. Clamp per
+    # side, NOT as a rescaled pair — rescaling would silently change the side
+    # the caller did not touch.
+    cap = float(plan["project"]["duration_seconds"]) / 2.0
+    intro = round(min(intro, cap), 3)
+    outro = round(min(outro, cap), 3)
+    plan["transitions"] = {
+        "intro_fade_seconds": intro,
+        "outro_fade_seconds": outro,
+    }
     if intro == 0 and outro == 0:
         return "Fundidos de apertura y cierre quitados"
     return f"Fundidos: apertura {intro:g}s, cierre {outro:g}s"

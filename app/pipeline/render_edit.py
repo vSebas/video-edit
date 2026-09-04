@@ -334,6 +334,16 @@ def main() -> None:
     # outgoing clip has a successor — a gap or the final clip has no seam.
     ordered_video = sorted(video_events, key=lambda e: e["timeline_start_seconds"])
 
+    # Fail closed on any transition this build can't render — on EVERY clip,
+    # including the last or only one — rather than silently dropping it.
+    for ev in ordered_video:
+        kind = (ev.get("transition_out") or {}).get("type")
+        if kind not in (None, "cut", "fade_black", "fade_white"):
+            raise ValueError(
+                f"transition type {kind!r} on {ev['event_id']} is not "
+                "renderable in this build"
+            )
+
     def _rendered_len(ev):
         # the actual length of the trimmed segment the fade sits on — source
         # span, not the timeline duration (they differ under a playback_rate)
@@ -583,14 +593,19 @@ def main() -> None:
         ) or "0"
         # Short in/out fades so a bed that starts or ends on a non-zero sample
         # cannot click (the primary/voiceover clips already do this per-segment).
+        # The fade-out sits at the bed's ACTUAL end — a non-looping bed shorter
+        # than the cut ends before the plan does, so a fade scheduled at the plan
+        # end would never fire.
         mus_end = round(duration, 3)
+        bed_end = round(min(duration, float(music_event["duration_seconds"])), 3)
+        fade_out_st = round(max(0.0, bed_end - 0.02), 3)
         filters.append(
             f"[{music_input_index}:a:0]"
             f"atrim=start=0:end={mus_end},asetpts=PTS-STARTPTS,"
             f"volume={gain}dB,"
             f"volume={duck}dB:enable='{enable}',"
             f"afade=t=in:st=0:d=0.02,"
-            f"afade=t=out:st={round(mus_end - 0.02, 3)}:d=0.02,"
+            f"afade=t=out:st={fade_out_st}:d=0.02,"
             f"aresample=48000,"
             f"aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[mus]"
         )
