@@ -1042,8 +1042,9 @@ def _scale_transitions(intro: float, outro: float, timeline: float) -> dict:
     across a duration change stays valid without silently shrinking a side that
     still fits."""
     # Floor the cap to the millisecond grid so the rounded value can NEVER
-    # exceed half the cut (plain round() could bump 0.5166665 up to 0.517).
-    cap = math.floor(_fade_cap(timeline) * 1000) / 1000
+    # exceed half the cut (plain round() could bump 0.5166665 up to 0.517). The
+    # 1e-6 epsilon keeps a value already on the grid (1.005) from under-flooring.
+    cap = math.floor(_fade_cap(timeline) * 1000 + 1e-6) / 1000
     return {"intro_fade_seconds": round(min(max(0.0, float(intro)), cap), 3),
             "outro_fade_seconds": round(min(max(0.0, float(outro)), cap), 3)}
 
