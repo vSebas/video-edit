@@ -998,3 +998,30 @@ class TestRippleRescalesFades:
         c2, _ = apply_op(c1, {"op": "delete_event", "event_id": "v03"}, INVENTORY)
         assert c2["project"]["duration_seconds"] == 3.0
         assert c2["transitions"]["outro_fade_seconds"] == 1.5
+
+
+class TestDipReconciliation:
+    def test_deleting_successor_resets_predecessor_dip_to_cut(self) -> None:
+        plan = _plan()
+        # v01 dips into v02; delete v02 so v01's seam partner is gone
+        plan["tracks"][0]["events"][0]["transition_out"] = {
+            "type": "fade_black", "duration_seconds": 0.5}
+        candidate, _ = apply_op(
+            plan, {"op": "delete_event", "event_id": "v02"}, INVENTORY)
+        v01 = next(e for e in candidate["tracks"][0]["events"]
+                   if e["event_id"] == "v01")
+        # v01 is still contiguous with v03 (which shifted up), so the dip stays a
+        # dip — but its duration is re-clamped to the surviving neighbours' spans
+        assert v01["transition_out"]["type"] in ("fade_black", "cut")
+        assert v01["transition_out"]["duration_seconds"] <= 0.5
+
+    def test_deleting_final_clip_drops_predecessor_dip(self) -> None:
+        plan = _plan()
+        # v02 dips into v03 (the last clip); delete v03 so v02 becomes last
+        plan["tracks"][0]["events"][1]["transition_out"] = {
+            "type": "fade_white", "duration_seconds": 0.5}
+        candidate, _ = apply_op(
+            plan, {"op": "delete_event", "event_id": "v03"}, INVENTORY)
+        v02 = next(e for e in candidate["tracks"][0]["events"]
+                   if e["event_id"] == "v02")
+        assert v02["transition_out"]["type"] == "cut"  # no successor -> no dip

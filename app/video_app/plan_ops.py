@@ -98,6 +98,38 @@ def _op_number(op: dict, key: str) -> float:
     return value
 
 
+def _reconcile_dips(plan: dict) -> None:
+    """After a structural edit, make each per-cut dip match the new geometry: a
+    dip survives only on a clip that still has a CONTIGUOUS successor, and its
+    duration is re-clamped to the two clips' source spans. A dip whose seam
+    disappeared (the successor was deleted or a gap opened) or that no longer
+    fits becomes a plain cut — so the plan never claims a dip the renderer drops."""
+    video, _ = _primary_tracks(plan)
+    ordered = sorted(video["events"], key=lambda e: e["timeline_start_seconds"])
+    for i, ev in enumerate(ordered):
+        t = ev.get("transition_out") or {}
+        if t.get("type") not in ("fade_black", "fade_white"):
+            continue
+        cut = {"type": "cut", "duration_seconds": 0.0}
+        if i + 1 >= len(ordered):
+            ev["transition_out"] = cut
+            continue
+        nxt = ordered[i + 1]
+        this_end = ev["timeline_start_seconds"] + ev["duration_seconds"]
+        if abs(nxt["timeline_start_seconds"] - this_end) > 1e-6:
+            ev["transition_out"] = cut
+            continue
+
+        def _span(e):
+            return e["source_end_seconds"] - e["source_start_seconds"]
+
+        dur = min(float(t.get("duration_seconds") or 0.0), _span(ev), _span(nxt))
+        ev["transition_out"] = (
+            {"type": t["type"], "duration_seconds": round(dur, 3)}
+            if dur > 0 else cut
+        )
+
+
 def _caption_events(plan: dict) -> list[dict]:
     cap = next((t for t in plan["tracks"] if t.get("kind") == "caption"), None)
     return cap["events"] if cap else []
@@ -146,6 +178,7 @@ def _ripple(plan: dict, from_seconds: float, delta: float) -> None:
             plan["transitions"].get("outro_fade_seconds") or 0.0,
             plan["project"]["duration_seconds"],
         )
+    _reconcile_dips(plan)
     # The music bed spans the whole cut (it starts at 0, so the shift above
     # never touches it); re-fit it to the new duration. A looping bed keeps its
     # source range (the asset segment it loops) and only its timeline span
