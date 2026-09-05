@@ -6,6 +6,9 @@ services:
     build:
       context: ./app
       dockerfile: Dockerfile
+    # Come back automatically after a reboot/sleep or a crash, so the phone can
+    # always reach it (it stayed down for 37h after a reboot before this).
+    restart: unless-stopped
     init: true
     user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
     gpus: all
