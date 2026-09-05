@@ -8,8 +8,13 @@
 const CACHE = 'vlog-shell-v2';
 
 self.addEventListener('install', (event) => {
+  // Best-effort precache of the shell. cache.add() REJECTS on a non-2xx (e.g. a
+  // 401 from the token gate before the cookie is set), which would fail the
+  // whole install — so tolerate it and let the runtime cache fill in later.
   event.waitUntil(
-    caches.open(CACHE).then((c) => c.add('/')).then(() => self.skipWaiting())
+    caches.open(CACHE)
+      .then((c) => c.add('/').catch(() => {}))
+      .then(() => self.skipWaiting())
   );
 });
 
@@ -45,12 +50,17 @@ self.addEventListener('fetch', (event) => {
     ['document', 'script', 'style', 'image', 'manifest'].includes(request.destination);
   if (!isShell) return;
 
-  // Network-first, fall back to the cached shell when offline.
+  // Network-first, fall back to the cached shell when offline. Only cache a
+  // SUCCESSFUL (2xx) response: the app is token-gated, so an un-authenticated
+  // fetch returns 401 — caching that would pin a broken/blank shell on the
+  // phone (the real cause of "the phone shows an old/stale app").
   event.respondWith(
     fetch(request)
       .then((response) => {
-        const copy = response.clone();
-        caches.open(CACHE).then((c) => c.put(isNav ? '/' : request, copy)).catch(() => {});
+        if (response && response.ok) {
+          const copy = response.clone();
+          caches.open(CACHE).then((c) => c.put(isNav ? '/' : request, copy)).catch(() => {});
+        }
         return response;
       })
       .catch(() => caches.match(isNav ? '/' : request).then((r) => r || caches.match('/')))
