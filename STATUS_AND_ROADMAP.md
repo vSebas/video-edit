@@ -340,8 +340,8 @@ where the app actually uses them.
 - **Uploads from the iPhone**: browser upload with live percent on the
   sending device and a receiver-side banner in every open tab (ASGI-level
   byte counting); a per-clip endpoint for iOS Shortcuts' ~60 s timeout;
-  Tailscale (tailnet `seblearns@`) makes the same UI reachable from
-  anywhere at `pacman.tailf9616b.ts.net:8787`.
+  Tailscale (tailnet `cebas.martp@`) makes the same UI reachable from
+  anywhere at `pacman.tailce654a.ts.net:8787`.
 - **Google Drive VlogInbox** (the preferred async path): upload a day from
   the Drive app into `VlogInbox/<title>` with an optional `nota` text as
   the prompt; the UI banners waiting folders and one click imports —

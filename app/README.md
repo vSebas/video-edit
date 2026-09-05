@@ -19,7 +19,7 @@ docker compose up --build -d app
 ```
 
 Open <http://127.0.0.1:8787> (or from any device on the tailnet:
-`http://pacman.tailf9616b.ts.net:8787`).
+`http://pacman.tailce654a.ts.net:8787`).
 
 The UI (Spanish-only) is organized around the user journey in four
 workspaces — **Historia** (story cards, new-idea guidance, reference-style

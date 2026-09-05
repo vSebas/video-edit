@@ -28,7 +28,7 @@ docker compose up --build -d app
 ```
 
 Open <http://127.0.0.1:8787>, or from any device on the tailnet at
-`http://pacman.tailf9616b.ts.net:8787`. The port is bound to localhost by
+`http://pacman.tailce654a.ts.net:8787`. The port is bound to localhost by
 default; `VIDEO_EDITING_BIND=0.0.0.0` opens it to the network and should be
 paired with `VIDEO_EDITING_TOKEN` (see `app/README.md`). Override the port
 with `VIDEO_EDITING_APP_PORT`.
