@@ -577,6 +577,35 @@ class TestVoiceoverOps:
         assert all(e["vo_group"] == "g" for e in segs)   # group id preserved
         assert segs[0]["event_id"] == "vo-01"            # anchor kept
 
+    def test_cleanup_voiceover_handles_legacy_group_without_vo_group(self) -> None:
+        # A split created BEFORE vo_group existed (no field): the op must fall
+        # back to the same geometric grouping the service uses, so a removal in
+        # the SECOND segment is applied — never silently clamped away.
+        plan = _plan()
+        base = {"asset_id": "memo", "playback_rate": 1.0, "intent": "voiceover",
+                "observed_content": None, "confidence": 0.9, "reframe": None,
+                "transition_out": None, "text": None, "volume_db": None}
+        plan["tracks"].append({
+            "track_id": "vo1", "kind": "audio", "role": "voiceover", "events": [
+                {**base, "event_id": "vo-01", "source_start_seconds": 0.0,
+                 "source_end_seconds": 2.0, "timeline_start_seconds": 2.0,
+                 "duration_seconds": 2.0},
+                {**base, "event_id": "vo-02", "source_start_seconds": 4.0,
+                 "source_end_seconds": 8.0, "timeline_start_seconds": 4.0,
+                 "duration_seconds": 4.0}]})
+        inv = {"assets": [{"asset_id": "memo", "media_type": "audio",
+                           "duration_seconds": 8.0}]}
+        cleaned, _ = apply_op(plan, {
+            "op": "cleanup_voiceover", "event_id": "vo-01",
+            "remove_ranges": [[5.0, 6.0]]}, inv)   # range in the SECOND segment
+        segs = next(t for t in cleaned["tracks"]
+                    if t.get("role") == "voiceover")["events"]
+        assert [(e["source_start_seconds"], e["source_end_seconds"]) for e in segs] \
+            == [(0.0, 2.0), (4.0, 5.0), (6.0, 8.0)]   # removal actually applied
+        assert all(e.get("vo_group") for e in segs)     # group id now stamped
+        # ...and a fresh vg-NN, never the reusable anchor event id
+        assert segs[0]["vo_group"].startswith("vg-")
+
     def test_cleanup_voiceover_refuses_non_frame_aligned_source(self) -> None:
         placed = self._placed_vo()
         vo = next(t for t in placed["tracks"] if t.get("role") == "voiceover")

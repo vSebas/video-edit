@@ -571,11 +571,42 @@ def _apply_cleanup_voiceover(plan: dict, op: dict, assets: dict) -> str:
     # back from its first timeline start — no gaps, one atomic edit. For an
     # unsplit voiceover the group is just [event] (Codex review r2).
     gid = event.get("vo_group")
+    eps0 = 0.5 / fps
     if gid:
         group = [e for e in events if e.get("vo_group") == gid]
+        group.sort(key=lambda e: float(e.get("timeline_start_seconds") or 0.0))
     else:
-        group = [event]
-    group.sort(key=lambda e: float(e.get("timeline_start_seconds") or 0.0))
+        # LEGACY split (Phase B before vo_group existed): fall back to the SAME
+        # geometric walk the service uses — the maximal timeline-contiguous,
+        # source-ordered chain of same-asset 1x events containing this one — so
+        # candidates derived across the group are never silently clamped away by
+        # an op that only saw one segment (self-review 2026-09-06).
+        same = sorted(
+            (e for e in events
+             if e.get("asset_id") == event.get("asset_id")
+             and abs(float(e.get("playback_rate") or 1.0) - 1.0) <= 1e-6),
+            key=lambda e: float(e.get("timeline_start_seconds") or 0.0))
+        i = next(k for k, e in enumerate(same)
+                 if e["event_id"] == event["event_id"])
+        lo = i
+        while lo > 0:
+            p, c = same[lo - 1], same[lo]
+            if (abs((float(p["timeline_start_seconds"]) + float(p["duration_seconds"]))
+                    - float(c["timeline_start_seconds"])) <= eps0
+                    and float(c["source_start_seconds"]) >= float(p["source_end_seconds"]) - eps0):
+                lo -= 1
+            else:
+                break
+        hi = i
+        while hi + 1 < len(same):
+            c, n = same[hi], same[hi + 1]
+            if (abs((float(c["timeline_start_seconds"]) + float(c["duration_seconds"]))
+                    - float(n["timeline_start_seconds"])) <= eps0
+                    and float(n["source_start_seconds"]) >= float(c["source_end_seconds"]) - eps0):
+                hi += 1
+            else:
+                break
+        group = same[lo:hi + 1]
 
     # Validate the Phase-B group invariants: one asset, source-ordered and
     # non-overlapping, timeline-contiguous. If a segment was moved/reordered
