@@ -134,6 +134,92 @@ def detect_deadair(words: list[dict], threshold: float = DEADAIR_SECONDS) -> lis
     return out
 
 
+def voiceover_filler_candidates(words: list[dict]) -> list[dict]:
+    """Filler + dead-air SOURCE ranges in the voiceover, using the SAME
+    conservative policy as dialogue cleanup (`cleanup.PURE_FILLERS` /
+    `GAP_FILLERS` + thresholds) — so ordinary conjunctions/pronouns are never
+    flagged. Phase B (the reviewed VO-lane cut) consumes these; A0 only previews
+    dead-air. Each candidate is a removable [source_start, source_end] with a
+    reason and neighbour word ids for stable review."""
+    from .cleanup import (
+        DEAD_AIR_KEEP, DEAD_AIR_MIN, GAP_FILLERS, HESITATION_GAP, PURE_FILLERS,
+        WORD_PAD,
+    )
+
+    def norm(w: dict) -> str:
+        return re.sub(r"[^\wáéíóúñü]", "", str(w.get("word", "")).lower())
+
+    out: list[dict] = []
+    n = len(words)
+    for i, word in enumerate(words):
+        tok = norm(word)
+        nxt = norm(words[i + 1]) if i + 1 < n else ""
+        gap_after = (float(words[i + 1]["start_seconds"]) - float(word["end_seconds"])
+                     if i + 1 < n else 0.0)
+        reason = None
+        span = (float(word["start_seconds"]), float(word["end_seconds"]))
+        word_ids = [word["id"]]
+        if tok in PURE_FILLERS:
+            reason = f"muletilla «{tok}»"
+        elif tok in GAP_FILLERS and gap_after >= HESITATION_GAP:
+            reason = f"muletilla «{tok}» + pausa {gap_after:.2f}s"
+        elif f"{tok} {nxt}" in GAP_FILLERS and i + 1 < n:
+            next_gap = (float(words[i + 2]["start_seconds"]) - float(words[i + 1]["end_seconds"])
+                        if i + 2 < n else 0.0)
+            if next_gap >= HESITATION_GAP:
+                reason = f"muletilla «{tok} {nxt}» + pausa {next_gap:.2f}s"
+                span = (float(word["start_seconds"]), float(words[i + 1]["end_seconds"]))
+                word_ids = [word["id"], words[i + 1]["id"]]
+        if reason:
+            out.append({
+                "kind": "filler", "reason": reason,
+                "source_start_seconds": round(max(0.0, span[0] - WORD_PAD), 3),
+                "source_end_seconds": round(span[1] + WORD_PAD, 3),
+                "word_ids": word_ids,
+                "context": " ".join(norm(x) for x in words[max(0, i - 2):i + 3]),
+            })
+    # Dead air: silences longer than DEAD_AIR_MIN, keeping DEAD_AIR_KEEP of breath.
+    for a, b in zip(words, words[1:]):
+        gap = float(b["start_seconds"]) - float(a["end_seconds"])
+        if gap >= DEAD_AIR_MIN:
+            cut_start = float(a["end_seconds"]) + DEAD_AIR_KEEP / 2
+            cut_end = float(b["start_seconds"]) - DEAD_AIR_KEEP / 2
+            if cut_end > cut_start:
+                out.append({
+                    "kind": "dead_air", "reason": f"silencio {gap:.1f}s",
+                    "source_start_seconds": round(cut_start, 3),
+                    "source_end_seconds": round(cut_end, 3),
+                    "word_ids": [a["id"], b["id"]], "context": "",
+                })
+    return sorted(out, key=lambda c: c["source_start_seconds"])
+
+
+def compact_voiceover_segments(
+    src_start: float, src_end: float, remove: list[tuple[float, float]],
+) -> list[tuple[float, float]]:
+    """Given the VO's analysed [src_start, src_end] and the source ranges to
+    REMOVE, return the KEPT source segments (in order). Overlapping/adjacent
+    removals are merged; the picture is untouched, so the caller compacts these
+    onto the voiceover lane back-to-back (phase B)."""
+    merged: list[list[float]] = []
+    for r0, r1 in sorted((max(src_start, a), min(src_end, b)) for a, b in remove):
+        if r1 <= r0:
+            continue
+        if merged and r0 <= merged[-1][1] + 1e-6:
+            merged[-1][1] = max(merged[-1][1], r1)
+        else:
+            merged.append([r0, r1])
+    kept: list[tuple[float, float]] = []
+    cursor = src_start
+    for r0, r1 in merged:
+        if r0 > cursor + 1e-6:
+            kept.append((round(cursor, 3), round(r0, 3)))
+        cursor = max(cursor, r1)
+    if src_end > cursor + 1e-6:
+        kept.append((round(cursor, 3), round(src_end, 3)))
+    return kept
+
+
 def beat_timeline_window(
     beat: dict, event_source_start: float, event_timeline_start: float,
     playback_rate: float = 1.0,

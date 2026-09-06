@@ -137,6 +137,20 @@ class ChatMessageRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
 
 
+class VoiceoverCleanupCandidatesRequest(BaseModel):
+    # Optional: with exactly one voiceover the backend resolves it itself.
+    event_id: str | None = Field(default=None, max_length=64)
+
+
+class VoiceoverCleanupRequest(BaseModel):
+    event_id: str = Field(min_length=1, max_length=64)
+    # Selected candidate ids from a fresh preview (never raw source ranges).
+    candidate_ids: list[str] = Field(default_factory=list, max_length=200)
+    # The plan revision the preview was computed against; REQUIRED — a moved or
+    # unspecified plan is refused so the preview can never be silently bypassed.
+    base_revision: int
+
+
 class ModelPrefRequest(BaseModel):
     stage: str = Field(pattern=r"^[a-z_]{1,32}$")
     provider: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
@@ -575,6 +589,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def voiceover_analysis(project_id: str):
         return project_call(
             lambda: {"analysis": projects.load_voiceover_analysis(project_id)}
+        )
+
+    @application.post("/api/projects/{project_id}/voiceover/cleanup/candidates")
+    def voiceover_cleanup_candidates(
+        project_id: str, request: VoiceoverCleanupCandidatesRequest
+    ):
+        return project_call(
+            lambda: projects.voiceover_cleanup_candidates(
+                project_id, request.event_id)
+        )
+
+    @application.post("/api/projects/{project_id}/voiceover/cleanup/apply")
+    def voiceover_cleanup_apply(project_id: str, request: VoiceoverCleanupRequest):
+        return project_call(
+            lambda: projects.voiceover_cleanup_apply(
+                project_id, request.event_id, request.candidate_ids,
+                request.base_revision)
         )
 
     @application.get("/api/projects/{project_id}/chat")

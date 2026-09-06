@@ -110,3 +110,33 @@ def test_beat_visible_spans_handle_partial_broll_occlusion():
     assert ("B", 5.0, 6.0) in spans
     assert ("A", 1.0, 2.0) in spans
     assert ("A", 0.0, 1.0) not in spans   # occluded slice not visible
+
+
+def test_voiceover_filler_candidates_uses_conservative_policy():
+    from video_app.voiceover_analysis import voiceover_filler_candidates
+    words = assign_word_ids([
+        _w("Eh", 0.0, 0.2),                 # PURE_FILLER
+        _w("fui", 0.3, 0.6),
+        _w("o", 0.6, 0.75), _w("sea", 0.75, 1.0),   # "o sea" GAP_FILLER
+        _w("al", 1.5, 1.7),                 # 0.5s gap after "sea" -> qualifies
+        _w("lago", 4.0, 4.4),               # 2.3s dead air before this
+        _w("café", 4.4, 4.8),               # ordinary word "café" — NOT flagged
+    ])
+    found = voiceover_filler_candidates(words)
+    reasons = " ".join(c["reason"] for c in found)
+    assert "«eh»" in reasons                    # pure filler
+    assert "«o sea»" in reasons                 # contextual phrase + pause
+    assert any(c["kind"] == "dead_air" for c in found)   # long silence
+    # ordinary words never flagged
+    assert "café" not in reasons and "«al»" not in reasons
+
+
+def test_compact_voiceover_segments_keeps_non_removed_parts():
+    from video_app.voiceover_analysis import compact_voiceover_segments
+    # VO source 0-10; remove 2-3 and 5-6 -> keep 0-2, 3-5, 6-10
+    kept = compact_voiceover_segments(0.0, 10.0, [(2.0, 3.0), (5.0, 6.0)])
+    assert kept == [(0.0, 2.0), (3.0, 5.0), (6.0, 10.0)]
+    # merged/overlapping removals
+    assert compact_voiceover_segments(0.0, 10.0, [(2.0, 4.0), (3.5, 5.0)]) == [(0.0, 2.0), (5.0, 10.0)]
+    # removal at the very start
+    assert compact_voiceover_segments(0.0, 10.0, [(0.0, 1.0)]) == [(1.0, 10.0)]

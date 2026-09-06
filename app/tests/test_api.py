@@ -5,6 +5,8 @@ import subprocess
 import time
 from pathlib import Path
 
+import pytest
+
 from fastapi.testclient import TestClient
 
 from video_app.config import Settings
@@ -214,6 +216,139 @@ def test_analyze_voiceover_classifies_beats_and_excludes_own_audio(tmp_path, mon
     # persisted keyed by event, reloadable, and stamped fresh.
     loaded = svc.load_voiceover_analysis(pid, "vo-01")
     assert loaded["event_id"] == "vo-01" and loaded["stale"] is False
+
+
+def test_voiceover_cleanup_previews_and_applies_vo_lane_cut(tmp_path, monkeypatch):
+    """Phase B: cleanup previews conservative filler/dead-air ranges from the
+    fresh A0 transcript, then applies them as one confirm-gated VO-lane cut —
+    splitting the voiceover event and marking the A0 report stale (picture
+    untouched)."""
+    import video_app.speech as speech_mod
+    from video_app import projects as projects_mod
+    from video_app.config import Settings
+    from video_app.projects import ProjectService
+
+    root = tmp_path / "root"
+    runtime = root / "runtime"
+    pid = "vlog-clean"
+    pdir = runtime / pid
+    pdir.mkdir(parents=True)
+    (root / "footage" / pid).mkdir(parents=True)
+    (root / "footage" / pid / "vo.m4a").write_bytes(b"fake")
+
+    def _ev(event_id, asset_id, src_start, tl_start, dur, intent="scene",
+            observed=None):
+        return {
+            "event_id": event_id, "asset_id": asset_id,
+            "source_start_seconds": src_start,
+            "source_end_seconds": round(src_start + dur, 6),
+            "timeline_start_seconds": tl_start, "duration_seconds": dur,
+            "playback_rate": 1.0, "intent": intent,
+            "observed_content": observed, "confidence": 0.9,
+            "reframe": None, "transition_out": None, "text": None,
+            "volume_db": None,
+        }
+
+    plan = {
+        "schema_version": "edit-plan.v1", "revision": 3,
+        "generated_at": "2026-09-06T00:00:00Z",
+        "benchmark_id": "t", "concept_id": "c1",
+        "project": {"width": 1080, "height": 1920, "fps": 30,
+                    "duration_seconds": 12.0, "background_color": "black"},
+        "tracks": [
+            {"track_id": "v1", "kind": "video", "events": [
+                _ev("v01", "clip_cafe", 0.0, 0.0, 6.0,
+                    observed="Coffee poured at a cafe counter.")]},
+            {"track_id": "a1", "kind": "audio", "events": [
+                _ev("a01", "clip_cafe", 0.0, 0.0, 6.0)]},
+            {"track_id": "vo1", "kind": "audio", "role": "voiceover", "events": [
+                _ev("vo-01", "vo_note", 0.0, 2.0, 5.0, intent="voiceover")]},
+        ],
+    }
+    write_json(pdir / "project.json", {
+        "schema_version": "video-app-project.v1", "project_id": pid, "name": "VA",
+        "plan": plan,
+        "inventory": {"assets": [
+            {"asset_id": "vo_note", "media_type": "audio", "sha256": "abc",
+             "source_path": f"footage/{pid}/vo.m4a", "duration_seconds": 5.0},
+            {"asset_id": "clip_cafe", "media_type": "video",
+             "source_path": f"footage/{pid}/cafe.mp4", "duration_seconds": 6.0}]},
+    })
+    # The propose/apply flow reads and rewrites the durable plan file.
+    (pdir / "plan").mkdir()
+    write_json(pdir / "plan" / "edit-plan.json", plan)
+
+    # "Eh" is a pure filler; the 2.3s gap before "nadé" is dead air.
+    segs = [{"words": [
+        {"word": "Eh", "start_seconds": 0.0, "end_seconds": 0.2},
+        {"word": "tomé", "start_seconds": 0.3, "end_seconds": 0.7},
+        {"word": "café.", "start_seconds": 0.7, "end_seconds": 1.1},
+        {"word": "nadé.", "start_seconds": 3.4, "end_seconds": 3.9},
+    ]}]
+    monkeypatch.setattr(speech_mod, "_load_model", lambda size: (object(), "small", "cpu"))
+    monkeypatch.setattr(speech_mod, "transcribe_asset", lambda m, p: (segs, {}))
+
+    class FakeClient:
+        def __init__(self, config):
+            pass
+
+        def chat(self, messages, **kwargs):
+            return {"content": json.dumps({"beats": [
+                {"beat_id": "b001", "class": "nonvisual",
+                 "evidence_ids": [], "rationale": "narration"}]})}
+
+    monkeypatch.setattr(projects_mod, "resolve_provider", lambda *a, **k: None)
+    monkeypatch.setattr(projects_mod, "ChatClient", FakeClient)
+
+    svc = ProjectService(Settings(root=root, runtime=runtime))
+    monkeypatch.setattr(svc, "approved_evidence", lambda pid_: [])
+
+    svc.analyze_voiceover(pid)
+
+    preview = svc.voiceover_cleanup_candidates(pid, "vo-01")
+    cands = preview["candidates"]
+    reasons = " ".join(c["reason"] for c in cands)
+    assert "«eh»" in reasons                       # pure filler flagged
+    assert any(c["kind"] == "dead_air" for c in cands)   # long silence flagged
+    assert all(c["id"] for c in cands)             # stable ids for by-id selection
+    base_rev = preview["plan_revision"]
+
+    # A stale preview revision is refused (the plan moved underneath).
+    with pytest.raises(projects_mod.ProjectError):
+        svc.voiceover_cleanup_apply(
+            pid, "vo-01", [cands[0]["id"]], base_revision=base_rev + 5)
+    # An unrecognised candidate id fails the WHOLE call closed (no subset apply).
+    with pytest.raises(projects_mod.ProjectError):
+        svc.voiceover_cleanup_apply(
+            pid, "vo-01", [cands[0]["id"], "vc-bogus"], base_revision=base_rev)
+
+    ids = [c["id"] for c in cands]
+    svc.voiceover_cleanup_apply(pid, "vo-01", ids, base_revision=base_rev)
+
+    project = svc.get_project(pid)
+    vo_track = next(t for t in project["plan"]["tracks"]
+                    if t.get("role") == "voiceover")
+    # the single VO event is now split into compacted kept segments...
+    assert len(vo_track["events"]) >= 2
+    # ...and every kept segment keeps the picture-independent VO role/asset.
+    assert all(e["asset_id"] == "vo_note" for e in vo_track["events"])
+    # the picture track is untouched.
+    vid = next(t for t in project["plan"]["tracks"] if t["kind"] == "video")
+    assert [e["event_id"] for e in vid["events"]] == ["v01"]
+    # the A0 report is now stale (plan revision bumped) — a re-analysis is forced.
+    reloaded = svc.load_voiceover_analysis(pid, "vo-01")
+    assert reloaded["stale"] is True
+
+    # The cleaned PLAN is the raw->edited map: kept segments carry original-asset
+    # source coords in source order, so the removed span is recoverable as the
+    # gap between consecutive segments (no drift-prone sidecar).
+    segs = sorted(vo_track["events"], key=lambda e: e["source_start_seconds"])
+    for lo, hi in zip(segs, segs[1:]):
+        assert hi["source_start_seconds"] >= lo["source_end_seconds"]  # a real gap
+
+    # empty selection is refused (never a silent no-op that looks applied).
+    with pytest.raises(projects_mod.ProjectError):
+        svc.voiceover_cleanup_apply(pid, "vo-01", [], base_revision=base_rev)
 
 
 def _chat_fixture(tmp_path):

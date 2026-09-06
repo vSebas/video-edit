@@ -213,6 +213,15 @@ class TestInstructionToOp:
         with pytest.raises(PlanOpError, match="no operation"):
             instruction_to_op(client, _plan(), "haz algo")
 
+    def test_server_only_op_is_refused_not_applied(self) -> None:
+        # A prompted/hallucinating model must NOT be able to reach the
+        # destructive, server-computed cleanup_voiceover op through the
+        # instruction path — it is rejected, never returned for apply.
+        client = FakeClient({"op": "cleanup_voiceover", "event_id": "vo-01",
+                             "remove_ranges": [[0, 20]]})
+        op = instruction_to_op(client, _plan(), "borra toda la voz")
+        assert op["op"] == "reject"
+
 
 class TestPlanCommandEndpoints:
     def _scaffold(self, tmp_path):
@@ -460,6 +469,86 @@ class TestVoiceoverOps:
                       if t.get("role") == "voiceover")["events"][0]
         assert vo_cap["duration_seconds"] <= 1.05
         assert vo_cap["duration_seconds"] < vo_full["duration_seconds"]
+
+    def test_cleanup_voiceover_splits_into_compacted_segments(self) -> None:
+        # place a 3s voiceover at timeline 2, then remove source 1.0-1.5
+        placed, _ = apply_op(_plan(), {
+            "op": "add_voiceover", "asset_id": "memo",
+            "timeline_start_seconds": 2.0}, self._inventory())
+        cleaned, summary = apply_op(placed, {
+            "op": "cleanup_voiceover", "event_id": "vo-01",
+            "remove_ranges": [[1.0, 1.5]]}, self._inventory())
+        vo = next(t for t in cleaned["tracks"] if t.get("role") == "voiceover")
+        # two kept segments, compacted back-to-back from the original start
+        assert len(vo["events"]) == 2
+        a, b = vo["events"]
+        assert a["source_start_seconds"] == 0.0 and a["source_end_seconds"] == 1.0
+        assert a["timeline_start_seconds"] == 2.0 and a["duration_seconds"] == 1.0
+        assert b["source_start_seconds"] == 1.5 and b["source_end_seconds"] == 3.0
+        assert b["timeline_start_seconds"] == 3.0   # compacted (no 0.5s gap)
+        # the FIRST segment keeps the parent id (stable anchor); the second does not
+        assert a["event_id"] == "vo-01" and b["event_id"] != "vo-01"
+        assert "limpiada" in summary
+        # empty removal set is refused
+        with pytest.raises(PlanOpError):
+            apply_op(placed, {"op": "cleanup_voiceover", "event_id": "vo-01",
+                              "remove_ranges": []}, self._inventory())
+
+    def _placed_vo(self):
+        """A 3s voiceover placed at timeline 2 (frame-aligned at 30fps)."""
+        placed, _ = apply_op(_plan(), {
+            "op": "add_voiceover", "asset_id": "memo",
+            "timeline_start_seconds": 2.0}, self._inventory())
+        return placed
+
+    def test_cleanup_voiceover_quantizes_removals_inward(self) -> None:
+        # A non-frame-aligned removal must never bite into UN-selected audio:
+        # start rounds later, end rounds earlier, so we keep >= the request.
+        cleaned, _ = apply_op(self._placed_vo(), {
+            "op": "cleanup_voiceover", "event_id": "vo-01",
+            "remove_ranges": [[1.001, 1.499]]}, self._inventory())
+        a, b = next(t for t in cleaned["tracks"]
+                    if t.get("role") == "voiceover")["events"]
+        # removed frames = [31, 44) -> kept ...1.033333 and 1.466667...
+        assert a["source_end_seconds"] == round(31 / 30, 6)   # >= requested 1.001
+        assert b["source_start_seconds"] == round(44 / 30, 6)  # <= requested 1.499
+        # every boundary lands on a frame (6-decimal storage keeps it well
+        # inside half a frame, so OpenTake's seconds->nearest-frame agrees)
+        for e in (a, b):
+            for k in ("source_start_seconds", "source_end_seconds",
+                      "timeline_start_seconds", "duration_seconds"):
+                assert abs(e[k] * 30 - round(e[k] * 30)) < 1e-3
+
+    def test_cleanup_voiceover_keeps_one_frame_sliver(self) -> None:
+        # A single kept frame between two removals survives (no sliver-discard
+        # that would silently delete a short real word).
+        cleaned, _ = apply_op(self._placed_vo(), {
+            "op": "cleanup_voiceover", "event_id": "vo-01",
+            "remove_ranges": [[0.0, 1.0], [1.0333, 3.0]]}, self._inventory())
+        evs = next(t for t in cleaned["tracks"]
+                   if t.get("role") == "voiceover")["events"]
+        assert len(evs) == 1
+        assert evs[0]["duration_seconds"] == round(1 / 30, 6)
+
+    def test_cleanup_voiceover_refuses_subframe_and_full_removals(self) -> None:
+        # sub-frame removal collapses to nothing -> refused (not a silent no-op)
+        with pytest.raises(PlanOpError, match="válidos"):
+            apply_op(self._placed_vo(), {
+                "op": "cleanup_voiceover", "event_id": "vo-01",
+                "remove_ranges": [[1.00, 1.01]]}, self._inventory())
+        # removing the whole event -> refused (never an empty track)
+        with pytest.raises(PlanOpError, match="vacía"):
+            apply_op(self._placed_vo(), {
+                "op": "cleanup_voiceover", "event_id": "vo-01",
+                "remove_ranges": [[0.0, 3.0]]}, self._inventory())
+
+    def test_cleanup_voiceover_refuses_non_frame_aligned_source(self) -> None:
+        placed = self._placed_vo()
+        vo = next(t for t in placed["tracks"] if t.get("role") == "voiceover")
+        vo["events"][0]["source_end_seconds"] = 2.99   # off the frame grid
+        with pytest.raises(PlanOpError, match="alineada"):
+            apply_op(placed, {"op": "cleanup_voiceover", "event_id": "vo-01",
+                              "remove_ranges": [[1.0, 1.5]]}, self._inventory())
 
     def test_voiceover_requires_audio_asset(self) -> None:
         with pytest.raises(PlanOpError, match="not an audio asset"):

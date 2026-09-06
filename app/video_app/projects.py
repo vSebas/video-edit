@@ -2465,6 +2465,135 @@ class ProjectService:
             write_json(path, {"schema_version": report["schema_version"],
                               "analyses": analyses})
 
+    def _voiceover_cleanup_candidates(self, project_id: str, event_id: str | None):
+        """Shared core: resolve the target VO event, require a FRESH A0 analysis,
+        and derive the deterministic filler/dead-air candidate list off the
+        persisted transcript (no re-ASR). Each candidate gets a stable `id`
+        (`vc-<n>` by position) so a later apply selects BY ID against the SAME
+        server-derived list — a client never supplies raw source ranges. Returns
+        (event_id, plan_revision, event, candidates)."""
+        from . import voiceover_analysis as va
+
+        project = self.get_project(project_id)
+        plan = project.get("plan") or {}
+        if event_id is None:
+            events = self._voiceover_events(plan)
+            if len(events) != 1:
+                raise ProjectError("Indica cuál voz en off limpiar (event_id)")
+            event_id = events[0].get("event_id")
+        event = self._voiceover_event(plan, event_id)
+        if event is None:
+            raise ProjectError(f"No existe la voz en off {event_id!r}")
+        report = self.load_voiceover_analysis(project_id, event_id)
+        if report is None:
+            raise ProjectError(
+                "Ejecuta primero «Revisar voz en off» para esta voz en off")
+        if report.get("stale"):
+            raise ProjectError(
+                "El análisis está desactualizado — vuelve a analizar antes de limpiar")
+        words = (report.get("transcript") or {}).get("words") or []
+        # Clamp candidate padding to THIS event's placed source window so the
+        # preview never claims to remove audio outside the voiceover (the op
+        # clamps too, but a clamped preview keeps the shown numbers honest).
+        src0 = float(event.get("source_start_seconds") or 0.0)
+        src1 = float(event.get("source_end_seconds") or 0.0)
+        cands = []
+        for c in va.voiceover_filler_candidates(words):
+            a = round(max(src0, float(c["source_start_seconds"])), 3)
+            b = round(min(src1, float(c["source_end_seconds"])), 3)
+            if b <= a:
+                continue
+            # CONTENT-derived id: the exact range+kind it authorizes, so a
+            # re-analysis or a cleanup-policy change can never make an old id
+            # select a DIFFERENT range — a shifted candidate simply gets a new id
+            # the apply won't recognise (Codex review 2026-09-06).
+            cid = "vc-" + hashlib.sha1(
+                f"{c.get('kind')}|{a:.3f}|{b:.3f}".encode()).hexdigest()[:10]
+            cands.append({**c, "id": cid,
+                          "source_start_seconds": a, "source_end_seconds": b})
+        return event_id, int(plan.get("revision", 1)), event, cands
+
+    def voiceover_cleanup_candidates(
+        self, project_id: str, event_id: str | None = None
+    ) -> dict:
+        """Phase B preview: the filler/dead-air candidates to remove from the
+        voiceover, with the plan revision they were computed against (the apply
+        echoes it back, so a plan that moved underneath is refused)."""
+        event_id, revision, _event, cands = self._voiceover_cleanup_candidates(
+            project_id, event_id)
+        return {"event_id": event_id, "plan_revision": revision,
+                "candidates": cands}
+
+    def voiceover_cleanup_apply(
+        self, project_id: str, event_id: str, candidate_ids: list,
+        base_revision: int,
+    ) -> dict:
+        """Apply the reviewed VO-lane cleanup as one confirm-gated, revision-
+        guarded op (picture untouched). The caller selects candidates BY
+        content-derived ID from a fresh preview and MUST echo the preview's
+        `plan_revision`; we RE-DERIVE the candidates server-side and refuse if the
+        plan moved, if the revision doesn't match, or if ANY selected id is not in
+        the current set — the removed source ranges are always ours, never
+        client-supplied, and an unknown id fails the whole call closed rather than
+        applying a subset. The A0 report goes stale on the revision bump, so the
+        next analysis runs on the cleaned voiceover; a raw→edited group map is
+        persisted for the A1/C hand-off."""
+        wanted = {str(c) for c in (candidate_ids or [])}
+        if not wanted:
+            raise ProjectError("No hay nada seleccionado que quitar")
+        if base_revision is None:
+            raise ProjectError("Falta la revisión de la vista previa")
+        event_id, revision, _event, cands = self._voiceover_cleanup_candidates(
+            project_id, event_id)
+        if int(base_revision) != revision:
+            raise ProjectError(
+                "El proyecto cambió desde la vista previa — vuelve a analizar y "
+                "previsualiza antes de limpiar")
+        available = {c["id"] for c in cands}
+        if not wanted <= available:
+            # Fail CLOSED on any unrecognised id (a stale preview, a shifted
+            # candidate) — never silently apply the recognised subset.
+            raise ProjectError(
+                "Las selecciones ya no coinciden con el análisis — vuelve a "
+                "previsualizar")
+        selected = [c for c in cands if c["id"] in wanted]
+        ranges = [[c["source_start_seconds"], c["source_end_seconds"]]
+                  for c in selected]
+        op = {"op": "cleanup_voiceover", "event_id": event_id,
+              "remove_ranges": ranges}
+        proposed = self.plan_op_propose(project_id, op)
+        proposal_id = proposed["proposal_id"]
+        # Guard the preview→propose window too: if the revision the proposal
+        # captured differs from what the preview saw, someone edited in between —
+        # drop OUR proposal (only if it is still the stored one, so a concurrent
+        # caller's proposal is never deleted) and refuse.
+        if int(proposed["revision_preview"]) - 1 != revision:
+            self._discard_proposal_if_current(project_id, proposal_id)
+            raise ProjectError(
+                "El proyecto cambió mientras limpiaba — vuelve a previsualizar")
+        # The cleaned PLAN itself is the raw→edited map: each kept voiceover
+        # segment keeps its ORIGINAL-asset source coordinates, in source order,
+        # placed contiguously; the removed spans are exactly the gaps between
+        # consecutive segments' source ranges. A1/C reconstruct the logical
+        # narration from this geometry (frame-exact, composable across repeated
+        # cleanups, committed atomically with the plan) rather than from a
+        # separate sidecar that could drift (Codex review 2026-09-06).
+        return self.plan_command_apply(project_id, proposal_id)
+
+    def _discard_proposal_if_current(self, project_id: str, proposal_id: str):
+        """Delete the pending plan-command proposal ONLY if it is still ours —
+        under the project lock, so a concurrent caller's freshly-written proposal
+        is never clobbered (Codex review 2026-09-06)."""
+        path = self.settings.runtime / project_id / "plan-command.json"
+        with self._project_write(project_id):
+            if path.is_file():
+                try:
+                    stored = load_json(path)
+                except Exception:  # noqa: BLE001
+                    return
+                if stored.get("proposal_id") == proposal_id:
+                    path.unlink(missing_ok=True)
+
     def _classify_voiceover_beats(
         self,
         beat_views: list[dict],

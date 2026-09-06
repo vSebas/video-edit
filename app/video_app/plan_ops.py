@@ -544,6 +544,125 @@ def _voiceover_track(plan: dict, create: bool = False) -> dict | None:
     return None
 
 
+def _apply_cleanup_voiceover(plan: dict, op: dict, assets: dict) -> str:
+    """Phase B: remove filler/dead-air SOURCE ranges from ONE voiceover event by
+    splitting it into the kept segments, COMPACTED back-to-back from its original
+    timeline start — the picture is untouched (that re-timing is phase C). The VO
+    shortens, leaving silence at the tail of its old span.
+
+    All arithmetic is in INTEGER FRAMES so local rendering and OpenTake play the
+    same audio (hybrid parity). Removals are quantized INWARD (start rounds later,
+    end rounds earlier), so the cut can only ever remove LESS than the reviewed
+    range, never bite into un-approved speech; and EVERY kept frame survives —
+    there is no sliver-discard that could silently delete a short real word
+    (Codex review 2026-09-06)."""
+    track = _voiceover_track(plan)
+    if track is None:
+        raise PlanOpError("No hay voz en off que limpiar")
+    events = track["events"]
+    idx = _index_of(events, op["event_id"])
+    event = events[idx]
+    fps = float(plan["project"]["fps"])
+    src0 = float(event["source_start_seconds"])
+    src1 = float(event["source_end_seconds"])
+    s0 = round(src0 * fps)
+    s1 = round(src1 * fps)
+
+    # Refuse a voiceover whose geometry is NOT already frame-exact at 1x:
+    # nearest-frame rounding would otherwise shift a boundary by a sub-frame
+    # amount, adding or dropping edge audio the user never selected. EVERY
+    # boundary (source start/end, timeline start, duration) must land on a frame,
+    # and the duration must equal the source span to the frame — our own
+    # placement guarantees this, a legacy/hand-authored event may not and must be
+    # re-placed first (Codex review 2026-09-06).
+    rate = float(event.get("playback_rate") or 1.0)
+    tl0 = float(event["timeline_start_seconds"])
+    dur = float(event.get("duration_seconds") or 0.0)
+    tlf = round(tl0 * fps)
+    df = round(dur * fps)
+    if abs(rate - 1.0) > 1e-6:
+        raise PlanOpError(
+            "La limpieza solo admite voz en off a velocidad normal (1x)")
+    if (abs(s0 - src0 * fps) > 1e-4 or abs(s1 - src1 * fps) > 1e-4
+            or abs(tlf - tl0 * fps) > 1e-4 or abs(df - dur * fps) > 1e-4
+            or df != (s1 - s0)):
+        raise PlanOpError(
+            "La voz en off no está alineada a fotogramas — vuelve a colocarla "
+            "antes de limpiarla")
+
+    # Reviewed removals, clamped to the event and quantized inward to whole
+    # frames. A sub-frame removal (floor(end) <= ceil(start)) removes nothing.
+    removed_frames: list[tuple[int, int]] = []
+    for r in op.get("remove_ranges") or []:
+        try:
+            a, b = float(r[0]), float(r[1])
+        except (TypeError, ValueError, IndexError, KeyError) as exc:
+            raise PlanOpError("remove_ranges inválido") from exc
+        if not (math.isfinite(a) and math.isfinite(b)) or b <= a:
+            continue
+        fa = max(s0, math.ceil(a * fps - 1e-6))    # inward: start no earlier
+        fb = min(s1, math.floor(b * fps + 1e-6))   # inward: end no later
+        if fb > fa:
+            removed_frames.append((fa, fb))
+    if not removed_frames:
+        raise PlanOpError("No hay rangos válidos que quitar")
+
+    # Merge overlaps, then keep the complement within [s0, s1) — every positive
+    # kept frame-interval becomes its own compacted VO segment.
+    removed_frames.sort()
+    merged: list[list[int]] = []
+    for fa, fb in removed_frames:
+        if merged and fa <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], fb)
+        else:
+            merged.append([fa, fb])
+    kept: list[tuple[int, int]] = []
+    cursor = s0
+    for fa, fb in merged:
+        if fa > cursor:
+            kept.append((cursor, fa))
+        cursor = max(cursor, fb)
+    if s1 > cursor:
+        kept.append((cursor, s1))
+
+    used = {e["event_id"] for e in events}
+    number = 1
+
+    def _next_id() -> str:
+        nonlocal number
+        while f"vo-{number:02d}" in used:
+            number += 1
+        vid = f"vo-{number:02d}"
+        used.add(vid)
+        return vid
+
+    tl_frame = round(float(event["timeline_start_seconds"]) * fps)
+    new_events: list[dict] = []
+    for f_a, f_b in kept:
+        frames = f_b - f_a
+        if frames <= 0:
+            continue
+        # The FIRST kept segment keeps the parent event_id, so the voiceover keeps
+        # a stable identity anchor (the A0 report keyed to it, "revisar voz en off"
+        # re-selecting it) instead of being orphaned under a fresh id; later
+        # segments get fresh, collision-free ids (Codex review 2026-09-06).
+        eid = event["event_id"] if not new_events else _next_id()
+        new_events.append({
+            **event, "event_id": eid,
+            "source_start_seconds": round(f_a / fps, 6),
+            "source_end_seconds": round(f_b / fps, 6),
+            "timeline_start_seconds": round(tl_frame / fps, 6),
+            "duration_seconds": round(frames / fps, 6),
+        })
+        tl_frame += frames
+    if not new_events:
+        raise PlanOpError("La limpieza dejaría la voz en off vacía")
+    removed = round((s1 - s0 - sum(e_b - e_a for e_a, e_b in kept)) / fps, 3)
+    events[idx:idx + 1] = new_events
+    return (f"Voz en off limpiada: −{removed:g}s en {len(new_events)} "
+            f"segmento(s) (la imagen no se movió)")
+
+
 def _apply_add_voiceover(plan: dict, op: dict, assets: dict) -> str:
     asset = assets.get(op["asset_id"])
     if asset is None:
@@ -1054,6 +1173,7 @@ _APPLIERS = {
     "set_title": (_apply_title, {"event_id", "text"}),
     "add_voiceover": (_apply_add_voiceover,
                       {"asset_id", "timeline_start_seconds"}),
+    "cleanup_voiceover": (_apply_cleanup_voiceover, {"event_id"}),
     "remove_voiceover": (_apply_remove_voiceover, {"event_id"}),
     "add_broll": (_apply_add_broll, {"asset_id", "timeline_start_seconds"}),
     "remove_broll": (_apply_remove_broll, {"event_id"}),
@@ -1181,6 +1301,17 @@ reason. Do not invent event ids.
 """.strip()
 
 
+# The ONLY ops an instruction model may emit (mirrors _OPS_CONTRACT). Ops absent
+# here — notably the destructive, server-computed cleanup_voiceover — are
+# reachable solely through their deterministic service routes, never the LLM.
+MODEL_CALLABLE_OPS = frozenset({
+    "delete_event", "trim_event", "set_volume", "jl_cut", "set_title",
+    "set_music_bed", "remove_music", "set_transition", "set_fades",
+    "add_voiceover", "remove_voiceover", "add_broll", "remove_broll",
+    "replace_broll", "move_broll", "reject",
+})
+
+
 def instruction_to_op(
     client, plan: dict, instruction: str, inventory: dict | None = None,
     asset_hints: dict | None = None,
@@ -1212,5 +1343,15 @@ def instruction_to_op(
         return {
             "op": "reject",
             "reason": "los subtítulos se editan directamente en cada línea",
+        }
+    # Strict allowlist: the model may only emit the ops it was offered. Anything
+    # else — a hallucinated or prompt-injected op like cleanup_voiceover, which
+    # carries destructive server-computed source ranges — is refused, never
+    # applied. Server-only ops reach apply_op ONLY through their deterministic,
+    # basis-bound service routes (Codex review 2026-09-06).
+    if op.get("op") not in MODEL_CALLABLE_OPS:
+        return {
+            "op": "reject",
+            "reason": "esa operación no está disponible por instrucción",
         }
     return op

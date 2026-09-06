@@ -1102,13 +1102,77 @@ function renderVoiceoverReport(a) {
   const incomplete = a.coverage_complete === false
     ? '<p class="muted">Nota: hay mucho metraje; algunos beats quedan «sin determinar» en vez de marcarse como falta.</p>'
     : '';
+  // Filler cleanup (Phase B) works off THIS fresh analysis — offer it only when
+  // the report isn't stale (a stale plan would clean the wrong source ranges).
+  const cleanupCta = !a.stale && a.event_id
+    ? `<button class="primary compact" id="vo-cleanup-btn" data-event-id="${escapeHtml(a.event_id)}">🧹 Limpiar muletillas y silencios</button>`
+    : '';
   return `<div class="vo-report">
     ${staleBanner}
     <p class="muted">${escapeHtml(a.note || '')}</p>
     ${incomplete}
-    ${deadair ? `<p class="muted">🧹 ${deadair} silencio(s) largo(s) en la voz en off — la limpieza y el ajuste de tiempos llegan en una fase próxima.</p>` : ''}
+    ${deadair ? `<p class="muted">🧹 ${deadair} silencio(s) largo(s) detectado(s) en la voz en off.</p>` : ''}
+    ${cleanupCta}
     ${beats}
   </div>`;
+}
+
+// Phase B: preview the conservative VO-lane cleanup, let the user uncheck any
+// range, then apply it as one confirm-gated op and re-render the cut.
+async function voiceoverCleanupFlow(projectId, eventId, panel) {
+  panel.innerHTML = '<p class="notice">Buscando muletillas y silencios en la voz en off…</p>';
+  try {
+    const found = await api(`/api/projects/${projectId}/voiceover/cleanup/candidates`, {
+      method: 'POST', body: JSON.stringify({ event_id: eventId }),
+    });
+    if (state.activeProjectId !== projectId) return;
+    const cands = found.candidates || [];
+    const baseRevision = found.plan_revision;
+    if (!cands.length) {
+      panel.innerHTML = '<p class="notice">La voz en off ya está limpia — nada que quitar.</p>';
+      return;
+    }
+    const total = cands.reduce((s, c) => s + (c.source_end_seconds - c.source_start_seconds), 0);
+    panel.innerHTML = `
+      <div class="sync-diff">
+        <p><strong>${cands.length}</strong> sugerencia(s) · hasta ~${total.toFixed(1)}s de audio. Marca las que quieras:</p>
+        ${cands.map((c) => `
+          <label class="cleanup-item">
+            <input type="checkbox" data-vo-clean="${escapeHtml(c.id)}" checked />
+            <span>${escapeHtml(c.reason || c.kind)} (${(c.source_end_seconds - c.source_start_seconds).toFixed(2)}s)</span>
+          </label>`).join('')}
+        <button class="primary compact" id="vo-cleanup-apply">Aplicar seleccionados</button>
+      </div>`;
+    $('#vo-cleanup-apply')?.addEventListener('click', async () => {
+      const ids = [...document.querySelectorAll('[data-vo-clean]')]
+        .filter((el) => el.checked).map((el) => el.dataset.voClean);
+      if (!ids.length) { notice('Nada seleccionado.', true); return; }
+      try {
+        setBusy('Limpiando la voz en off', ['Cortando el audio', 'Renderizando'], 0, projectId);
+        const applied = await api(`/api/projects/${projectId}/voiceover/cleanup/apply`, {
+          method: 'POST',
+          body: JSON.stringify({ event_id: eventId, candidate_ids: ids, base_revision: baseRevision }),
+        });
+        // Busy is owner-tagged, so clearing it is safe even if the user navigated
+        // away; only surface UI (notice/nav) while still on this project.
+        if (state.activeProjectId !== projectId) { clearBusyIfOwner(projectId); return; }
+        setBusy('Limpiando la voz en off', ['Cortando el audio', 'Renderizando'], 1, projectId);
+        await runStep('render', undefined, projectId);
+        clearBusyIfOwner(projectId);
+        if (state.activeProjectId !== projectId) return;   // navigated away mid-render
+        notice(`${applied?.summary || 'Voz en off limpiada'}. El ajuste de imagen por segmento llega en la fase siguiente.`);
+        await loadProject(projectId);
+      } catch (error) {
+        clearBusyIfOwner(projectId);
+        if (state.activeProjectId !== projectId) return;
+        notice(error.message, true);
+        await loadProject(projectId);
+      }
+    });
+  } catch (error) {
+    if (state.activeProjectId !== projectId) return;
+    panel.innerHTML = `<p class="notice error">${escapeHtml(error.message)}</p>`;
+  }
 }
 
 async function quickVoiceoverReview() {
@@ -1131,7 +1195,13 @@ async function quickVoiceoverReview() {
     if (state.activeProjectId !== projectId) return;   // guard after the GET too
     const report = analysis && analysis.analyses ? analysis.analyses[eventId] : null;
     const box = $('#qa-panel');   // reacquire — the workspace may have re-rendered
-    if (box) box.innerHTML = report ? renderVoiceoverReport(report) : '<p class="notice">Sin análisis.</p>';
+    if (box) {
+      box.innerHTML = report ? renderVoiceoverReport(report) : '<p class="notice">Sin análisis.</p>';
+      $('#vo-cleanup-btn')?.addEventListener('click', (e) => {
+        const evId = e.currentTarget.dataset.eventId;
+        voiceoverCleanupFlow(state.activeProjectId, evId, box);
+      });
+    }
   } catch (error) {
     if (state.activeProjectId !== projectId) return;
     const box = $('#qa-panel');
@@ -2086,12 +2156,19 @@ async function browseTo(path) {
 /* ------------------------------------------------------------------ */
 /* Pipeline actions                                                    */
 
-function setBusy(title, steps, current) {
+function setBusy(title, steps, current, owner) {
   const startedAt = state.busy?.title === title ? state.busy.startedAt : Date.now();
-  state.busy = { title, steps, current, startedAt,
+  state.busy = { title, steps, current, startedAt, owner: owner ?? null,
                  progress: state.busy?.progress || null };
   renderProject();
   startBusyTicker();
+}
+
+// Clear the busy card only if THIS project still owns it — so a late-finishing
+// operation neither clobbers a newer project's busy state nor leaves its own
+// card stranded after the user navigated away.
+function clearBusyIfOwner(owner) {
+  if (state.busy && state.busy.owner === owner) state.busy = null;
 }
 
 async function pollJob(jobId) {
