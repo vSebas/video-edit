@@ -101,8 +101,10 @@ proposal and editable exports:
      (IG Business/Creator account + Meta app with `instagram_basic` /
      `instagram_content_publish`); unset, the model fallback is used. Suggestions
      are **late-bound** — a `recommended` annotation carrying the platform audio
-     id + timing, added natively when posting, nothing burned — and the card
-     offers alternate candidates to switch between. `set_music_bed` instead burns
+     id + timing, added natively when posting, nothing burned. **Suggest returns
+     candidates for the creator to CHOOSE — it does not auto-install** (a
+     model-guessed track is marked "IA ⚠", and only the picked one applies via
+     `set_music_recommendation`; candidates are project-bound). `set_music_bed` instead burns
      a looped, speech-ducked bed for a self-contained MP4. A plan compiled before
      the music feature has no music track — the card's "add music" state upgrades
      it in place.

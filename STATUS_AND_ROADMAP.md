@@ -201,7 +201,65 @@ Persisted per project (`chat.json`), shared phone↔laptop.
   presence; Anthropic is NOT offered — concept generation uses the
   OpenAI-shaped client, so it would send the wrong protocol; Gemini is the
   only visual model that hears audio). Stored on the project; every trigger path
-  honors it (`_resolve_stage_model`: explicit arg > pref > default).
+  honors it (`_resolve_stage_model`: explicit arg > pref > default), including the
+  job fingerprint (resolved before enqueue).
+
+### Chat surface hardened + deferrals worked down (2026-09-06)
+
+The chat/model-picker work was taken through dual review (Codex `gpt-5.6-sol`/max
+on one resumed session + independent passes), which ran ~7 rounds and repeatedly
+converged to LAND-READY — regressions introduced by the fixes were caught and
+fixed each round (build → deep review → fix → verify). Full detail with per-item
+verdicts is in `app/VALIDATION.md`. What shipped beyond the base chat:
+
+- **Grabar y colocar** now trims the placed voiceover to the drafted window
+  (`max_duration_seconds`, floored to frame), identifies the recording by its
+  exact `source_path` (not a project-wide diff), and rolls back only that
+  file/asset on failure (and only if the plan doesn't reference it).
+- **Middle-ground grounding check:** a drafted voiceover line whose window the
+  approved evidence doesn't support is flagged `unverified` ("⚠ sin respaldo").
+  (The *full* deterministic citation gate for chat text is deliberately NOT
+  built — see deferred below.)
+- **Music suggest → candidate-return:** `suggest_music` returns project-bound
+  candidates WITHOUT mutating the plan; only the creator's pick applies; model-
+  guessed tracks are marked "IA ⚠".
+- **B-roll evidence-id resolution:** `add_broll`/`replace_broll` cutaways resolve
+  approved evidence by strict envelope coverage before the lineage gate — a
+  grounded cutaway renders, an ungrounded one is refused; scoped to the
+  op's own event so a revoked id is never laundered off an unrelated scene.
+- **Title provenance:** instruction-set titles are no longer `user_authored`, so
+  a risky-unsupported title faces the claim gate at propose (not just render).
+- **OpenTake:** structural-fingerprint staleness (catches same-count
+  trims/moves/volume, not just clip counts); and the **PCM range guard** in the
+  fork (`opentake-media/decode/pcm.rs::trim_range_pcm`) caps an explicit-range
+  decode to its expected frame count so the export retimer can't stretch decoder
+  slack into a short slot — release binary rebuilt under resource caps.
+- Robustness: stale-plan guard, chat ABA/identity + write-seq guards, PWA
+  offline silent-refresh, chat token metering, per-platform-tolerant music
+  discovery, fail-closed op-param validation (TypeError/OverflowError/NaN).
+
+### Deferred (honest, as of 2026-09-06)
+
+Not built, with reasons — none are correctness gaps in what shipped:
+
+- **Full deterministic citation gate for chat TEXT.** The middle-ground draft
+  check is the proportionate answer for an advisory surface; the full subsystem
+  (per-claim structured citations + entailment validation + flagging UI) is
+  over-engineering here and fights the project's "practical, not maximal" rule.
+- **Full chat turn-queue / epoch** for concurrent turns. The client identity +
+  write-sequence guards, the server write lock, and the stale-plan guard cover
+  the real single-user cases; a queue is over-engineering.
+- **Low-severity / pre-existing, judged not worth the churn:** titles marked
+  `user_authored` BEFORE the provenance fix keep their exemption through restore;
+  the draft-support window is the whole source event, not the exact source slice;
+  a dismiss-vs-apply race can leave a cosmetically contradictory thread line.
+- **PCM sample-exactness is a VERIFICATION TODO, not code.** The guard removes
+  the gross stretch corruption; a residual sub-frame offset on primed lossy
+  codecs (AAC/iPhone) should still be checked BY EAR against real footage before
+  it is fully trusted. An AAC nonzero-seek integration fixture would strengthen
+  coverage.
+- **Real IG/TikTok music keys** remain owner-supplied (adapters exist, inert
+  without keys); music is otherwise pinned.
 
 ## Standing Today
 

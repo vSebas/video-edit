@@ -1047,7 +1047,8 @@ from the scene map (role-based track selection). Thread persists per project
   `test_refit_music_bed_preserves_source_capacity`,
   `test_bundle_clip_fingerprint_*`. Full suite: **305 passed**; live-verified
   (metering ledger, dismiss, models).
-  **Still deferred, with honest reasons:** the OpenTake **PCM range guard**
+  **Still deferred at THIS point (three of these were later BUILT — see
+  "Formerly-deferred items, now built" below):** the OpenTake **PCM range guard**
   (needs a Rust change + a fork rebuild — and the sample-trim direction must be
   verified against the export retiming, unsafe to write blind); **full B-roll
   evidence-id resolution** in the applier (a defensive lineage gate at propose
@@ -1125,9 +1126,10 @@ from the scene map (role-based track selection). Thread persists per project
   `<0.5`/NaN/inf caps. Verdict: **LAND-READY** for the reviewed
   voiceover-placement fixes. Full round trend: **5 regressions → 3 → 2 → 0.**
   Everything Codex flagged across the whole review is now either fixed +
-  re-verified or an explicit, reasoned deferral (PCM rebuild, full B-roll
-  evidence-resolution, music auto-commit UX, full citation gate). Suite: **305**.
-  Nothing committed — staged for the owner's review.
+  re-verified or a reasoned deferral. (NOTE: three of those deferrals — PCM,
+  B-roll evidence-resolution, music candidate-return — were then BUILT; see the
+  next section. Only the full citation gate and full turn-queue remain deferred.)
+  Suite: **305**.
 
 ## Formerly-deferred items, now built (2026-09-06)
 

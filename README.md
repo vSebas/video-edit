@@ -11,7 +11,11 @@ the editable-export escape hatch. The full loop is integrated into the
 daily app: placement (with track creation, B-roll, voiceover, and J/L
 re-tiling), revision-guarded timeline-to-plan sync, dialogue cleanup, and
 atomic instruction edits are all workbench features, and OpenTake
-orchestration is end-to-end live (2026-09-03). The canonical `edit-plan.v1`
+orchestration is end-to-end live (2026-09-03). Editing is driven from ONE
+grounded **assistant chat** — discussion, voiceover drafting, and
+confirm-gated edits on the same closed-op, revision-guarded path — plus a
+per-project **model picker** for the story writer and the perception model
+(2026-09-06). The canonical `edit-plan.v1`
 now expresses a near-finished vlog, not a clip reel: first-class editable
 **captions**, background **music** (a post-time recommendation or a burned,
 speech-ducked bed), and light **transitions** (open/close fades and per-cut
