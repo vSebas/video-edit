@@ -29,9 +29,11 @@ import hashlib
 import re
 
 SCHEMA_VERSION = "voiceover-analysis.v1"
-# Independent of the schema version — bump when the CLASSIFIER prompt changes so
-# stale detection fires even if the schema is unchanged.
-PROMPT_VERSION = "vo-classify-prompt-v1"
+# Independent of the schema version — bump when the CLASSIFIER prompt OR the
+# analysis implementation changes (e.g. group-aware segmentation, the
+# pending_cleanup basis) so stale detection fires and pre-change sidecars are
+# re-analyzed instead of silently bypassing the newer gates.
+PROMPT_VERSION = "vo-classify-prompt-v2"
 
 # A beat boundary falls at a real pause between words or at sentence-ending
 # punctuation. 0.6s is a natural clause gap in speech.

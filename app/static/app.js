@@ -1171,19 +1171,23 @@ function renderVoiceoverReport(a) {
   // Actions work off THIS fresh analysis — offer them only when it isn't stale
   // (a moved plan would edit the wrong ranges/windows).
   const fresh = !a.stale && a.event_id;
+  // Cleanup (B) comes first; it's offered whenever the analysis is fresh.
   const cleanupCta = fresh
     ? `<button class="primary compact" id="vo-cleanup-btn" data-event-id="${escapeHtml(a.event_id)}">🧹 Limpiar muletillas y silencios</button>`
     : '';
-  // Phase A1: footage remedies exist only when a beat needs coverage.
+  // A1/C run only on a FROZEN timebase — once the voiceover has nothing left to
+  // clean (matches the server gate; a stale or pending report hides them).
+  const frozen = fresh && !a.pending_cleanup;
   const needsCoverage = Array.isArray(a.beats)
     && a.beats.some((b) => b.class === 'available_elsewhere' || b.class === 'gap');
-  const remedyCta = fresh && needsCoverage
+  const remedyCta = frozen && needsCoverage
     ? `<button class="primary compact" id="vo-remedy-btn" data-event-id="${escapeHtml(a.event_id)}">🎬 Arreglar imagen con metraje del proyecto</button>`
     : '';
-  // Phase C: match the picture length to the voiceover (offered whenever a
-  // voiceover is placed; the preview reports whether a change is needed).
-  const retimeCta = fresh
+  const retimeCta = frozen
     ? '<button class="primary compact" id="vo-retime-btn">⏱️ Ajustar la imagen a la voz en off</button>'
+    : '';
+  const pendingNote = fresh && a.pending_cleanup
+    ? '<p class="muted">Limpia la voz en off para desbloquear los ajustes de imagen (metraje y duración).</p>'
     : '';
   return `<div class="vo-report">
     ${staleBanner}
@@ -1191,6 +1195,7 @@ function renderVoiceoverReport(a) {
     ${incomplete}
     ${deadair ? `<p class="muted">🧹 ${deadair} silencio(s) largo(s) detectado(s) en la voz en off.</p>` : ''}
     ${cleanupCta}
+    ${pendingNote}
     ${remedyCta}
     ${retimeCta}
     ${beats}

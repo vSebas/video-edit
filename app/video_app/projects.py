@@ -2212,6 +2212,47 @@ class ProjectService:
             return next((e for e in events if e.get("event_id") == event_id), None)
         return events[0] if len(events) == 1 else None
 
+    def _voiceover_group(self, plan: dict, event: dict) -> list[dict]:
+        """The logical narration `event` belongs to: the maximal run of SAME-asset
+        1x voiceover events that are TIMELINE-CONTIGUOUS (back-to-back within a
+        frame) and SOURCE-ORDERED, i.e. exactly Phase B's split descendants. A
+        second, independent placement of the same recording elsewhere on the
+        timeline has a gap before it and is NOT merged in — so unrelated
+        placements never combine and immutable word ids never duplicate (Codex
+        review 2026-09-06)."""
+        asset = event.get("asset_id")
+        fps = float(plan.get("project", {}).get("fps") or 30)
+        eps = 0.5 / fps
+        same = sorted(
+            (e for e in self._voiceover_events(plan)
+             if e.get("asset_id") == asset
+             and abs(float(e.get("playback_rate") or 1.0) - 1.0) <= 1e-6),
+            key=lambda e: float(e.get("timeline_start_seconds") or 0.0))
+        if event not in same:
+            return [event]
+        i = same.index(event)
+        # walk left/right while each neighbour abuts (timeline) and advances
+        # (source) — the exact shape compact_voiceover_segments produces.
+        lo = i
+        while lo > 0:
+            prev, cur = same[lo - 1], same[lo]
+            if (abs((float(prev["timeline_start_seconds"]) + float(prev["duration_seconds"]))
+                    - float(cur["timeline_start_seconds"])) <= eps
+                    and float(cur["source_start_seconds"]) >= float(prev["source_end_seconds"]) - eps):
+                lo -= 1
+            else:
+                break
+        hi = i
+        while hi + 1 < len(same):
+            cur, nxt = same[hi], same[hi + 1]
+            if (abs((float(cur["timeline_start_seconds"]) + float(cur["duration_seconds"]))
+                    - float(nxt["timeline_start_seconds"])) <= eps
+                    and float(nxt["source_start_seconds"]) >= float(cur["source_end_seconds"]) - eps):
+                hi += 1
+            else:
+                break
+        return same[lo:hi + 1]
+
     def _voiceover_pool(
         self, project: dict, exclude_asset_id: str, exclude_sha: str
     ) -> tuple[list[dict], bool]:
@@ -2355,25 +2396,30 @@ class ProjectService:
         src_end = float(event.get("source_end_seconds")
                         or asset.get("duration_seconds") or 0.0)
         # A cleaned voiceover is SPLIT into contiguous segments (Phase B) that
-        # together are ONE logical narration. Analyze the whole GROUP — every
-        # voiceover event on the SAME recording at 1x — not just the anchor, or
-        # beats in later segments silently vanish (Codex review 2026-09-06). For
-        # an unsplit voiceover the group is just [event], so behaviour is
-        # unchanged. The anchor's source range still seeds the fingerprint; the
-        # word hash (union across segments) captures any per-segment change.
-        group_events = sorted(
-            (e for e in vo_events
-             if e.get("asset_id") == vo_asset_id
-             and abs(float(e.get("playback_rate") or 1.0) - 1.0) <= 1e-6),
-            key=lambda e: float(e.get("timeline_start_seconds") or 0.0))
-        words = []
-        for seg in group_events:
+        # together are ONE logical narration. Analyze the whole GROUP — the
+        # contiguous, source-ordered chain of same-recording segments (NOT every
+        # reuse of the asset) — or beats in later segments silently vanish. For an
+        # unsplit voiceover the group is just [event] (Codex review 2026-09-06).
+        group_events = self._voiceover_group(plan, event)
+
+        def _seg_words(seg):
             s0 = float(seg.get("source_start_seconds") or 0.0)
             s1 = float(seg.get("source_end_seconds")
                        or asset.get("duration_seconds") or 0.0)
-            words.extend(w for w in all_words
-                         if w["start_seconds"] >= s0 - 0.05
-                         and w["end_seconds"] <= s1 + 0.05)
+            return [w for w in all_words
+                    if w["start_seconds"] >= s0 - 0.05
+                    and w["end_seconds"] <= s1 + 0.05]
+
+        words = []
+        # pending_cleanup is computed PER SEGMENT — a filler/dead-air detector run
+        # over the UNION would re-flag the deliberately-removed gaps between
+        # segments as dead air and leave A1 refusing forever (Codex review).
+        pending_cleanup = False
+        for seg in group_events:
+            sw = _seg_words(seg)
+            words.extend(sw)
+            if va.voiceover_filler_candidates(sw):
+                pending_cleanup = True
         transcript_text = " ".join(w["word"] for w in words)
 
         # Snapshot the evidence ONCE (Codex: no racy pre/post read). Fingerprint
@@ -2403,9 +2449,9 @@ class ProjectService:
             "eligible_count": len(pool),
             # A1/C are only sound on a FROZEN timebase: if the voiceover still has
             # filler/dead-air to remove, the beat windows will shift under any
-            # remedy/retime. Stamp it so those phases refuse until cleanup is done
-            # (or there was nothing to clean) — Codex review 2026-09-06.
-            "pending_cleanup": bool(va.voiceover_filler_candidates(words)),
+            # remedy/retime. Stamp it (computed PER SEGMENT above) so those phases
+            # refuse until cleanup is done — Codex review 2026-09-06.
+            "pending_cleanup": pending_cleanup,
             "transcript": {"words": words},
             "basis": {
                 "plan_revision": int(plan.get("revision", 1)),
@@ -2445,12 +2491,8 @@ class ProjectService:
         deadair = []
         for seg in group_events:
             s0 = float(seg.get("source_start_seconds") or 0.0)
-            s1 = float(seg.get("source_end_seconds")
-                       or asset.get("duration_seconds") or 0.0)
             seg_tl = float(seg.get("timeline_start_seconds") or 0.0)
-            seg_words = [w for w in all_words
-                         if w["start_seconds"] >= s0 - 0.05
-                         and w["end_seconds"] <= s1 + 0.05]
+            seg_words = _seg_words(seg)
             if not seg_words:
                 continue
             deadair.extend(va.detect_deadair(seg_words))
@@ -2654,8 +2696,10 @@ class ProjectService:
                 "El análisis está desactualizado — vuelve a analizar antes de "
                 "proponer arreglos")
         # A1 needs a FROZEN timebase: refuse while the voiceover still has filler
-        # to remove (the beat windows would shift under cleanup).
-        if report.get("pending_cleanup"):
+        # to remove (the beat windows would shift under cleanup). Fail CLOSED when
+        # the field is absent — a pre-gate sidecar (already stale after the
+        # version bump) must never slip through as "clean".
+        if report.get("pending_cleanup", True):
             raise ProjectError(
                 "Limpia primero la voz en off (muletillas/silencios) — luego "
                 "propongo el metraje, sobre un tiempo ya fijo")
@@ -2669,24 +2713,48 @@ class ProjectService:
         for beat in report.get("beats") or []:
             cls = beat.get("class")
             if cls == "available_elsewhere":
-                top = next((c for c in beat.get("candidates") or []
-                            if not c.get("visible")
-                            and c.get("asset_id") in video_assets), None)
-                if top is None:
-                    continue
                 w0 = float(beat["timeline_start_seconds"])
                 w1 = float(beat["timeline_end_seconds"])
-                dur = max(0.5, min(w1 - w0, self._REMEDY_MAX_OVERLAY_SECONDS))
-                op = {
-                    "op": "add_broll", "asset_id": top.get("asset_id"),
-                    "timeline_start_seconds": w0, "duration_seconds": dur,
-                    "source_start_seconds": float(top.get("start_seconds") or 0.0),
-                }
-                # DRY-RUN the exact op — a beat past the picture end, a source
-                # overrun, or an overlap makes it infeasible; don't offer it.
-                ok, _reason = self._dry_run_op(project_id, plan, op)
-                if not ok:
+                # Never overrun the beat's own window (a 0.2s beat must not hide
+                # 0.3s of the next). B-roll needs >=0.5s, so a sub-0.5s beat can't
+                # take a pull — flag it instead of forcing a too-long overlay.
+                window = w1 - w0
+                cands = [c for c in beat.get("candidates") or []
+                         if not c.get("visible") and c.get("asset_id") in video_assets]
+                if not cands:
                     continue
+                if window < 0.5:
+                    remedies.append({
+                        "remedy_id": None, "beat_id": beat["beat_id"],
+                        "text": beat["text"], "tier": "manual", "op": None,
+                        "advice": "Este momento es muy corto para una inserción "
+                                  "(<0.5s) — ajústalo con el reajuste o el chat."})
+                    continue
+                dur = min(window, self._REMEDY_MAX_OVERLAY_SECONDS)
+                # Try each relevant candidate (not just the first) and offer the
+                # first that the AUTHORITATIVE applier accepts on a copy.
+                chosen = None
+                for c in cands:
+                    op = {
+                        "op": "add_broll", "asset_id": c.get("asset_id"),
+                        "timeline_start_seconds": w0, "duration_seconds": dur,
+                        "source_start_seconds": float(c.get("start_seconds") or 0.0),
+                        "require_evidence_id": c.get("evidence_id"),
+                    }
+                    ok, _reason = self._dry_run_op(project_id, plan, op)
+                    if ok:
+                        chosen = (c, op)
+                        break
+                if chosen is None:
+                    # There IS relevant footage but none fits here — surface it,
+                    # don't drop it silently (would read as "all covered").
+                    remedies.append({
+                        "remedy_id": None, "beat_id": beat["beat_id"],
+                        "text": beat["text"], "tier": "manual", "op": None,
+                        "advice": "Hay metraje relevante pero no encaja aquí "
+                                  "(solapamiento o poco material) — ajústalo en el chat."})
+                    continue
+                top, op = chosen
                 # CONTENT-derived id binds the confirmation to THIS remedy (beat
                 # word ids + evidence + asset + range + window), so a re-analysis
                 # that changes the beat under the same revision can't be applied
@@ -2739,6 +2807,20 @@ class ProjectService:
         vo_events = self._voiceover_events(plan)
         if not vo_events:
             raise ProjectError("No hay voz en off colocada que seguir")
+        # C is a whole-timeline retime to the voiceover span — it must run on the
+        # SAME frozen timebase as A1. Each logical narration (a group's ANCHOR,
+        # which is where its A0 report is keyed) must have a fresh report with no
+        # pending cleanup (fail closed on a missing field / stale sidecar), so a
+        # user can't retime to raw narration and then invalidate it by cleaning
+        # (Codex review 2026-09-06).
+        anchors = {self._voiceover_group(plan, ev)[0].get("event_id")
+                   for ev in vo_events}
+        for anchor_id in anchors:
+            a0 = self.load_voiceover_analysis(project_id, anchor_id)
+            if a0 is None or a0.get("stale") or a0.get("pending_cleanup", True):
+                raise ProjectError(
+                    "Revisa y limpia la voz en off antes de ajustar la imagen — "
+                    "el reajuste necesita un tiempo ya fijo")
         primary = next(
             (t for t in plan.get("tracks", [])
              if t.get("kind") == "video" and t.get("role") in (None, "", "primary")),
@@ -2768,13 +2850,15 @@ class ProjectService:
             return plan, revision, candidate
         candidate["action"] = "trim" if delta_frames < 0 else "extend"
         op = {"op": "voiceover_retime", "target_end_seconds": target}
-        # Extension exposes new footage: for a contract plan it must be STRICTLY
-        # evidence-covered (no edge tolerance), and we attach the covering ids so
-        # the op stamps them and the lineage gate validates the committed clip.
+        # Extension exposes new footage: for a contract plan the tail's WHOLE new
+        # source span [source_start, new_source_end] must be STRICTLY evidence-
+        # covered — the lineage gate verifies the whole event, so ids covering
+        # only the exposed delta would leave the pre-existing part unsupported and
+        # fail at apply (Codex review 2026-09-06). We stamp the full covering set.
         if delta_frames > 0:
             ids = self._retime_exposure_ids(
                 project_id, plan, last.get("asset_id"),
-                float(last["source_end_seconds"]),
+                float(last["source_start_seconds"]),
                 round(float(last["source_end_seconds"]) + delta, 6))
             if ids is None:
                 candidate["reason"] = (
@@ -3426,6 +3510,23 @@ class ProjectService:
             else:  # add_broll — exactly the event(s) not present before
                 targets = _broll_ids(candidate) - _broll_ids(plan)
             self._resolve_broll_evidence(project_id, candidate, targets)
+            # A1 PULL binds the cutaway to the SEMANTICALLY-selected observation:
+            # the resolver attaches whatever approved evidence covers the source
+            # range, but on a contract plan that must INCLUDE the id the remedy
+            # was chosen for — otherwise an unrelated observation on the same asset
+            # could ground a cutaway that doesn't depict what the beat describes
+            # (Codex review 2026-09-06).
+            require_id = op.get("require_evidence_id")
+            if require_id and candidate.get("lineage_contract"):
+                got = {eid for tid in targets
+                       for t in candidate.get("tracks", [])
+                       if t.get("kind") == "video" and t.get("role") == "broll"
+                       for e in t.get("events", []) if e.get("event_id") == tid
+                       for eid in (e.get("evidence_ids") or [])}
+                if require_id not in got:
+                    raise ProjectError(
+                        "La evidencia elegida para este momento ya no respalda ese "
+                        "metraje — vuelve a revisar la voz en off")
             try:
                 self._verify_plan_lineage(project_id, candidate)
             except ProjectError:

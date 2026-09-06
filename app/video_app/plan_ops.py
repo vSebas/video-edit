@@ -724,31 +724,30 @@ def _apply_voiceover_retime(plan: dict, op: dict, assets: dict) -> str:
             "La voz en off es más corta que el último clip solo — recorta o "
             "quita escenas del final antes de reajustar")
 
-    # Conservative scope: the tail clip must be the SOLE thing past the target,
-    # and nothing on any other track may trail past it — otherwise a single-clip
-    # resize cannot make the picture end at the voiceover (or would strand
-    # music/titles/B-roll/captions as black or floating tails). Refuse instead of
-    # producing an inconsistent cut; reconciling dependent tracks is future work
+    # Scope: only the tail primary pair moves. Refuse when something that a
+    # single-clip resize CANNOT reconcile trails past the target — another
+    # primary clip (multi-clip trim needed) or a B-roll cutaway (it would float
+    # past the end). Captions, titles, the music bed and fades/dips ARE reconciled
+    # below (the same helpers a ripple uses), so they must NOT block the retime
     # (Codex review 2026-09-06).
     tail_id = video["event_id"]
     for track in plan.get("tracks", []):
         role = track.get("role")
         kind = track.get("kind")
+        blocks = (kind == "video" and role in (None, "", "primary", "broll")) or (
+            kind == "audio" and role in (None, "", "primary"))
+        if not blocks:
+            continue
         for e in track.get("events", []):
             endf = (round(float(e.get("timeline_start_seconds", 0) or 0) * fps)
                     + round(float(e.get("duration_seconds", 0) or 0) * fps))
             if endf <= tf:
                 continue
-            is_tail_pair = (e.get("event_id") == tail_id
-                            or (kind == "audio" and role in (None, "", "primary")
-                                and e.get("event_id") == audio["event_id"]))
-            if is_tail_pair:
-                continue
-            if kind == "audio" and role == "voiceover":
-                continue   # the voiceover IS the target; it ends at/at ~target
+            if e.get("event_id") in (tail_id, audio["event_id"]):
+                continue   # the tail pair we're resizing to the target
             raise PlanOpError(
-                "Hay imagen, música, títulos o subtítulos después de la voz en "
-                "off — ajústalos o quítalos antes de reajustar")
+                "Hay otra escena o recurso después de la voz en off — recórtalos "
+                "o quítalos antes de reajustar")
 
     old_end = round(old_endf / fps, 6)
     for event in (video, audio):
@@ -769,13 +768,23 @@ def _apply_voiceover_retime(plan: dict, op: dict, assets: dict) -> str:
     ids = op.get("evidence_ids")
     if isinstance(ids, list):
         video["evidence_ids"] = list(ids)
-    # Shortening drops the tail footage's captions [target, old_end); extending
-    # adds fresh footage with none.
+    # Shortening drops the tail footage's captions [target, old_end) before we
+    # reconcile, so a caption over trimmed footage never survives.
     if delta_frames < 0:
         _drop_captions_between(plan, target, old_end)
-    # The picture end now IS the voiceover target — the canvas follows it exactly
-    # (we refused above if anything trailed past it).
+    # The picture end now IS the voiceover target; reconcile every dependent that
+    # a duration change affects — the SAME sequence a ripple runs — so the stored
+    # plan never claims a fade/dip/title/bed the renderer would have to fix up.
     plan["project"]["duration_seconds"] = target
+    if plan.get("transitions"):
+        from .planning import _scale_transitions
+        plan["transitions"] = _scale_transitions(
+            plan["transitions"].get("intro_fade_seconds") or 0.0,
+            plan["transitions"].get("outro_fade_seconds") or 0.0,
+            target)
+    _reconcile_dips(plan)
+    _refit_music_bed(plan)
+    _clamp_titles_to_duration(plan)
     _check_overlays_fit(plan)
     verb = "estirada" if delta_frames > 0 else "recortada"
     return (f"Imagen {verb} {abs(delta_frames) / fps:.2f}s para coincidir con la "

@@ -481,9 +481,13 @@ def test_voiceover_remedies_pull_from_pool_and_flag_record(tmp_path, monkeypatch
     assert [e["event_id"] for e in vid["events"]] == ["v01"]
 
 
-def _retime_project(tmp_path, pid, vo_duration, clip_source_available):
+def _retime_project(tmp_path, pid, vo_duration, clip_source_available,
+                    monkeypatch):
     """A minimal mirrored plan: one 6s primary clip + a voiceover of the given
-    length, for exercising the voiceover-led retime (Phase C)."""
+    length, plus a FRESH clean A0 report (Phase C now runs only on a frozen,
+    reviewed timebase)."""
+    import video_app.speech as speech_mod
+    from video_app import projects as projects_mod
     from video_app.config import Settings
     from video_app.projects import ProjectService
 
@@ -491,6 +495,8 @@ def _retime_project(tmp_path, pid, vo_duration, clip_source_available):
     runtime = root / "runtime"
     pdir = runtime / pid
     pdir.mkdir(parents=True)
+    (root / "footage").mkdir(parents=True, exist_ok=True)
+    (root / "footage" / "vo.m4a").write_bytes(b"fake")
 
     def _ev(event_id, asset_id, dur, intent="scene"):
         return {
@@ -522,21 +528,42 @@ def _retime_project(tmp_path, pid, vo_duration, clip_source_available):
             {"asset_id": "clip", "media_type": "video",
              "source_path": "footage/clip.mp4",
              "duration_seconds": clip_source_available},
-            {"asset_id": "vo_note", "media_type": "audio",
+            {"asset_id": "vo_note", "media_type": "audio", "sha256": "vosha",
              "source_path": "footage/vo.m4a", "duration_seconds": vo_duration}]},
     })
     (pdir / "plan").mkdir()
     write_json(pdir / "plan" / "edit-plan.json", plan)
-    return ProjectService(Settings(root=root, runtime=runtime))
+    svc = ProjectService(Settings(root=root, runtime=runtime))
+
+    # A fresh, clean (no pending cleanup) A0 report so the retime gate passes.
+    segs = [{"words": [
+        {"word": "Hola", "start_seconds": 0.0, "end_seconds": 0.4},
+        {"word": "mundo.", "start_seconds": 0.4, "end_seconds": 0.9}]}]
+    monkeypatch.setattr(speech_mod, "_load_model", lambda size: (object(), "s", "cpu"))
+    monkeypatch.setattr(speech_mod, "transcribe_asset", lambda m, p: (segs, {}))
+
+    class _FC:
+        def __init__(self, config):
+            pass
+
+        def chat(self, messages, **kwargs):
+            return {"content": json.dumps({"beats": [
+                {"beat_id": "b001", "class": "nonvisual", "evidence_ids": []}]})}
+
+    monkeypatch.setattr(projects_mod, "resolve_provider", lambda *a, **k: None)
+    monkeypatch.setattr(projects_mod, "ChatClient", _FC)
+    monkeypatch.setattr(svc, "approved_evidence", lambda pid_: [])
+    svc.analyze_voiceover(pid, "vo-01")
+    return svc
 
 
-def test_voiceover_retime_trims_picture_to_voiceover(tmp_path):
+def test_voiceover_retime_trims_picture_to_voiceover(tmp_path, monkeypatch):
     """Phase C: a picture longer than the (post-cleanup) voiceover is trimmed at
     the tail to end with it — frame-exact, and the project duration follows."""
     from video_app import projects as projects_mod
 
     svc = _retime_project(tmp_path, "vlog-ctrim", vo_duration=4.0,
-                          clip_source_available=10.0)
+                          clip_source_available=10.0, monkeypatch=monkeypatch)
     preview = svc.voiceover_retime_preview("vlog-ctrim")
     c = preview["candidate"]
     assert c["action"] == "trim" and c["feasible"] is True
@@ -555,21 +582,88 @@ def test_voiceover_retime_trims_picture_to_voiceover(tmp_path):
     assert plan["project"]["duration_seconds"] == 4.0         # canvas follows
 
 
-def test_voiceover_retime_extends_only_into_available_footage(tmp_path):
+def test_voiceover_retime_extends_only_into_available_footage(tmp_path, monkeypatch):
     """Phase C: a picture shorter than the voiceover extends the tail into real
     source; with no source to grow into it is reported infeasible, never invented."""
     # voiceover 8s, picture 6s, clip has 10s of source -> feasible extend
     svc = _retime_project(tmp_path, "vlog-cext", vo_duration=8.0,
-                          clip_source_available=10.0)
+                          clip_source_available=10.0, monkeypatch=monkeypatch)
     c = svc.voiceover_retime_preview("vlog-cext")["candidate"]
     assert c["action"] == "extend" and c["feasible"] is True and c["delta_seconds"] == 2.0
 
     # voiceover 8s, picture 6s, but the clip only HAS 6s of source -> infeasible
     svc2 = _retime_project(tmp_path, "vlog-cext2", vo_duration=8.0,
-                           clip_source_available=6.0)
+                           clip_source_available=6.0, monkeypatch=monkeypatch)
     c2 = svc2.voiceover_retime_preview("vlog-cext2")["candidate"]
     assert c2["action"] == "extend" and c2["feasible"] is False
     assert "metraje" in c2["reason"]
+
+
+def test_voiceover_remedies_refuse_until_cleanup_is_done(tmp_path, monkeypatch):
+    """A1 must refuse while the voiceover still has filler/dead-air (an unfrozen
+    timebase) — the beat windows would shift under cleanup."""
+    import video_app.speech as speech_mod
+    from video_app import projects as projects_mod
+    from video_app.config import Settings
+    from video_app.projects import ProjectService
+
+    root = tmp_path / "root"; runtime = root / "runtime"; pid = "vlog-pend"
+    (runtime / pid).mkdir(parents=True)
+    (root / "footage" / pid).mkdir(parents=True)
+    (root / "footage" / pid / "vo.m4a").write_bytes(b"x")
+
+    def _ev(i, a, s0, tl, d, intent="scene"):
+        return {"event_id": i, "asset_id": a, "source_start_seconds": s0,
+                "source_end_seconds": round(s0 + d, 6), "timeline_start_seconds": tl,
+                "duration_seconds": d, "playback_rate": 1.0, "intent": intent,
+                "observed_content": None, "confidence": 0.9, "reframe": None,
+                "transition_out": None, "text": None, "volume_db": None}
+
+    plan = {"schema_version": "edit-plan.v1", "revision": 2,
+            "generated_at": "2026-09-06T00:00:00Z", "benchmark_id": "t",
+            "concept_id": "c1", "project": {"width": 1080, "height": 1920, "fps": 30,
+            "duration_seconds": 12.0, "background_color": "black"}, "tracks": [
+                {"track_id": "v1", "kind": "video", "events": [_ev("v01", "clip", 0.0, 0.0, 6.0)]},
+                {"track_id": "a1", "kind": "audio", "events": [_ev("a01", "clip", 0.0, 0.0, 6.0)]},
+                {"track_id": "vo1", "kind": "audio", "role": "voiceover",
+                 "events": [_ev("vo-01", "vo_note", 0.0, 0.0, 4.0, "voiceover")]}]}
+    write_json(runtime / pid / "project.json", {
+        "schema_version": "video-app-project.v1", "project_id": pid, "name": "P",
+        "plan": plan, "inventory": {"assets": [
+            {"asset_id": "vo_note", "media_type": "audio", "sha256": "s",
+             "source_path": f"footage/{pid}/vo.m4a", "duration_seconds": 4.0},
+            {"asset_id": "clip", "media_type": "video",
+             "source_path": f"footage/{pid}/c.mp4", "duration_seconds": 6.0}]}})
+    (runtime / pid / "plan").mkdir()
+    write_json(runtime / pid / "plan" / "edit-plan.json", plan)
+
+    # a pure filler ("eh") -> pending_cleanup true
+    segs = [{"words": [
+        {"word": "eh", "start_seconds": 0.0, "end_seconds": 0.2},
+        {"word": "fui.", "start_seconds": 0.3, "end_seconds": 0.8}]}]
+    monkeypatch.setattr(speech_mod, "_load_model", lambda size: (object(), "s", "cpu"))
+    monkeypatch.setattr(speech_mod, "transcribe_asset", lambda m, p: (segs, {}))
+
+    class FC:
+        def __init__(self, c):
+            pass
+
+        def chat(self, m, **k):
+            return {"content": json.dumps({"beats": [
+                {"beat_id": "b001", "class": "gap", "evidence_ids": []}]})}
+
+    monkeypatch.setattr(projects_mod, "resolve_provider", lambda *a, **k: None)
+    monkeypatch.setattr(projects_mod, "ChatClient", FC)
+    svc = ProjectService(Settings(root=root, runtime=runtime))
+    monkeypatch.setattr(svc, "approved_evidence", lambda p: [])
+
+    rep = svc.analyze_voiceover(pid, "vo-01")
+    assert rep["pending_cleanup"] is True
+    with pytest.raises(projects_mod.ProjectError, match="[Ll]impia"):
+        svc.voiceover_remedies(pid, "vo-01")
+    # C is gated on the same frozen timebase
+    with pytest.raises(projects_mod.ProjectError, match="[Ll]impia"):
+        svc.voiceover_retime_preview(pid)
 
 
 def test_analyze_voiceover_covers_all_segments_of_a_split_group(tmp_path, monkeypatch):
@@ -659,13 +753,13 @@ def test_analyze_voiceover_covers_all_segments_of_a_split_group(tmp_path, monkey
     assert "eh" not in " ".join(texts)
 
 
-def test_voiceover_retime_refuses_when_a_track_trails_past_the_voiceover(tmp_path):
+def test_voiceover_retime_refuses_when_a_track_trails_past_the_voiceover(tmp_path, monkeypatch):
     """Phase C must not leave black-with-music: if music/titles/B-roll trail past
     the voiceover end, the retime refuses rather than trimming only the picture."""
     from video_app import projects as projects_mod
 
     svc = _retime_project(tmp_path, "vlog-ctrail", vo_duration=4.0,
-                          clip_source_available=10.0)
+                          clip_source_available=10.0, monkeypatch=monkeypatch)
     # add a music bed that runs to 10s, well past the 4s voiceover
     pdir = svc.settings.runtime / "vlog-ctrail"
     for path in (pdir / "project.json", pdir / "plan" / "edit-plan.json"):
