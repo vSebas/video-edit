@@ -663,6 +663,125 @@ def _apply_cleanup_voiceover(plan: dict, op: dict, assets: dict) -> str:
             f"segmento(s) (la imagen no se movió)")
 
 
+def _apply_voiceover_retime(plan: dict, op: dict, assets: dict) -> str:
+    """Phase C: re-time the PICTURE to the voiceover span. The voiceover is the
+    spine — its end is the target — so the tail primary clip (and its mirrored
+    audio) is grown or trimmed, frame-exact, to end exactly there, and the
+    project duration follows the resulting overall end. One atomic, server-
+    computed retime (`target_end_seconds` is set by the service, never the model);
+    extension into newly-exposed footage is gated for evidence coverage BEFORE
+    this runs. Shortening exposes nothing.
+
+    Scope: absorbs the whole delta in the last clip (the common post-cleanup
+    case). If that single clip cannot absorb it (would shrink below the minimum,
+    or has no source to extend into), it refuses rather than silently doing part
+    of the job."""
+    video_events, audio_events = _require_mirrored(plan)
+    if not video_events:
+        raise PlanOpError("No hay imagen que reajustar")
+    fps = float(plan["project"]["fps"])
+    tf = round(_op_number(op, "target_end_seconds") * fps)   # target, in frames
+    if tf < round(MIN_EVENT_SECONDS * fps):
+        raise PlanOpError("El objetivo de duración es demasiado corto")
+    target = round(tf / fps, 6)
+    # The tail clip is the one that ends the picture.
+    idx = max(range(len(video_events)),
+              key=lambda i: (video_events[i]["timeline_start_seconds"]
+                             + video_events[i]["duration_seconds"]))
+    video, audio = video_events[idx], audio_events[idx]
+
+    # Mirror integrity for the arithmetic: the tail video/audio must share EXACT
+    # geometry at 1x (equal source start AND end, equal duration == source span),
+    # or adding the same delta to both would preserve a hidden desync
+    # (Codex review 2026-09-06).
+    for ev in (video, audio):
+        rate = float(ev.get("playback_rate") or 1.0)
+        s0f = round(float(ev["source_start_seconds"]) * fps)
+        s1f = round(float(ev["source_end_seconds"]) * fps)
+        tsf = round(float(ev["timeline_start_seconds"]) * fps)
+        df_ = round(float(ev["duration_seconds"]) * fps)
+        if (abs(rate - 1.0) > 1e-6 or df_ != s1f - s0f
+                or any(abs(v * fps - round(v * fps)) > 1e-4 for v in (
+                    ev["source_start_seconds"], ev["source_end_seconds"],
+                    ev["timeline_start_seconds"], ev["duration_seconds"]))):
+            raise PlanOpError(
+                "La imagen no está alineada a fotogramas — reajusta desde una "
+                "revisión limpia")
+    if (round(float(video["source_start_seconds"]) * fps)
+            != round(float(audio["source_start_seconds"]) * fps)
+            or round(float(video["source_end_seconds"]) * fps)
+            != round(float(audio["source_end_seconds"]) * fps)):
+        raise PlanOpError("La imagen y su audio no están sincronizados (J/L)")
+
+    startf = round(float(video["timeline_start_seconds"]) * fps)
+    old_endf = startf + round(float(video["duration_seconds"]) * fps)
+    delta_frames = tf - old_endf
+    if delta_frames == 0:
+        raise PlanOpError("La imagen ya coincide con la voz en off")
+    new_dur_frames = tf - startf
+    if new_dur_frames < round(MIN_EVENT_SECONDS * fps):
+        raise PlanOpError(
+            "La voz en off es más corta que el último clip solo — recorta o "
+            "quita escenas del final antes de reajustar")
+
+    # Conservative scope: the tail clip must be the SOLE thing past the target,
+    # and nothing on any other track may trail past it — otherwise a single-clip
+    # resize cannot make the picture end at the voiceover (or would strand
+    # music/titles/B-roll/captions as black or floating tails). Refuse instead of
+    # producing an inconsistent cut; reconciling dependent tracks is future work
+    # (Codex review 2026-09-06).
+    tail_id = video["event_id"]
+    for track in plan.get("tracks", []):
+        role = track.get("role")
+        kind = track.get("kind")
+        for e in track.get("events", []):
+            endf = (round(float(e.get("timeline_start_seconds", 0) or 0) * fps)
+                    + round(float(e.get("duration_seconds", 0) or 0) * fps))
+            if endf <= tf:
+                continue
+            is_tail_pair = (e.get("event_id") == tail_id
+                            or (kind == "audio" and role in (None, "", "primary")
+                                and e.get("event_id") == audio["event_id"]))
+            if is_tail_pair:
+                continue
+            if kind == "audio" and role == "voiceover":
+                continue   # the voiceover IS the target; it ends at/at ~target
+            raise PlanOpError(
+                "Hay imagen, música, títulos o subtítulos después de la voz en "
+                "off — ajústalos o quítalos antes de reajustar")
+
+    old_end = round(old_endf / fps, 6)
+    for event in (video, audio):
+        new_source_end_frames = round(float(event["source_end_seconds"]) * fps) + delta_frames
+        if delta_frames > 0:
+            asset = assets.get(event["asset_id"]) or {}
+            available = float(asset.get("duration_seconds") or 0.0)
+            if available and new_source_end_frames > round(available * fps):
+                raise PlanOpError(
+                    "El último clip no tiene metraje suficiente para estirarse "
+                    "hasta la voz en off — hace falta grabar o alargar otro clip")
+        event["source_end_seconds"] = round(new_source_end_frames / fps, 6)
+        event["duration_seconds"] = round(new_dur_frames / fps, 6)
+    # For a contract plan the service computes the approved ids that STRICTLY
+    # cover the tail event's NEW source span and passes them in; stamp them on the
+    # picture event so the lineage gate (run at propose) validates the extension
+    # against real evidence rather than the now-outdated compile-time ids.
+    ids = op.get("evidence_ids")
+    if isinstance(ids, list):
+        video["evidence_ids"] = list(ids)
+    # Shortening drops the tail footage's captions [target, old_end); extending
+    # adds fresh footage with none.
+    if delta_frames < 0:
+        _drop_captions_between(plan, target, old_end)
+    # The picture end now IS the voiceover target — the canvas follows it exactly
+    # (we refused above if anything trailed past it).
+    plan["project"]["duration_seconds"] = target
+    _check_overlays_fit(plan)
+    verb = "estirada" if delta_frames > 0 else "recortada"
+    return (f"Imagen {verb} {abs(delta_frames) / fps:.2f}s para coincidir con la "
+            f"voz en off (fin en {target:.2f}s)")
+
+
 def _apply_add_voiceover(plan: dict, op: dict, assets: dict) -> str:
     asset = assets.get(op["asset_id"])
     if asset is None:
@@ -1174,6 +1293,7 @@ _APPLIERS = {
     "add_voiceover": (_apply_add_voiceover,
                       {"asset_id", "timeline_start_seconds"}),
     "cleanup_voiceover": (_apply_cleanup_voiceover, {"event_id"}),
+    "voiceover_retime": (_apply_voiceover_retime, {"target_end_seconds"}),
     "remove_voiceover": (_apply_remove_voiceover, {"event_id"}),
     "add_broll": (_apply_add_broll, {"asset_id", "timeline_start_seconds"}),
     "remove_broll": (_apply_remove_broll, {"event_id"}),

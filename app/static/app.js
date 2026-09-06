@@ -1102,10 +1102,22 @@ function renderVoiceoverReport(a) {
   const incomplete = a.coverage_complete === false
     ? '<p class="muted">Nota: hay mucho metraje; algunos beats quedan «sin determinar» en vez de marcarse como falta.</p>'
     : '';
-  // Filler cleanup (Phase B) works off THIS fresh analysis — offer it only when
-  // the report isn't stale (a stale plan would clean the wrong source ranges).
-  const cleanupCta = !a.stale && a.event_id
+  // Actions work off THIS fresh analysis — offer them only when it isn't stale
+  // (a moved plan would edit the wrong ranges/windows).
+  const fresh = !a.stale && a.event_id;
+  const cleanupCta = fresh
     ? `<button class="primary compact" id="vo-cleanup-btn" data-event-id="${escapeHtml(a.event_id)}">🧹 Limpiar muletillas y silencios</button>`
+    : '';
+  // Phase A1: footage remedies exist only when a beat needs coverage.
+  const needsCoverage = Array.isArray(a.beats)
+    && a.beats.some((b) => b.class === 'available_elsewhere' || b.class === 'gap');
+  const remedyCta = fresh && needsCoverage
+    ? `<button class="primary compact" id="vo-remedy-btn" data-event-id="${escapeHtml(a.event_id)}">🎬 Arreglar imagen con metraje del proyecto</button>`
+    : '';
+  // Phase C: match the picture length to the voiceover (offered whenever a
+  // voiceover is placed; the preview reports whether a change is needed).
+  const retimeCta = fresh
+    ? '<button class="primary compact" id="vo-retime-btn">⏱️ Ajustar la imagen a la voz en off</button>'
     : '';
   return `<div class="vo-report">
     ${staleBanner}
@@ -1113,8 +1125,119 @@ function renderVoiceoverReport(a) {
     ${incomplete}
     ${deadair ? `<p class="muted">🧹 ${deadair} silencio(s) largo(s) detectado(s) en la voz en off.</p>` : ''}
     ${cleanupCta}
+    ${remedyCta}
+    ${retimeCta}
     ${beats}
   </div>`;
+}
+
+// Phase C: preview the single voiceover-led retime (match the picture end to the
+// voiceover span) and apply it as one confirm-gated op. Feasibility comes from
+// the server — trimming always works; extending needs verified footage.
+async function voiceoverRetimeFlow(projectId, panel) {
+  panel.innerHTML = '<p class="notice">Comparando la duración de la imagen con la voz en off…</p>';
+  try {
+    const found = await api(`/api/projects/${projectId}/voiceover/retime`, { method: 'POST' });
+    if (state.activeProjectId !== projectId) return;
+    const c = found.candidate || {};
+    const baseRevision = found.plan_revision;
+    if (c.action === 'none') {
+      panel.innerHTML = `<p class="notice">${escapeHtml(c.reason || 'La imagen ya coincide con la voz en off.')}</p>`;
+      return;
+    }
+    const applyBtn = c.feasible
+      ? '<button class="primary compact" id="vo-retime-apply">Aplicar ajuste</button>'
+      : '';
+    panel.innerHTML = `<div class="sync-diff">
+      <p>${escapeHtml(c.reason || '')}</p>
+      ${c.feasible ? '' : '<p class="muted">No se aplica automáticamente.</p>'}
+      ${applyBtn}
+    </div>`;
+    $('#vo-retime-apply')?.addEventListener('click', async () => {
+      try {
+        setBusy('Ajustando la imagen', ['Reajustando el clip', 'Renderizando'], 0, projectId);
+        const applied = await api(`/api/projects/${projectId}/voiceover/retime/apply`, {
+          method: 'POST', body: JSON.stringify({ base_revision: baseRevision }),
+        });
+        if (state.activeProjectId !== projectId) { clearBusyIfOwner(projectId); return; }
+        setBusy('Ajustando la imagen', ['Reajustando el clip', 'Renderizando'], 1, projectId);
+        await runStep('render', undefined, projectId);
+        clearBusyIfOwner(projectId);
+        if (state.activeProjectId !== projectId) return;
+        notice(applied?.summary || 'Imagen ajustada a la voz en off.');
+        await loadProject(projectId);
+      } catch (error) {
+        clearBusyIfOwner(projectId);
+        if (state.activeProjectId !== projectId) return;
+        notice(error.message, true);
+        await loadProject(projectId);
+      }
+    });
+  } catch (error) {
+    if (state.activeProjectId !== projectId) return;
+    panel.innerHTML = `<p class="notice error">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+// Phase A1: list the tiered footage remedies for the reviewed voiceover. A
+// `pull` remedy overlays grounded pool footage (one-click apply, no ripple); a
+// `record` remedy is advisory (nothing in the pool matches).
+async function voiceoverRemediesFlow(projectId, eventId, panel) {
+  panel.innerHTML = '<p class="notice">Buscando metraje del proyecto para los momentos sin imagen…</p>';
+  try {
+    const found = await api(`/api/projects/${projectId}/voiceover/remedies`, {
+      method: 'POST', body: JSON.stringify({ event_id: eventId }),
+    });
+    if (state.activeProjectId !== projectId) return;
+    const remedies = found.remedies || [];
+    const baseRevision = found.plan_revision;
+    if (!remedies.length) {
+      panel.innerHTML = '<p class="notice">Cada momento ya tiene imagen relevante — nada que arreglar.</p>';
+      return;
+    }
+    const row = (r) => {
+      if (r.tier === 'pull') {
+        return `<div class="cleanup-item">
+          <span>🎬 <em>«${escapeHtml(r.text)}»</em> → superponer <strong>${escapeHtml(r.caption || r.asset_id || '')}</strong></span>
+          <button class="primary compact" data-remedy-id="${escapeHtml(r.remedy_id)}">Aplicar</button>
+        </div>`;
+      }
+      return `<div class="cleanup-item">
+        <span>🎥 <em>«${escapeHtml(r.text)}»</em> → ${escapeHtml(r.advice || 'graba metraje nuevo')}</span>
+      </div>`;
+    };
+    panel.innerHTML = `<div class="sync-diff">
+      <p><strong>${remedies.length}</strong> momento(s) por reforzar. La superposición no mueve el resto del corte:</p>
+      ${remedies.map(row).join('')}
+    </div>`;
+    panel.querySelectorAll('[data-remedy-id]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const remedyId = btn.dataset.remedyId;
+        try {
+          setBusy('Reforzando la imagen', ['Colocando el recurso', 'Renderizando'], 0, projectId);
+          const applied = await api(`/api/projects/${projectId}/voiceover/remedies/apply`, {
+            method: 'POST',
+            body: JSON.stringify({ event_id: eventId, remedy_id: remedyId, base_revision: baseRevision }),
+          });
+          if (state.activeProjectId !== projectId) { clearBusyIfOwner(projectId); return; }
+          setBusy('Reforzando la imagen', ['Colocando el recurso', 'Renderizando'], 1, projectId);
+          await runStep('render', undefined, projectId);
+          clearBusyIfOwner(projectId);
+          if (state.activeProjectId !== projectId) return;
+          notice(applied?.summary || 'Imagen reforzada y corte re-renderizado.');
+          await loadProject(projectId);
+        } catch (error) {
+          clearBusyIfOwner(projectId);
+          if (state.activeProjectId !== projectId) return;
+          notice(error.message, true);
+          await loadProject(projectId);
+        }
+      });
+    });
+  } catch (error) {
+    if (state.activeProjectId !== projectId) return;
+    panel.innerHTML = `<p class="notice error">${escapeHtml(error.message)}</p>`;
+  }
 }
 
 // Phase B: preview the conservative VO-lane cleanup, let the user uncheck any
@@ -1200,6 +1323,13 @@ async function quickVoiceoverReview() {
       $('#vo-cleanup-btn')?.addEventListener('click', (e) => {
         const evId = e.currentTarget.dataset.eventId;
         voiceoverCleanupFlow(state.activeProjectId, evId, box);
+      });
+      $('#vo-remedy-btn')?.addEventListener('click', (e) => {
+        const evId = e.currentTarget.dataset.eventId;
+        voiceoverRemediesFlow(state.activeProjectId, evId, box);
+      });
+      $('#vo-retime-btn')?.addEventListener('click', () => {
+        voiceoverRetimeFlow(state.activeProjectId, box);
       });
     }
   } catch (error) {

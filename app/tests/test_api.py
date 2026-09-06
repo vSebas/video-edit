@@ -351,6 +351,342 @@ def test_voiceover_cleanup_previews_and_applies_vo_lane_cut(tmp_path, monkeypatc
         svc.voiceover_cleanup_apply(pid, "vo-01", [], base_revision=base_rev)
 
 
+def test_voiceover_remedies_pull_from_pool_and_flag_record(tmp_path, monkeypatch):
+    """Phase A1: for a beat whose relevant footage is available_elsewhere, PULL a
+    grounded B-roll cutaway from the pool over the beat window (no ripple); for a
+    gap beat, flag RECORD (no auto op). Apply is revision-bound and by beat_id."""
+    import video_app.speech as speech_mod
+    from video_app import projects as projects_mod
+    from video_app.config import Settings
+    from video_app.projects import ProjectService
+
+    root = tmp_path / "root"
+    runtime = root / "runtime"
+    pid = "vlog-a1"
+    pdir = runtime / pid
+    pdir.mkdir(parents=True)
+    (root / "footage" / pid).mkdir(parents=True)
+    (root / "footage" / pid / "vo.m4a").write_bytes(b"fake")
+
+    def _ev(event_id, asset_id, src_start, tl_start, dur, intent="scene",
+            observed=None):
+        return {
+            "event_id": event_id, "asset_id": asset_id,
+            "source_start_seconds": src_start,
+            "source_end_seconds": round(src_start + dur, 6),
+            "timeline_start_seconds": tl_start, "duration_seconds": dur,
+            "playback_rate": 1.0, "intent": intent,
+            "observed_content": observed, "confidence": 0.9,
+            "reframe": None, "transition_out": None, "text": None,
+            "volume_db": None,
+        }
+
+    plan = {
+        "schema_version": "edit-plan.v1", "revision": 4,
+        "generated_at": "2026-09-06T00:00:00Z",
+        "benchmark_id": "t", "concept_id": "c1",
+        "project": {"width": 1080, "height": 1920, "fps": 30,
+                    "duration_seconds": 12.0, "background_color": "black"},
+        "tracks": [
+            {"track_id": "v1", "kind": "video", "events": [
+                _ev("v01", "clip_intro", 0.0, 0.0, 6.0,
+                    observed="Packing a backpack indoors.")]},
+            {"track_id": "a1", "kind": "audio", "events": [
+                _ev("a01", "clip_intro", 0.0, 0.0, 6.0)]},
+            {"track_id": "vo1", "kind": "audio", "role": "voiceover", "events": [
+                _ev("vo-01", "vo_note", 0.0, 0.0, 4.0, intent="voiceover")]},
+        ],
+    }
+    write_json(pdir / "project.json", {
+        "schema_version": "video-app-project.v1", "project_id": pid, "name": "A1",
+        "plan": plan,
+        "inventory": {"assets": [
+            {"asset_id": "vo_note", "media_type": "audio", "sha256": "abc",
+             "source_path": f"footage/{pid}/vo.m4a", "duration_seconds": 4.0},
+            {"asset_id": "clip_intro", "media_type": "video",
+             "source_path": f"footage/{pid}/intro.mp4", "duration_seconds": 6.0},
+            {"asset_id": "clip_lake", "media_type": "video",
+             "source_path": f"footage/{pid}/lake.mp4", "duration_seconds": 6.0}]},
+    })
+    (pdir / "plan").mkdir()
+    write_json(pdir / "plan" / "edit-plan.json", plan)
+
+    # "Fui al lago." (beat 1, sentence-end split) then "Comí algo." (beat 2). The
+    # inter-word gaps stay under the dead-air threshold so the timebase is
+    # already clean (no pending cleanup blocking A1).
+    segs = [{"words": [
+        {"word": "Fui", "start_seconds": 0.0, "end_seconds": 0.4},
+        {"word": "al", "start_seconds": 0.4, "end_seconds": 0.6},
+        {"word": "lago.", "start_seconds": 0.6, "end_seconds": 1.1},
+        {"word": "Comí", "start_seconds": 1.5, "end_seconds": 1.9},
+        {"word": "algo.", "start_seconds": 1.9, "end_seconds": 2.4},
+    ]}]
+    monkeypatch.setattr(speech_mod, "_load_model", lambda size: (object(), "small", "cpu"))
+    monkeypatch.setattr(speech_mod, "transcribe_asset", lambda m, p: (segs, {}))
+
+    class FakeClient:
+        def __init__(self, config):
+            pass
+
+        def chat(self, messages, **kwargs):
+            # beat 1: the lake footage exists in the pool but is NOT on screen
+            # (available_elsewhere); beat 2: nothing relevant (gap).
+            return {"content": json.dumps({"beats": [
+                {"beat_id": "b001", "class": "available_elsewhere",
+                 "evidence_ids": ["ev_lake"], "rationale": "lake b-roll unused"},
+                {"beat_id": "b002", "class": "gap",
+                 "evidence_ids": [], "rationale": "no eating footage"}]})}
+
+    monkeypatch.setattr(projects_mod, "resolve_provider", lambda *a, **k: None)
+    monkeypatch.setattr(projects_mod, "ChatClient", FakeClient)
+
+    svc = ProjectService(Settings(root=root, runtime=runtime))
+    monkeypatch.setattr(svc, "approved_evidence", lambda pid_: [
+        {"evidence_id": "ev_intro", "asset_id": "clip_intro",
+         "caption": "packing a bag", "start_seconds": 0.0, "end_seconds": 6.0,
+         "evidence_type": "visual"},
+        {"evidence_id": "ev_lake", "asset_id": "clip_lake",
+         "caption": "a calm lake", "start_seconds": 0.0, "end_seconds": 5.0,
+         "evidence_type": "visual"},
+    ])
+
+    svc.analyze_voiceover(pid)
+    out = svc.voiceover_remedies(pid, "vo-01")
+    base_rev = out["plan_revision"]
+    by_beat = {r["beat_id"]: r for r in out["remedies"]}
+    pull = by_beat["b001"]
+    assert pull["tier"] == "pull" and pull["asset_id"] == "clip_lake"
+    assert pull["op"]["op"] == "add_broll" and pull["remedy_id"]
+    assert by_beat["b002"]["tier"] == "record" and by_beat["b002"]["op"] is None
+    assert by_beat["b002"]["remedy_id"] is None
+
+    # a stale preview revision is refused
+    with pytest.raises(projects_mod.ProjectError):
+        svc.voiceover_remedy_apply(pid, "vo-01", pull["remedy_id"],
+                                   base_revision=base_rev + 9)
+    # an unknown / content-changed remedy id is refused (fail closed)
+    with pytest.raises(projects_mod.ProjectError):
+        svc.voiceover_remedy_apply(pid, "vo-01", "vr-bogus", base_revision=base_rev)
+
+    # the pull remedy overlays the lake footage as a NON-rippling B-roll cutaway
+    svc.voiceover_remedy_apply(pid, "vo-01", pull["remedy_id"], base_revision=base_rev)
+    project = svc.get_project(pid)
+    broll = [e for t in project["plan"]["tracks"]
+             if t.get("kind") == "video" and t.get("role") == "broll"
+             for e in t.get("events", [])]
+    assert any(e["asset_id"] == "clip_lake" for e in broll)
+    # the primary picture and voiceover are untouched (no ripple)
+    vid = next(t for t in project["plan"]["tracks"]
+               if t.get("kind") == "video" and t.get("role") in (None, "", "primary"))
+    assert [e["event_id"] for e in vid["events"]] == ["v01"]
+
+
+def _retime_project(tmp_path, pid, vo_duration, clip_source_available):
+    """A minimal mirrored plan: one 6s primary clip + a voiceover of the given
+    length, for exercising the voiceover-led retime (Phase C)."""
+    from video_app.config import Settings
+    from video_app.projects import ProjectService
+
+    root = tmp_path / pid
+    runtime = root / "runtime"
+    pdir = runtime / pid
+    pdir.mkdir(parents=True)
+
+    def _ev(event_id, asset_id, dur, intent="scene"):
+        return {
+            "event_id": event_id, "asset_id": asset_id,
+            "source_start_seconds": 0.0, "source_end_seconds": dur,
+            "timeline_start_seconds": 0.0, "duration_seconds": dur,
+            "playback_rate": 1.0, "intent": intent, "observed_content": None,
+            "confidence": 0.9, "reframe": None, "transition_out": None,
+            "text": None, "volume_db": None,
+        }
+
+    plan = {
+        "schema_version": "edit-plan.v1", "revision": 2,
+        "generated_at": "2026-09-06T00:00:00Z",
+        "benchmark_id": "t", "concept_id": "c1",
+        "project": {"width": 1080, "height": 1920, "fps": 30,
+                    "duration_seconds": 12.0, "background_color": "black"},
+        "tracks": [
+            {"track_id": "v1", "kind": "video", "events": [_ev("v01", "clip", 6.0)]},
+            {"track_id": "a1", "kind": "audio", "events": [_ev("a01", "clip", 6.0)]},
+            {"track_id": "vo1", "kind": "audio", "role": "voiceover",
+             "events": [_ev("vo-01", "vo_note", vo_duration, intent="voiceover")]},
+        ],
+    }
+    write_json(pdir / "project.json", {
+        "schema_version": "video-app-project.v1", "project_id": pid, "name": "C",
+        "plan": plan,
+        "inventory": {"assets": [
+            {"asset_id": "clip", "media_type": "video",
+             "source_path": "footage/clip.mp4",
+             "duration_seconds": clip_source_available},
+            {"asset_id": "vo_note", "media_type": "audio",
+             "source_path": "footage/vo.m4a", "duration_seconds": vo_duration}]},
+    })
+    (pdir / "plan").mkdir()
+    write_json(pdir / "plan" / "edit-plan.json", plan)
+    return ProjectService(Settings(root=root, runtime=runtime))
+
+
+def test_voiceover_retime_trims_picture_to_voiceover(tmp_path):
+    """Phase C: a picture longer than the (post-cleanup) voiceover is trimmed at
+    the tail to end with it — frame-exact, and the project duration follows."""
+    from video_app import projects as projects_mod
+
+    svc = _retime_project(tmp_path, "vlog-ctrim", vo_duration=4.0,
+                          clip_source_available=10.0)
+    preview = svc.voiceover_retime_preview("vlog-ctrim")
+    c = preview["candidate"]
+    assert c["action"] == "trim" and c["feasible"] is True
+    assert c["target_end_seconds"] == 4.0 and c["delta_seconds"] == -2.0
+
+    # a moved plan is refused
+    with pytest.raises(projects_mod.ProjectError):
+        svc.voiceover_retime_apply("vlog-ctrim", base_revision=999)
+
+    svc.voiceover_retime_apply("vlog-ctrim", base_revision=preview["plan_revision"])
+    plan = svc.get_project("vlog-ctrim")["plan"]
+    vid = next(t for t in plan["tracks"]
+               if t["kind"] == "video" and t.get("role") in (None, "", "primary"))
+    assert vid["events"][0]["duration_seconds"] == 4.0        # tail trimmed
+    assert vid["events"][0]["source_end_seconds"] == 4.0
+    assert plan["project"]["duration_seconds"] == 4.0         # canvas follows
+
+
+def test_voiceover_retime_extends_only_into_available_footage(tmp_path):
+    """Phase C: a picture shorter than the voiceover extends the tail into real
+    source; with no source to grow into it is reported infeasible, never invented."""
+    # voiceover 8s, picture 6s, clip has 10s of source -> feasible extend
+    svc = _retime_project(tmp_path, "vlog-cext", vo_duration=8.0,
+                          clip_source_available=10.0)
+    c = svc.voiceover_retime_preview("vlog-cext")["candidate"]
+    assert c["action"] == "extend" and c["feasible"] is True and c["delta_seconds"] == 2.0
+
+    # voiceover 8s, picture 6s, but the clip only HAS 6s of source -> infeasible
+    svc2 = _retime_project(tmp_path, "vlog-cext2", vo_duration=8.0,
+                           clip_source_available=6.0)
+    c2 = svc2.voiceover_retime_preview("vlog-cext2")["candidate"]
+    assert c2["action"] == "extend" and c2["feasible"] is False
+    assert "metraje" in c2["reason"]
+
+
+def test_analyze_voiceover_covers_all_segments_of_a_split_group(tmp_path, monkeypatch):
+    """After Phase B splits a voiceover, A0 must analyze the WHOLE logical group
+    (every segment of the recording), not just the anchor — or beats in later
+    segments silently vanish and A1 can never cover them."""
+    import video_app.speech as speech_mod
+    from video_app import projects as projects_mod
+    from video_app.config import Settings
+    from video_app.projects import ProjectService
+
+    root = tmp_path / "root"
+    runtime = root / "runtime"
+    pid = "vlog-grp"
+    pdir = runtime / pid
+    pdir.mkdir(parents=True)
+    (root / "footage" / pid).mkdir(parents=True)
+    (root / "footage" / pid / "vo.m4a").write_bytes(b"fake")
+
+    def _ev(event_id, asset_id, s0, tl, dur, intent="scene"):
+        return {"event_id": event_id, "asset_id": asset_id,
+                "source_start_seconds": s0, "source_end_seconds": round(s0 + dur, 6),
+                "timeline_start_seconds": tl, "duration_seconds": dur,
+                "playback_rate": 1.0, "intent": intent, "observed_content": None,
+                "confidence": 0.9, "reframe": None, "transition_out": None,
+                "text": None, "volume_db": None}
+
+    # A voiceover split into two segments: source 0-2 @ tl 0, source 4-8 @ tl 2
+    # (cleanup removed source 2-4 and compacted).
+    plan = {
+        "schema_version": "edit-plan.v1", "revision": 5,
+        "generated_at": "2026-09-06T00:00:00Z",
+        "benchmark_id": "t", "concept_id": "c1",
+        "project": {"width": 1080, "height": 1920, "fps": 30,
+                    "duration_seconds": 12.0, "background_color": "black"},
+        "tracks": [
+            {"track_id": "v1", "kind": "video", "events": [_ev("v01", "clip", 0.0, 0.0, 6.0)]},
+            {"track_id": "a1", "kind": "audio", "events": [_ev("a01", "clip", 0.0, 0.0, 6.0)]},
+            {"track_id": "vo1", "kind": "audio", "role": "voiceover", "events": [
+                _ev("vo-01", "vo_note", 0.0, 0.0, 2.0, intent="voiceover"),
+                _ev("vo-02", "vo_note", 4.0, 2.0, 4.0, intent="voiceover")]},
+        ],
+    }
+    write_json(pdir / "project.json", {
+        "schema_version": "video-app-project.v1", "project_id": pid, "name": "G",
+        "plan": plan,
+        "inventory": {"assets": [
+            {"asset_id": "vo_note", "media_type": "audio", "sha256": "abc",
+             "source_path": f"footage/{pid}/vo.m4a", "duration_seconds": 8.0},
+            {"asset_id": "clip", "media_type": "video",
+             "source_path": f"footage/{pid}/clip.mp4", "duration_seconds": 6.0}]},
+    })
+
+    # words across the WHOLE recording; the 2-4s ones fall in the removed gap and
+    # belong to no segment.
+    segs = [{"words": [
+        {"word": "Uno", "start_seconds": 0.0, "end_seconds": 0.4},
+        {"word": "dos.", "start_seconds": 0.4, "end_seconds": 1.0},
+        {"word": "eh", "start_seconds": 2.5, "end_seconds": 2.9},      # removed gap
+        {"word": "Cuatro", "start_seconds": 4.0, "end_seconds": 4.5},
+        {"word": "cinco.", "start_seconds": 4.5, "end_seconds": 5.2},
+    ]}]
+    monkeypatch.setattr(speech_mod, "_load_model", lambda size: (object(), "small", "cpu"))
+    monkeypatch.setattr(speech_mod, "transcribe_asset", lambda m, p: (segs, {}))
+
+    class FakeClient:
+        def __init__(self, config):
+            pass
+
+        def chat(self, messages, **kwargs):
+            return {"content": json.dumps({"beats": [
+                {"beat_id": "b001", "class": "nonvisual", "evidence_ids": []},
+                {"beat_id": "b002", "class": "nonvisual", "evidence_ids": []}]})}
+
+    monkeypatch.setattr(projects_mod, "resolve_provider", lambda *a, **k: None)
+    monkeypatch.setattr(projects_mod, "ChatClient", FakeClient)
+    svc = ProjectService(Settings(root=root, runtime=runtime))
+    monkeypatch.setattr(svc, "approved_evidence", lambda pid_: [])
+
+    report = svc.analyze_voiceover(pid, "vo-01")
+    texts = [b["text"] for b in report["beats"]]
+    assert "Uno dos." in texts and "Cuatro cinco." in texts   # BOTH segments
+    # the second segment's beat is mapped onto the timeline via its OWN offset
+    second = next(b for b in report["beats"] if b["text"] == "Cuatro cinco.")
+    assert abs(second["timeline_start_seconds"] - 2.0) < 0.05
+    # the removed-gap word never leaks into a beat
+    assert "eh" not in " ".join(texts)
+
+
+def test_voiceover_retime_refuses_when_a_track_trails_past_the_voiceover(tmp_path):
+    """Phase C must not leave black-with-music: if music/titles/B-roll trail past
+    the voiceover end, the retime refuses rather than trimming only the picture."""
+    from video_app import projects as projects_mod
+
+    svc = _retime_project(tmp_path, "vlog-ctrail", vo_duration=4.0,
+                          clip_source_available=10.0)
+    # add a music bed that runs to 10s, well past the 4s voiceover
+    pdir = svc.settings.runtime / "vlog-ctrail"
+    for path in (pdir / "project.json", pdir / "plan" / "edit-plan.json"):
+        doc = json.loads(path.read_text())
+        plan = doc.get("plan", doc)
+        plan["tracks"].append({
+            "track_id": "m1", "kind": "audio", "role": "music", "events": [{
+                "event_id": "mus-01", "asset_id": "song",
+                "source_start_seconds": 0.0, "source_end_seconds": 10.0,
+                "timeline_start_seconds": 0.0, "duration_seconds": 10.0,
+                "playback_rate": 1.0, "intent": "music", "observed_content": None,
+                "confidence": 1.0, "reframe": None, "transition_out": None,
+                "text": None, "volume_db": -12.0}]})
+        path.write_text(json.dumps(doc))
+
+    c = svc.voiceover_retime_preview("vlog-ctrail")["candidate"]
+    assert c["action"] == "trim" and c["feasible"] is False   # refused, not black
+    with pytest.raises(projects_mod.ProjectError):
+        svc.voiceover_retime_apply("vlog-ctrail", base_revision=c and 2)
+
+
 def _chat_fixture(tmp_path):
     """A project with an approved plan (primary video track + a B-roll track we
     assert is EXCLUDED from the grounded scene map) and a concept."""

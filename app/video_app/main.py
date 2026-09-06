@@ -151,6 +151,20 @@ class VoiceoverCleanupRequest(BaseModel):
     base_revision: int
 
 
+class VoiceoverRemediesRequest(BaseModel):
+    event_id: str | None = Field(default=None, max_length=64)
+
+
+class VoiceoverRemedyApplyRequest(BaseModel):
+    event_id: str | None = Field(default=None, max_length=64)
+    remedy_id: str = Field(min_length=1, max_length=64)
+    base_revision: int
+
+
+class VoiceoverRetimeApplyRequest(BaseModel):
+    base_revision: int
+
+
 class ModelPrefRequest(BaseModel):
     stage: str = Field(pattern=r"^[a-z_]{1,32}$")
     provider: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
@@ -606,6 +620,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             lambda: projects.voiceover_cleanup_apply(
                 project_id, request.event_id, request.candidate_ids,
                 request.base_revision)
+        )
+
+    @application.post("/api/projects/{project_id}/voiceover/remedies")
+    def voiceover_remedies(project_id: str, request: VoiceoverRemediesRequest):
+        return project_call(
+            lambda: projects.voiceover_remedies(project_id, request.event_id)
+        )
+
+    @application.post("/api/projects/{project_id}/voiceover/remedies/apply")
+    def voiceover_remedy_apply(project_id: str, request: VoiceoverRemedyApplyRequest):
+        return project_call(
+            lambda: projects.voiceover_remedy_apply(
+                project_id, request.event_id, request.remedy_id,
+                request.base_revision)
+        )
+
+    @application.post("/api/projects/{project_id}/voiceover/retime")
+    def voiceover_retime_preview(project_id: str):
+        return project_call(lambda: projects.voiceover_retime_preview(project_id))
+
+    @application.post("/api/projects/{project_id}/voiceover/retime/apply")
+    def voiceover_retime_apply(project_id: str, request: VoiceoverRetimeApplyRequest):
+        return project_call(
+            lambda: projects.voiceover_retime_apply(
+                project_id, request.base_revision)
         )
 
     @application.get("/api/projects/{project_id}/chat")
