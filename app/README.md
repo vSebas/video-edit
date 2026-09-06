@@ -23,8 +23,9 @@ Open <http://127.0.0.1:8787> (or from any device on the tailnet:
 
 The UI (Spanish-only) is organized around the user journey in four
 workspaces — **Historia** (story cards, new-idea guidance, reference-style
-cards), **Edición** (player, ONE natural-language edit input with an inline
-proposal, scene strip with B-roll/voice lanes, revision history with
+cards), **Edición** (player, ONE assistant **chat** that both discusses the cut and
+proposes confirm-gated edits — with voiceover drafting and "grabar y
+colocar" — scene strip with B-roll/voice lanes, revision history with
 restore), **Metraje** (clips with usage badges and value scores), and
 **Publicar** (download, freshness warnings, OpenTake placement/sync,
 DaVinci exports, the music recommendation / burned-bed control, and the
@@ -109,12 +110,31 @@ proposal and editable exports:
      every cut (`set_fades`), plus per-cut `fade_black`/`fade_white` dips
      (`set_transition`). True crossfade (`dissolve`) is deferred and refused
      rather than faked.
-9. `POST /opentake/cleanup` + `/opentake/cleanup/apply` — Spanish dialogue
+9. **Assistant chat** (`GET`/`POST`/`DELETE /api/projects/{id}/chat`,
+   `POST …/chat/apply`) — ONE conversational surface in Edición that both
+   discusses the cut and edits it (it replaced the separate atomic "Editor IA"
+   box and the first voiceover-only chat). The model is handed a brief the blank
+   LLM does not have: a timecoded **scene map** (what each cut shows + its
+   intent, from `observed_content`; B-roll excluded), the concept, placed
+   voiceovers, and the concept's narration recommendation. It returns a small
+   discriminated JSON — a `reply` (discussion / a drafted `🎙️ [m:ss–m:ss] «text»`
+   line) or an `edit` instruction. An edit is routed through the UNCHANGED
+   reviewed path (`plan_command_propose` → the creator confirms an inline card →
+   `plan_command_apply`): the deterministic op layer bounds every change and the
+   chat never mutates the plan or synthesizes audio. Memory disambiguates intent
+   ("make THAT shorter") but the mutation is always a bounded, confirmed op.
+   A drafted line carries `voiceover_draft`, and **"grabar y colocar"**
+   (`POST …/voiceover/place`) records/uploads the note and places it via
+   `add_voiceover`. The thread persists per project (`chat.json`), shared
+   phone↔laptop. The **model picker** (`GET /api/models`, `POST
+   …/model-prefs`) chooses the writer and the video-analysis model per project;
+   every trigger path honors the stored choice.
+10. `POST /opentake/cleanup` + `/opentake/cleanup/apply` — Spanish dialogue
    cleanup: conservative filler/dead-air candidates from the local word
    transcript, reviewed as a checklist in the workbench, applied as ONE
    atomic ripple in OpenTake (fingerprint-bound so a changed timeline
    rejects the apply); then pulled into the plan via sync.
-10. `POST /opentake/sync` + `/opentake/sync/apply` — pull the OpenTake
+11. `POST /opentake/sync` + `/opentake/sync/apply` — pull the OpenTake
    timeline back into the plan: preview returns the diff (splits, trims,
    moves, deletions, all fail-closed within originally grounded material);
    apply installs it as a new revision through the same archive/log path as

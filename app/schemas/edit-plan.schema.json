@@ -633,6 +633,11 @@
                 },
                 "loop": {
                   "type": "boolean"
+                },
+                "source_capacity_seconds": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "Immutable source length of a one-shot bed, so a shrink then grow re-fit cannot permanently erode its playable span."
                 }
               }
             }

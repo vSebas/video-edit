@@ -58,8 +58,13 @@ self.addEventListener('fetch', (event) => {
     fetch(request)
       .then((response) => {
         if (response && response.ok) {
+          // Keep the SW alive until the cache write lands — a detached
+          // caches.open(...).then() can be killed with the worker before the
+          // shell update is stored, leaving a stale precache.
           const copy = response.clone();
-          caches.open(CACHE).then((c) => c.put(isNav ? '/' : request, copy)).catch(() => {});
+          event.waitUntil(
+            caches.open(CACHE).then((c) => c.put(isNav ? '/' : request, copy)).catch(() => {})
+          );
         }
         return response;
       })

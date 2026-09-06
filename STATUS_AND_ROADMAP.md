@@ -172,12 +172,36 @@ producer sets the field yet), and `reframe` fill/scale for true
 subject-fill vertical framing (only `fit`/letterbox is produced today). Both are
 schema-ready for when a producer needs them.
 
-Known consumer gaps from the 2026-09-03 deep check (honest, not yet fixed):
-OpenTake sync-back does not re-anchor the **title track** after a rearrange
-(the same class fixed for captions), and does not re-fit the **music bed /
-voiceover ducking** on a duration change. OpenTake placement and OTIO/XMEML
-export carry cut geometry only — transitions, music, and reframe stay render-side
-(the MP4 has them); these drops are by design but silent.
+Consumer gaps from the 2026-09-03 deep check, **both fixed the same day**:
+OpenTake sync-back now re-anchors the **title track** (`_clamp_titles_to_duration`)
+and re-fits the **music bed** (`_refit_music_bed`) on a duration change; voiceover
+ducking is derived live by the renderer, so it follows automatically (see
+`app/VALIDATION.md` → "Cross-codebase deep check"). OpenTake placement and
+OTIO/XMEML export still carry cut geometry only — transitions, music, and reframe
+stay render-side (the MP4 has them); these drops are by design but silent.
+
+### Unified assistant chat + model picker (2026-09-05)
+
+Edición's two boxes — the atomic "Editor IA" and the day-old voiceover chat —
+were merged into ONE assistant chat (user's call: "why two? just one that does
+both"). It both DISCUSSES the cut (voiceover drafting, "what's weak?") and EDITS
+it, but the edit path is unchanged and still confirm-gated: the model returns a
+discriminated JSON (`reply` | `edit` instruction); an `edit` routes through
+`plan_command_propose` → an inline confirm card → `plan_command_apply`, so the
+deterministic op layer bounds every change and the human approves it. The chat
+never authors the mutation or synthesizes audio. Context-fed per turn from the live
+plan (scene map, concept, placed VOs, narration recommendation; B-roll excluded).
+Memory disambiguates intent but the mutation is always a bounded, confirmed op.
+Persisted per project (`chat.json`), shared phone↔laptop.
+
+- **Grabar y colocar:** a drafted line → record/upload a note → `place_voiceover`
+  finds the new audio asset and places it via the confirm-gated `add_voiceover`.
+- **Model picker** (`GET /api/models`, `POST …/model-prefs`): choose the story
+  writer and the video-analysis model per project (availability flagged by key
+  presence; Anthropic is NOT offered — concept generation uses the
+  OpenAI-shaped client, so it would send the wrong protocol; Gemini is the
+  only visual model that hears audio). Stored on the project; every trigger path
+  honors it (`_resolve_stage_model`: explicit arg > pref > default).
 
 ## Standing Today
 

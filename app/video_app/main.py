@@ -38,7 +38,8 @@ class SelectConceptRequest(BaseModel):
 
 
 class AnalyzeVisualRequest(BaseModel):
-    provider: str = Field(default="gemini", pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
+    # None → use the project's stored model preference (else the stage default).
+    provider: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
     model: str | None = Field(default=None, max_length=160)
     force: bool = False
 
@@ -54,7 +55,8 @@ class AnalyzeContextRequest(BaseModel):
 
 
 class GenerateConceptsRequest(BaseModel):
-    provider: str = Field(default="qwen", pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
+    # None → use the project's stored model preference (else the stage default).
+    provider: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
     model: str | None = Field(default=None, max_length=160)
     guidance: str | None = Field(default=None, max_length=2000)
     keep_concept_ids: list[str] | None = Field(default=None, max_length=10)
@@ -129,6 +131,16 @@ _DIRECT_UI_OPS = {
 
 class PlanOpRequest(BaseModel):
     op: dict = Field(description="A closed-set plan op, e.g. {'op': 'remove_music'}")
+
+
+class ChatMessageRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+
+
+class ModelPrefRequest(BaseModel):
+    stage: str = Field(pattern=r"^[a-z_]{1,32}$")
+    provider: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
+    model: str = Field(min_length=1, max_length=160)
 
 
 class OpenTakeSyncRequest(BaseModel):
@@ -266,14 +278,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     async def _save_uploads(
         request: Request, files: list[UploadFile], target: Path, label: str
-    ) -> int:
-        saved = 0
+    ) -> list[Path]:
+        """Save the supported uploads and return their destination paths (so a
+        caller can roll them back if a later step fails)."""
+        saved: list[Path] = []
         for upload in files:
             suffix = Path(upload.filename or "clip.mp4").suffix.lower()
             if suffix not in {".mp4", ".mov", ".m4v", ".jpg", ".jpeg", ".png", ".m4a", ".wav", ".mp3"}:
                 continue
             safe_name = re.sub(
-                r"[^A-Za-z0-9._-]", "_", upload.filename or f"clip{saved}{suffix}"
+                r"[^A-Za-z0-9._-]", "_", upload.filename or f"clip{len(saved)}{suffix}"
             )
             destination = target / safe_name
             if destination.exists():
@@ -281,7 +295,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             with destination.open("wb") as handle:
                 while chunk := await upload.read(8 * 1024 * 1024):
                     handle.write(chunk)
-            saved += 1
+            saved.append(destination)
         return saved
 
     @application.post("/api/uploads/item", status_code=200)
@@ -377,6 +391,42 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not saved:
             raise HTTPException(status_code=400, detail="No supported media files were uploaded")
         return project_call(lambda: projects.sync_media(project_id))
+
+    @application.post("/api/projects/{project_id}/voiceover/place", status_code=200)
+    async def place_voiceover(
+        request: Request,
+        project_id: str,
+        files: list[UploadFile] = File(...),
+        start_seconds: float = Form(...),
+        max_duration_seconds: float | None = Form(None),
+    ):
+        """'Grabar y colocar': save a recorded voice note into the project and
+        place it as a voiceover at the drafted start (trimmed to the drafted
+        window when given). The saved recording is identified by its EXACT
+        filename, and place_voiceover owns cleanup of only that file/asset on any
+        failure — never a project-wide diff that could touch unrelated media
+        (Codex review 2026-09-06)."""
+        # Exactly one recording per placement.
+        if len(files) != 1:
+            raise HTTPException(
+                status_code=400, detail="Sube una sola nota de voz"
+            )
+        project = project_call(lambda: projects.get_project(project_id))
+        target = current_settings.root / project["source_directory"]
+        saved = await _save_uploads(
+            request, files, target, f"voz en off para «{project['name']}»"
+        )
+        if not saved:
+            raise HTTPException(
+                status_code=400, detail="No se subió una nota de voz válida"
+            )
+        # Root-relative source_path is the unique identity (a bare basename can
+        # collide with a nested asset under recursive sync) — Codex review r3.
+        saved_source_path = str(saved[0].relative_to(current_settings.root))
+        return project_call(
+            lambda: projects.place_voiceover(
+                project_id, saved_source_path, start_seconds, max_duration_seconds)
+        )
 
     @application.post("/api/projects/{project_id}/sync-media")
     def sync_media(project_id: str):
@@ -498,6 +548,47 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def plan_music_suggest(project_id: str):
         return project_call(lambda: projects.suggest_music(project_id))
 
+    @application.get("/api/models")
+    def available_models():
+        return projects.available_models()
+
+    @application.post("/api/projects/{project_id}/model-prefs")
+    def set_model_pref(project_id: str, request: ModelPrefRequest):
+        return project_call(
+            lambda: {"model_prefs": projects.set_model_pref(
+                project_id, request.stage, request.provider, request.model)}
+        )
+
+    @application.get("/api/projects/{project_id}/chat")
+    def chat_history(project_id: str):
+        return project_call(
+            lambda: {"messages": projects.load_chat(project_id)}
+        )
+
+    @application.post("/api/projects/{project_id}/chat")
+    def chat_send(project_id: str, request: ChatMessageRequest):
+        return project_call(
+            lambda: projects.chat_send(project_id, request.message)
+        )
+
+    @application.delete("/api/projects/{project_id}/chat")
+    def chat_clear(project_id: str):
+        return project_call(
+            lambda: {"messages": projects.clear_chat(project_id)}
+        )
+
+    @application.post("/api/projects/{project_id}/chat/apply")
+    def chat_apply(project_id: str, proposal_id: str | None = None):
+        return project_call(
+            lambda: projects.chat_apply(project_id, proposal_id)
+        )
+
+    @application.post("/api/projects/{project_id}/chat/dismiss")
+    def chat_dismiss(project_id: str, proposal_id: str):
+        return project_call(
+            lambda: projects.chat_dismiss(project_id, proposal_id)
+        )
+
     @application.post("/api/projects/{project_id}/plan/op")
     def plan_op_propose(project_id: str, request: PlanOpRequest):
         name = request.op.get("op")
@@ -560,14 +651,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def analyze_visual(project_id: str, request: AnalyzeVisualRequest | None = None):
         project_call(lambda: projects.get_project(project_id))
         options = request or AnalyzeVisualRequest()
+        # Resolve the concrete model NOW so the fingerprint and closure agree and
+        # two preference-based requests don't dedupe onto each other (or run the
+        # wrong model after the picker changes) — Codex review 2026-09-06.
+        prov, mdl = project_call(lambda: projects.resolve_stage_model(
+            project_id, "visual", options.provider, options.model))
         return jobs.submit(
             "visual_analysis",
             project_id,
             lambda: projects.analyze_visual(
-                project_id, options.provider, options.model,
-                force=options.force,
+                project_id, prov, mdl, force=options.force,
             ),
-            fingerprint=f"{options.provider}:{options.model}:{options.force}",
+            fingerprint=f"{prov}:{mdl}:{options.force}",
         )
 
     @application.post("/api/projects/{project_id}/analysis/speech", status_code=202)
@@ -600,13 +695,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def generate_concepts(project_id: str, request: GenerateConceptsRequest | None = None):
         project_call(lambda: projects.get_project(project_id))
         options = request or GenerateConceptsRequest()
+        # Resolve the concrete writer model now (see analyze_visual above).
+        prov, mdl = project_call(lambda: projects.resolve_stage_model(
+            project_id, "concepts", options.provider, options.model))
         return jobs.submit(
             "concept_generation",
             project_id,
             lambda: projects.generate_concepts(
                 project_id,
-                options.provider,
-                options.model,
+                prov,
+                mdl,
                 options.guidance,
                 options.keep_concept_ids,
                 options.use_source_context,
@@ -618,7 +716,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             fingerprint=hashlib.sha1(
                 json.dumps(
                     [
-                        options.provider, options.model, options.guidance,
+                        prov, mdl, options.guidance,
                         sorted(options.keep_concept_ids or []),
                         options.use_source_context, options.style_id,
                         projects.concept_inputs_token(project_id),

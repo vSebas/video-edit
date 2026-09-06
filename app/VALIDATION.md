@@ -753,9 +753,11 @@ necessary to fix it." The architecture Codex prescribed is now built
   rendered-language gate as compiled ones.
 - **Title gate is risk-scoped**: poetic/descriptive titles pass without
   vocabulary overlap; only titles asserting outcomes, speech content,
-  identity, emotion, or brands need approved support. User-typed titles
-  (set_title) are the user's own speech — marked `user_authored` and
-  exempt.
+  identity, emotion, or brands need approved support. (UPDATE 2026-09-06:
+  `set_title` no longer marks its text `user_authored` — instruction/chat-set
+  titles are model-mediated and now face the claim gate; see the Codex round
+  below. Only literal user-typed text elsewhere, e.g. `edit_caption`, is
+  `user_authored`/exempt.)
 - **needs_review and evidence_ids now ride the span into the compile
   gates** (they were dropped when spans were rebuilt).
 - **Restored revisions pass the title gate too** (pre-gate plans can't
@@ -957,3 +959,218 @@ render-side (the MP4 has them). Dead/unreachable today: the event-level
 `caption_style` ASS render path (no producer sets it yet), `reframe` fill/scale
 (only `fit` is produced), and `pipeline/validate_edit.py` (orphaned CLI, drifted
 from the schema).
+
+## Unified assistant chat + model picker (2026-09-05)
+
+The two Edición boxes ("Editor IA" and the day-old voiceover chat) were merged
+into ONE assistant chat (`chat_send`/`chat_apply` / `GET`/`POST`/`DELETE`
+`/api/projects/{id}/chat`, `POST …/chat/apply`). One surface now both DISCUSSES
+the cut (voiceover drafting, "what's weak?") and EDITS it. The model returns a
+small discriminated JSON — a conversational `reply`, or an explicit single-op
+`edit` instruction resolved from the conversation. An edit is routed through the
+UNCHANGED reviewed path (`plan_command_propose` → the human confirms →
+`plan_command_apply`): the deterministic op layer computes/bounds every change
+and the creator approves an inline card before it applies. The chat never
+authors the mutation and never applies on its own. Grounding brief (scene map
+from `observed_content` + intent, concept, placed voiceovers, narration
+recommendation) is rebuilt each turn from the live plan, and B-roll is EXCLUDED
+from the scene map (role-based track selection). Thread persists per project
+(`runtime/{id}/chat.json`), shared phone↔laptop.
+
+- **Grabar y colocar:** a drafted voiceover line carries a `voiceover_draft`
+  {start,end,text}; the UI records/uploads a note and `place_voiceover`
+  identifies the new audio asset (inventory diff) and places it via the bounded
+  `add_voiceover` op — the same confirm-gated path.
+- **Model picker:** `available_models` exposes per-stage choices (story writer,
+  video analysis) flagged by key availability (Anthropic is NOT offered — concept
+  generation uses the OpenAI-shaped client, wrong protocol for it);
+  `set_model_pref` validates against the offered menu
+  and persists on the project; `_resolve_stage_model` makes every trigger path
+  (first run, regenerate, forced re-run) honor the choice (explicit arg > stored
+  pref > stage default). Gemini is flagged as the only visual model that hears
+  audio.
+
+- **Honesty note:** the chat is **context-fed, not deterministically grounded.**
+  Unlike a compiled cut (which passes deterministic coverage/lineage gates), a
+  chat reply or voiceover draft is only *prompted* to stay within the scene map
+  — there is no citation gate on the text. The UI labels drafts as "borradores
+  … revísalos antes de grabar" and the edit path (not the chat text) keeps the
+  deterministic gates. Titles are now at least routed through the title claim
+  gate instead of being exempt (see the Codex round below) — but that gate is a
+  heuristic word-overlap check, not a guarantee: a title still passes if any of
+  its risky words appears in an approved caption.
+
+- **Verified (2026-09-05):** unit — `test_chat_reply_is_grounded_and_persists`
+  (context brief incl. B-roll exclusion, voiceover_draft, multi-turn history,
+  reload, clear), `test_chat_edit_routes_through_confirm_gate` (edit → confirm
+  card; reject → plain reply; `chat_apply` flips applied + notes it),
+  `test_model_prefs_persist_and_resolve`. Live on `9-12-abril`: a discussion
+  turn returned a context-grounded reply; an ambiguous edit that would break the
+  plan degraded to a plain "no pude" reply (no HTTP error); the model picker and
+  pref persistence returned correctly.
+
+- **Codex deep review (2026-09-06, gpt-5.6-sol/max, our resumed session) + an
+  independent pass.** Both confirmed the safety core: the closed-op confirm gate
+  holds, `chat_send` never writes `edit-plan.json`, `chat_apply` delegates to the
+  revision-guarded apply, no non-reentrant-lock deadlock, XSS-clean. Verdict
+  REVISE. **Fixed:** title provenance (instruction-set titles are no longer
+  `user_authored`, and a risky-unsupported title is refused at *propose* via the
+  new `_assert_titles_supported`, not only at render); `place_voiceover`
+  fails-closed on ambiguous asset attribution + requires exactly one file +
+  tighter accept types; `chat_send` degrades on provider-construction and
+  op-pick JSON errors (not just `ProjectError`); `_chat_context` accepts an
+  explicit `role:"primary"` track and matches Spanish narration terms;
+  `voiceover_draft` rejects non-finite/out-of-cut geometry; the Anthropic
+  concepts option was removed (it uses the OpenAI-shaped client); a `model`-only
+  request is honored; `set_model_pref` rejects a keyless provider and 404s an
+  unknown project; "Descartar" now invalidates the server proposal
+  (`chat_dismiss`); `chat_apply` bookkeeping is best-effort post-commit;
+  `suggest_music` builds its model client lazily; `sw.js` awaits `cache.put`.
+  Full suite after fixes: **302 passed**.
+
+- **Second fix round (2026-09-06), the deferred list worked down.** At the
+  user's direction ("do all of them") the earlier deferrals were mostly
+  implemented and tested: voiceover **length trim** (`add_voiceover`
+  `max_duration_seconds`; `place_voiceover`/endpoint thread it); upload
+  **rollback** on failed placement; **stale-plan guard** (a proposal whose
+  revision advanced mid-turn is refused); the **middle-ground draft check** (a
+  `voiceover_draft` whose text isn't supported by the evidence for its window is
+  flagged `unverified` and the UI marks it "sin respaldo — verifica");
+  **chat ABA guards** (object-identity + write-sequence; capture bound to its
+  project); **PWA silent refresh** (focus refresh keeps the cached cut until a
+  full response lands); **job fingerprint** resolves the concrete model before
+  enqueue; **chat token metering** into the cost ledger; **OpenTake structural
+  fingerprint** (additive to the clip-count staleness check; unit-tested,
+  unverified against live OpenTake); **music-bed source-capacity** preserved
+  across shrink→grow (new optional schema field); **music provenance** badge
+  (AI-guessed vs real-catalog). New tests: `test_add_voiceover_max_duration_*`,
+  `test_refit_music_bed_preserves_source_capacity`,
+  `test_bundle_clip_fingerprint_*`. Full suite: **305 passed**; live-verified
+  (metering ledger, dismiss, models).
+  **Still deferred, with honest reasons:** the OpenTake **PCM range guard**
+  (needs a Rust change + a fork rebuild — and the sample-trim direction must be
+  verified against the export retiming, unsafe to write blind); **full B-roll
+  evidence-id resolution** in the applier (a defensive lineage gate at propose
+  was added, but auto-attaching approved ids by envelope needs render-path
+  verification); the **music suggest auto-commit → candidate-return** UX redesign
+  (music is pinned; needs the owner's UX call); a full chat **turn-queue** (the
+  client identity/seq guards + server lock + stale-plan guard cover the real
+  cases; a queue is over-engineering for a single user); and the **full
+  deterministic citation gate** for chat text (the middle-ground draft check is
+  the proportionate answer).
+
+- **Codex verify round (2026-09-06, gpt-5.6-sol/max) — NOT LAND-READY → fixed.**
+  The verify confirmed the closed-op confirm boundary survives but found the
+  second batch was symptom-deep in places and had introduced **5 regressions**
+  (an independent pass agreed). All fixed, suite re-greened (**305**):
+  - *(regression)* failed voiceover placement **poisoned the inventory** — the
+    blunt file-only rollback left the asset id, so a same-name re-upload matched
+    it and every retry failed. `place_voiceover` now owns cleanup via
+    `_discard_assets` (file + inventory) and only rolls back an asset the plan
+    does NOT reference (`_plan_references_asset`), so a partial commit cannot
+    delete referenced media; the endpoint's blunt unlink was removed.
+  - *(regression)* VO duration **rounded to the nearest frame** and could overrun
+    the cut/recording/cap → new `_floor_grid` floors it and refuses <0.5s.
+  - *(regression)* `setModelPref` could **stamp project A's prefs onto B** after a
+    switch → identity guard added.
+  - *(regression)* the propose-time lineage gate **failed open** on unexpected
+    errors → now fails closed.
+  - Partials tightened: `chat_send` also catches `TypeError` from a bad op param;
+    the stale-plan guard no longer accepts a missing preview revision;
+    `chat_apply`'s initial chat read is inside the best-effort boundary; the
+    OpenTake fingerprint now hashes the REAL camelCase clip keys (`mediaRef`/
+    `startFrame`/`durationFrames`/`trimStartFrame`/`volume`… from `clip.rs`) — the
+    earlier snake_case guess was vacuous; a one-shot bed stamps full source
+    capacity at creation (regrows beyond a short initial cut); music discovery is
+    per-platform tolerant; doc contradictions fixed. **Still open, low-severity:**
+    titles stamped `user_authored` BEFORE this change keep their exemption through
+    restore (pre-existing); the draft-support window is the whole source event,
+    not the exact slice; a dismiss-vs-apply race can leave a cosmetically
+    contradictory thread line (single-user).
+
+- **Codex re-verify (round 2, 2026-09-06) — 8/11 fixed, 3 more issues → fixed.**
+  The re-verify confirmed the model-picker guard, fail-closed lineage gate,
+  stale-plan guard, chat_apply boundary, OpenTake camelCase keys, music-bed
+  capacity, and per-platform music tolerance all landed, but caught that my
+  voiceover-rollback fix had **introduced a new data-loss path** and two partials
+  remained. Fixed:
+  - The rollback used a **project-wide inventory diff**, so a concurrent upload's
+    asset could be deleted as collateral. Rewrote `place_voiceover` to identify
+    the recording by its **exact saved filename** (unique) — no diff — and
+    `_discard_upload` cleans up only that file/asset (and only when the plan
+    doesn't reference it); a probe failure during sync now removes the orphan
+    file too. The endpoint passes the exact filename.
+  - A **supplied-but-invalid cap** (<0.5s or NaN) was silently dropped, placing
+    the whole recording; now it's refused.
+  - `set_title` with `size: 1e309` (→ `int(inf)`) raised an uncaught
+    `OverflowError` → 500; `_apply_title` now `float()`-validates size as finite
+    (clean `PlanOpError`), and `chat_send` also catches `OverflowError`. Tested
+    (`test_set_title_style_validated` covers the inf case). Suite: **305**.
+
+- **Codex re-verify (round 3, 2026-09-06) — converging (2 issues) → fixed.**
+  Round 3 confirmed the size-overflow fix and found two more: (a) matching the
+  upload by `filename` (basename) could still collide with a nested asset under
+  recursive `sync_media` — switched to the unique root-relative `source_path`
+  (endpoint passes `saved[0].relative_to(root)`; `place_voiceover`/
+  `_discard_upload` match `source_path`); (b) the invalid-cap rejection lived
+  only on the upload route — added the same finite/≥0.5 check to the
+  authoritative `_apply_add_voiceover` applier. Suite: **305**. (Round trend: 5
+  regressions → 3 → 2, converging as the cadence predicts.)
+
+- **Codex re-verify (round 4, 2026-09-06) — CONVERGED.** Both remaining
+  voiceover-placement fixes verified **FIXED, no regressions introduced**:
+  the `source_path` identity matches what `sync_media` stores (a nested
+  duplicate basename can neither be selected nor deleted; an unindexed upload
+  removes only its exact path), and `_apply_add_voiceover` rejects nonnumeric/
+  `<0.5`/NaN/inf caps. Verdict: **LAND-READY** for the reviewed
+  voiceover-placement fixes. Full round trend: **5 regressions → 3 → 2 → 0.**
+  Everything Codex flagged across the whole review is now either fixed +
+  re-verified or an explicit, reasoned deferral (PCM rebuild, full B-roll
+  evidence-resolution, music auto-commit UX, full citation gate). Suite: **305**.
+  Nothing committed — staged for the owner's review.
+
+## Formerly-deferred items, now built (2026-09-06)
+
+At the owner's direction ("do them if required"), the three remaining deferrals
+were implemented:
+
+- **B-roll evidence-id resolution.** `_resolve_broll_evidence` runs before the
+  propose-time lineage gate for `add_broll`/`replace_broll`: for a cutaway that
+  is not already grounded (a chat B-roll has no ids; a replaced one keeps the
+  prior asset's), it gathers the APPROVED observations whose envelope is for that
+  asset and covers its source range and stamps them, so a grounded cutaway now
+  passes the lineage gate and renders — an ungrounded one still resolves to
+  nothing and is refused. Only lineage-contract plans are gated. Suite: 305.
+
+- **Music suggest: candidate-return, not auto-commit.** `suggest_music` now
+  returns `{status: "candidates", candidates, sources}` WITHOUT mutating the plan
+  (it no longer installs the top pick). The Publicar card presents the choices
+  for selection (AI-guessed tracks marked "IA ⚠"); only the creator's pick
+  applies via `set_music_recommendation`. Live-verified: suggest returned 4
+  candidates and left the plan revision unchanged (6→6).
+
+- **OpenTake PCM range guard (Rust).** `crates/opentake-media/src/decode/pcm.rs`:
+  `trim_range_pcm` caps an EXPLICIT-range decode to its expected frame count so
+  the export retimer (`retime_pcm_to_len_with_control`, which stretches the whole
+  decoded buffer across the clip slot) can't turn ~1s of decoder slack into a
+  short-slot pitch/content corruption; `reader_cap` stays generous (no
+  false-fail), and whole-file decodes keep their flush tail. Unit test
+  `trim_range_pcm_caps_explicit_range_but_not_whole_file` **passed** (`cargo test
+  -p opentake-media --lib`, built under resource caps); the full release rebuild
+  is running under caps to deploy it. **Caveat, honest:** FFmpeg compensates AAC
+  start-priming via the container edit list so the surplus is treated as
+  trailing; sample-exactness for primed lossy codecs should still be verified by
+  ear against real footage — this bound removes the gross stretch, not
+  necessarily a sub-frame offset.
+
+- **Codex review of the three (2026-09-06) — converged to LAND-READY.** Round 1:
+  PCM **FIXED** (sound, no regression), B-roll + music **PARTIAL** with 3 Major
+  issues. Round 2: strict-coverage **FIXED**; B-roll add-targeting (trusted a
+  model `event_id`) and the music suggest stale-navigation still open. Round 3:
+  both **FIXED, no regressions — LAND-READY.** Final shape: B-roll resolution
+  touches only the deterministically-derived target event (add = candidate ∖
+  base; replace = the required id), stamps ids only on **strict** ≥60% coverage
+  (no edge-tolerance fail-open), and never launders a revoked id off an unrelated
+  scene; music `suggest` returns project-bound candidates without mutating and
+  no longer navigates on a stale response; the PCM guard is deployed in the
+  release binary (rebuilt under resource caps, 3m42s, no OOM). Suite: **305**.

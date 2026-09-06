@@ -28,6 +28,7 @@ from .planning import (
     validate_edit_plan,
 )
 from .providers import (
+    PROVIDER_DEFAULTS,
     ChatClient,
     ProviderError,
     make_client,
@@ -84,6 +85,88 @@ SUPPORTED_EXTENSIONS = VIDEO_EXTENSIONS | IMAGE_EXTENSIONS | AUDIO_EXTENSIONS
 # the default (available on the existing workspace key).
 PLANNER_DEFAULT_MODELS = {"qwen": "deepseek-v4-pro"}
 EVIDENCE_ADAPTERS = {"openstoryline", "owned-live-visual", "local-asr"}
+
+# Model choices the UI exposes per pipeline stage. Each stage keeps its
+# evidence-won default first (recommended). A choice is only OFFERED as usable
+# when its provider key is present in the environment (Anthropic's key is not
+# forwarded to the container today, so it surfaces as unavailable, not hidden —
+# the honest state). `visual` also flags which models actually HEAR the audio,
+# because that materially changes perception quality.
+MODEL_STAGES: dict[str, dict] = {
+    "concepts": {
+        "label": "Historia / ideas",
+        "default": {"provider": "qwen", "model": "deepseek-v4-pro"},
+        "options": [
+            {"provider": "qwen", "model": "deepseek-v4-pro",
+             "label": "DeepSeek V4 Pro", "note": "recomendado — ganó la cata a ciegas"},
+            {"provider": "qwen", "model": "qwen3.7-plus",
+             "label": "Qwen 3.7 Plus", "note": ""},
+            {"provider": "openai", "model": "gpt-5.6-sol",
+             "label": "GPT-5.6", "note": ""},
+            # Anthropic is intentionally NOT offered: concept generation builds
+            # the OpenAI-compatible ChatClient directly, not the native
+            # AnthropicClient, so selecting it would send the wrong protocol
+            # (Codex review 2026-09-06; see README "Provider credentials").
+        ],
+    },
+    "visual": {
+        "label": "Análisis de video",
+        "default": {"provider": "gemini", "model": "gemini-3.6-flash"},
+        "options": [
+            {"provider": "gemini", "model": "gemini-3.6-flash",
+             "label": "Gemini 3.6 Flash", "note": "recomendado — oye el audio",
+             "hears_audio": True},
+            {"provider": "openai", "model": "gpt-5.6-sol",
+             "label": "GPT-5.6 (visión)", "note": "solo imagen, sin audio",
+             "hears_audio": False},
+        ],
+    },
+}
+
+# Unified edit assistant: ONE conversational surface that both DISCUSSES the cut
+# (voiceover drafting, "what's weak here?") and, when asked to change the video,
+# routes the request through the SAME reviewed, revision-guarded op path the old
+# "Editor IA" box used (propose → the human confirms → apply). The model sees the
+# grounded brief assembled in `_chat_context` (scene map, concept, placed
+# voiceovers, narration recommendation) and returns a small discriminated JSON:
+# a conversational reply, or an explicit single-op edit INSTRUCTION resolved from
+# the conversation. It NEVER authors the mutation and NEVER applies anything on
+# its own — the deterministic op layer computes/bounds every change and the
+# creator approves it. Memory disambiguates intent ("make THAT shorter" → scene
+# 4); it does not loosen the gate.
+_CHAT_SYSTEM = """\
+Eres el asistente de edición de Vlog Studio. Conversas en el idioma del vlog \
+(español; a veces inglés si el metraje lo es) para ayudar a mejorar el corte. \
+Conoces el metraje: abajo tienes el concepto, el MAPA DE ESCENAS (timecode · qué \
+se ve · intención) y las voces en off ya colocadas.
+
+Respondes SIEMPRE con un objeto JSON, una de dos formas:
+
+1) Conversación / ideas / guiones de voz en off (NO cambia el video):
+   {"kind":"reply","text":"<tu respuesta>"}
+   - Habla de qué momentos ganarían con narración, qué está flojo, qué falta.
+   - Redacta voces en off concretas y hablables, ancladas a lo que el mapa dice \
+que se ve. NUNCA inventes lugares, personas, frases ni hechos fuera del mapa.
+   - Ritmo ~2,5–3 palabras/seg; no propongas más texto del que cabe en el rango.
+   - Cuando propongas UNA voz en off lista para grabar, además de mencionarla en \
+`text` con el formato 🎙️ [m:ss–m:ss] «texto», incluye el campo:
+     "voiceover_draft":{"start_seconds":<n>,"end_seconds":<n>,"text":"<texto>"}
+     para que la persona la grabe y coloque con un toque. Recuérdale que la graba \
+con su voz; tú no generas audio.
+
+2) Cambio al corte (edición del video):
+   {"kind":"edit","instruction":"<UNA instrucción explícita y autocontenida>","text":"<qué vas a proponer, breve>"}
+   - Úsalo cuando la persona pida MODIFICAR el video: eliminar/recortar una \
+escena, volumen, corte J/L, título, voz en off, B-roll, música o fundidos.
+   - Resuelve la referencia usando la conversación y el mapa: convierte «hazla \
+más corta» o «quita esa» en UNA instrucción concreta que nombre la escena por su \
+timecode o por lo que se ve (p. ej. «recorta 1s al final de la escena de 0:12»). \
+Un solo cambio por instrucción.
+   - NO apliques nada: el sistema convierte tu instrucción en una operación \
+acotada que la persona confirma antes de aplicar.
+
+Sé breve y directo. Si dudas entre conversar o editar, y la persona no pidió \
+claramente un cambio, usa kind="reply" y pregunta."""
 
 
 def utc_now() -> str:
@@ -356,12 +439,16 @@ class ProjectService:
     def analyze_visual(
         self,
         project_id: str,
-        provider: str = "gemini",
+        provider: str | None = None,
         model: str | None = None,
         force: bool = False,
     ) -> dict:
         """Run the owned live visual adapter over the project's media and
-        persist the result as a reviewed-by-policy semantic evidence run."""
+        persist the result as a reviewed-by-policy semantic evidence run. The
+        perception model defaults to the project's stored preference (else
+        Gemini, the only current model that hears the audio)."""
+        provider, model = self._resolve_stage_model(
+            project_id, "visual", provider, model)
         project = self.get_project(project_id)
         assets = project.get("inventory", {}).get("assets", [])
         if not assets:
@@ -802,6 +889,62 @@ class ProjectService:
             )
         return ranges
 
+    @staticmethod
+    def _strict_union_cover(spans: list[tuple[float, float]], start: float, end: float) -> bool:
+        """Union coverage of [start,end] with NO edge tolerance — a stricter test
+        than `envelopes_cover`, so a sliver-overlap observation can't ground a
+        short cutaway via the gate's 0.5s edge slop (Codex review 2026-09-06)."""
+        length = end - start
+        if length <= 0:
+            return False
+        covered = 0.0
+        cursor = start
+        for s0, e0 in sorted(spans):
+            low = max(cursor, s0)
+            high = min(end, e0)
+            if high > low:
+                covered += high - low
+                cursor = high
+            if cursor >= end:
+                break
+        from .planning import MIN_SUPPORTED_FRACTION
+        return covered / length >= MIN_SUPPORTED_FRACTION
+
+    def _resolve_broll_evidence(
+        self, project_id: str, plan: dict, target_event_ids: set[str]
+    ) -> None:
+        """Attach approved evidence_ids to ONLY the B-roll events named in
+        `target_event_ids` (the caller derives these deterministically — the new
+        event for add, the replaced id for replace — never trusting a model op
+        field), so a revoked id on an unrelated scene is left for the verifier to
+        refuse rather than laundered away (Codex review 2026-09-06). Gather the
+        approved observations whose envelope is for THIS asset and STRICTLY cover
+        the source range; stamp them if so, else clear the ids so an ungrounded
+        cutaway is refused by the lineage gate. Contract plans only."""
+        if not plan.get("lineage_contract") or not target_event_ids:
+            return
+        sets = self._evidence_review_sets(project_id)
+        approved = sets["approved"]
+        envelopes = sets.get("envelopes") or {}
+        for track in plan.get("tracks", []):
+            if track.get("kind") != "video" or track.get("role") != "broll":
+                continue
+            for event in track.get("events", []):
+                if event.get("event_id") not in target_event_ids:
+                    continue  # leave unrelated events untouched (no laundering)
+                asset = event.get("asset_id") or ""
+                start = event.get("source_start_seconds", 0)
+                end = event.get("source_end_seconds", 0)
+                covering = sorted(
+                    eid for eid in approved
+                    if (env := envelopes.get(eid)) is not None
+                    and env[0] == asset and env[2] > start and env[1] < end
+                )
+                spans = [(envelopes[eid][1], envelopes[eid][2]) for eid in covering]
+                event["evidence_ids"] = (
+                    covering if self._strict_union_cover(spans, start, end) else []
+                )
+
     def _verify_plan_lineage(self, project_id: str, plan: dict) -> None:
         """For contract plans: every lineage-bearing event's ids must be
         CURRENTLY approved — an approval revoked after compilation
@@ -1005,7 +1148,7 @@ class ProjectService:
     def generate_concepts(
         self,
         project_id: str,
-        provider: str = "qwen",
+        provider: str | None = None,
         model: str | None = None,
         guidance: str | None = None,
         keep_concept_ids: list[str] | None = None,
@@ -1015,7 +1158,10 @@ class ProjectService:
         """Generate grounded creative concepts with missing-shot advice from
         the project's approved evidence. Kept concepts survive regeneration;
         guidance steers the new ones. A style_id conditions HOW stories are
-        told (pacing, shape, tone) — grounding still owns the content."""
+        told (pacing, shape, tone) — grounding still owns the content. The
+        writer model defaults to the project's stored preference."""
+        provider, model = self._resolve_stage_model(
+            project_id, "concepts", provider, model)
         project = self.get_project(project_id)
         if style_id:
             from .style_intelligence import style_guidance, style_targets
@@ -1365,10 +1511,15 @@ class ProjectService:
         expected_audio = placed_primary + len(bridge.get("voiceover_events") or [])
         saved = saved_bundle_state()
         bundle_visible = bool(saved and saved.get("bundle") == f"{project_id}.opentake")
+        placed_fingerprint = bridge.get("placed_fingerprint")
         opentake_changed = bool(
             bundle_visible and (
                 saved.get("saved_video_clips") != expected_video
                 or saved.get("saved_audio_clips") != expected_audio
+                # A structural change that kept the clip counts (trim / move /
+                # reorder / volume) also counts as changed (Codex review).
+                or (placed_fingerprint
+                    and saved.get("saved_fingerprint") != placed_fingerprint)
             )
         )
         return {
@@ -1408,6 +1559,16 @@ class ProjectService:
             raise ProjectError(str(exc)) from exc
         finally:
             self._opentake_place_lock.release()
+        # Best-effort: record the structural fingerprint of what OpenTake now
+        # holds, so a later SAME-COUNT edit is still detected as a change (Codex
+        # review 2026-09-06). Missing/stale bundle just falls back to counts.
+        try:
+            from .opentake_bridge import saved_bundle_state
+            state = saved_bundle_state()
+            if state and state.get("bundle") == f"{project_id}.opentake":
+                bridge["placed_fingerprint"] = state.get("saved_fingerprint")
+        except Exception:  # noqa: BLE001 - staleness hint only
+            pass
         write_json(plan_dir.parent / "opentake-bridge.json", bridge)
         return summary
 
@@ -1724,13 +1885,13 @@ class ProjectService:
     ) -> dict:
         """Discover background music for THIS cut, PER PLATFORM (a couple for
         TikTok, a couple for Instagram — the same track is not always on both),
-        and install the top pick. Separates INTENT (mood/energy/tempo, from the
-        concept and the measured style) from CATALOG (real tracks): a real
-        platform provider is preferred (the official Instagram Audio API and a
-        config-driven TikTok source, when configured); otherwise the language
-        model NAMES plausible tracks for that platform as a fallback. Late-bound
-        — a track to add natively when posting, no audio burned. Returns the
-        candidates so the UI can group by platform and offer alternates."""
+        and RETURN the candidates WITHOUT mutating the plan (the creator picks
+        one; a model-guessed track is never silently installed). Separates INTENT
+        (mood/energy/tempo, from the concept and the measured style) from CATALOG
+        (real tracks): a real platform provider is preferred (the official
+        Instagram Audio API and a config-driven TikTok source, when configured);
+        otherwise the language model NAMES plausible tracks as a fallback.
+        Late-bound — a track to add natively when posting, no audio burned."""
         import dataclasses
 
         from .music import ModelMusicProvider, build_intent, discover
@@ -1751,12 +1912,18 @@ class ProjectService:
             platform_targets=["tiktok", "instagram"],
         )
 
-        client = ChatClient(resolve_provider(
-            provider, model or PLANNER_DEFAULT_MODELS.get(provider)
-        ))
+        # Build the language-model client LAZILY: real catalog providers
+        # (Instagram/TikTok) may satisfy discovery without ever needing the
+        # model fallback, so a missing Qwen key must not fail an otherwise
+        # healthy platform lookup (Codex review 2026-09-06).
+        _client: dict = {}
 
         def chat(messages: list[dict]) -> str:
-            return client.chat(messages, json_object=True, temperature=0.7)["content"]
+            if "c" not in _client:
+                _client["c"] = ChatClient(resolve_provider(
+                    provider, model or PLANNER_DEFAULT_MODELS.get(provider)
+                ))
+            return _client["c"].chat(messages, json_object=True, temperature=0.7)["content"]
 
         real = {
             "instagram": InstagramMusicProvider(),
@@ -1764,31 +1931,642 @@ class ProjectService:
         }
         candidates: list = []
         sources: dict[str, str] = {}
+        errors: list[str] = []
+        # Per-platform tolerant: one platform's failure (e.g. no configured
+        # catalog AND no Qwen key for the model fallback) must not abort the
+        # other — a working Instagram token should still return Instagram
+        # results even if TikTok can't be reached (Codex review 2026-09-06).
         for platform in ("tiktok", "instagram"):
             intent = dataclasses.replace(base_intent, platform_targets=[platform])
             providers = [real[platform], ModelMusicProvider(chat, platform=platform)]
             try:
                 found, source = discover(intent, providers)
-            except ProviderError as exc:
-                raise ProjectError(f"The music model failed: {exc}") from exc
-            except Exception as exc:  # noqa: BLE001
-                raise ProjectError(f"Music discovery failed ({platform}): {exc}") from exc
+            except Exception as exc:  # noqa: BLE001 - collect, don't abort
+                errors.append(f"{platform}: {exc}")
+                continue
             for cand in found[:2]:
                 cand.platform = cand.platform or platform
                 candidates.append(cand)
             sources[platform] = source
         if not candidates:
-            raise ProjectError("No se encontró música para este corte")
+            detail = f" ({'; '.join(errors)})" if errors else ""
+            raise ProjectError(f"No se encontró música para este corte{detail}")
 
-        top = candidates[0]
-        op = {"op": "set_music_recommendation", "recommended": top.to_recommended()}
-        proposed = self._propose_op(project_id, project, plan, op, "op:suggest_music")
-        applied = self.plan_command_apply(project_id, proposed["proposal_id"])
+        # Return the candidates WITHOUT mutating the plan — the creator picks one
+        # (a model-guessed track is not silently installed) via
+        # `set_music_recommendation`; provenance (`late_bound`, provider) rides
+        # along so the UI can mark unverified/AI-only options (Codex review
+        # 2026-09-06).
         return {
-            **applied,
+            "status": "candidates",
             "sources": sources,
             "candidates": [c.to_recommended() for c in candidates],
         }
+
+    # ---- Model preferences ----------------------------------------------
+
+    def available_models(self) -> dict:
+        """Per-stage model choices for the UI, each annotated with whether its
+        provider key is actually present (so an unusable option is shown
+        disabled, not silently missing)."""
+        stages = {}
+        for stage, spec in MODEL_STAGES.items():
+            options = []
+            for opt in spec["options"]:
+                env = PROVIDER_DEFAULTS.get(opt["provider"], {}).get("api_key_env")
+                options.append({
+                    **opt,
+                    "available": bool(env and os.environ.get(env, "").strip()),
+                })
+            stages[stage] = {
+                "label": spec["label"],
+                "default": spec["default"],
+                "options": options,
+            }
+        return {"stages": stages}
+
+    def get_model_prefs(self, project_id: str) -> dict:
+        project = self.get_project(project_id)
+        prefs = project.get("model_prefs")
+        return prefs if isinstance(prefs, dict) else {}
+
+    def set_model_pref(
+        self, project_id: str, stage: str, provider: str, model: str
+    ) -> dict:
+        """Persist the chosen model for a stage after checking it is one of the
+        offered options — so a stored pref can never point at an unknown
+        provider/model that would fail at call time."""
+        self.get_project(project_id)  # 404 an unknown project cleanly
+        spec = MODEL_STAGES.get(stage)
+        if spec is None:
+            raise ProjectError(f"Etapa de modelo desconocida: {stage}")
+        match = next(
+            (o for o in spec["options"]
+             if o["provider"] == provider and o["model"] == model),
+            None,
+        )
+        if match is None:
+            raise ProjectError("Ese modelo no está disponible para esta etapa")
+        # Existence isn't enough: a pref that points at a provider whose key is
+        # not configured would only fail later, at call time. Refuse it here so a
+        # stored pref is always usable (the UI disables it too, but the API is
+        # the real gate).
+        env = PROVIDER_DEFAULTS.get(provider, {}).get("api_key_env")
+        if not (env and os.environ.get(env, "").strip()):
+            raise ProjectError(
+                "Ese proveedor no tiene una llave API configurada"
+            )
+        with self._project_write(project_id):
+            path = self.settings.runtime / project_id / "project.json"
+            project = load_json(path)
+            prefs = project.get("model_prefs")
+            if not isinstance(prefs, dict):
+                prefs = {}
+            prefs[stage] = {"provider": provider, "model": model}
+            project["model_prefs"] = prefs
+            project["updated_at"] = utc_now()
+            write_json(path, project)
+        return prefs
+
+    def resolve_stage_model(
+        self, project_id: str, stage: str, provider: str | None, model: str | None
+    ) -> tuple[str, str | None]:
+        """Public: resolve the (provider, model) for a stage. Callers resolve
+        BEFORE enqueuing a job so the concrete pair goes into both the job's
+        fingerprint and its closure — two preference-based requests must not
+        collapse to the same `None:None` fingerprint (Codex review 2026-09-06)."""
+        return self._resolve_stage_model(project_id, stage, provider, model)
+
+    def _resolve_stage_model(
+        self,
+        project_id: str,
+        stage: str,
+        provider: str | None,
+        model: str | None,
+    ) -> tuple[str, str | None]:
+        """Pick the (provider, model) for a stage: an explicit caller argument
+        wins; otherwise the project's stored preference; otherwise the stage
+        default. Keeps every trigger path (first run, regenerate, forced re-run)
+        honoring the chosen model without threading it through each call."""
+        if provider:
+            return provider, model
+        pref = self.get_model_prefs(project_id).get(stage)
+        if isinstance(pref, dict) and pref.get("provider"):
+            base_provider, base_model = pref["provider"], pref.get("model")
+        else:
+            default = MODEL_STAGES[stage]["default"]
+            base_provider, base_model = default["provider"], default["model"]
+        # A caller may pass a model without a provider ({"model": "gemini-x"});
+        # honor it on the resolved provider rather than silently ignoring it.
+        return base_provider, (model or base_model)
+
+    # ---- Edit assistant chat --------------------------------------------
+
+    def _chat_path(self, project_id: str) -> Path:
+        return self.settings.runtime / project_id / "chat.json"
+
+    def _read_chat_messages(self, project_id: str) -> list[dict]:
+        """Raw read of the stored thread — no project existence check, so it is
+        safe to call inside the write lock during an append."""
+        path = self._chat_path(project_id)
+        if not path.is_file():
+            return []
+        doc = load_json(path)
+        messages = doc.get("messages") if isinstance(doc, dict) else None
+        return messages if isinstance(messages, list) else []
+
+    def load_chat(self, project_id: str) -> list[dict]:
+        """The stored conversation (oldest first). Empty for a fresh project."""
+        self.get_project(project_id)  # 404s an unknown project
+        return self._read_chat_messages(project_id)
+
+    def clear_chat(self, project_id: str) -> list[dict]:
+        self.get_project(project_id)
+        with self._project_write(project_id):
+            write_json(self._chat_path(project_id), {"messages": []})
+        return []
+
+    def _chat_context(self, project: dict, plan: dict) -> str:
+        """The grounded brief handed to the model: concept, a timecoded scene
+        map (what is shown + intent), voiceovers already placed, and the
+        concept's own narration recommendation. This is the whole reason the
+        chat is more useful than a blank LLM — it argues from the real cut."""
+
+        def mmss(seconds: Any) -> str:
+            total = max(0, int(round(float(seconds or 0))))
+            return f"{total // 60}:{total % 60:02d}"
+
+        def as_text(value: Any) -> str:
+            if isinstance(value, (list, tuple)):
+                return ", ".join(str(v) for v in value if str(v).strip())
+            return str(value or "").strip()
+
+        concept = next(
+            (c for c in project.get("concepts", [])
+             if c.get("concept_id") == plan.get("concept_id")),
+            {},
+        )
+        out: list[str] = ["CONTEXTO DEL VÍDEO (lo que el asistente sabe del metraje)"]
+        duration = plan.get("project", {}).get("duration_seconds", 0)
+        out.append(f"Duración del corte: {mmss(duration)} ({round(float(duration or 0), 1)}s).")
+        if concept:
+            out.append(f"Concepto: «{concept.get('title', '')}».")
+            editorial = concept.get("editorial")
+            if isinstance(editorial, dict):
+                tone = as_text(editorial.get("tone") or editorial.get("voice"))
+                if tone:
+                    out.append(f"Tono editorial: {tone}.")
+            elif isinstance(editorial, str) and editorial.strip():
+                out.append(f"Editorial: {editorial.strip()}")
+            if concept.get("hook"):
+                out.append(f"Gancho del concepto: {as_text(concept['hook'])}")
+
+        # The primary video track is the one with no role OR an explicit
+        # role:"primary" — never B-roll (Codex review 2026-09-06).
+        scene_track = next(
+            (t for t in plan.get("tracks", [])
+             if t.get("kind") == "video" and t.get("role") in (None, "", "primary")),
+            None,
+        )
+        if scene_track and scene_track.get("events"):
+            out.append("")
+            out.append("MAPA DE ESCENAS  [inicio–fin] qué se ve — intención:")
+            for event in scene_track["events"]:
+                start = event.get("timeline_start_seconds", 0)
+                end = start + event.get("duration_seconds", 0)
+                observed = " ".join((event.get("observed_content") or "").split())
+                if len(observed) > 240:
+                    observed = observed[:237] + "…"
+                intent = " ".join((event.get("intent") or "").split())
+                tail = f" — {intent}" if intent else ""
+                out.append(f"[{mmss(start)}–{mmss(end)}] {observed}{tail}")
+
+        placed = []
+        for track in plan.get("tracks", []):
+            if track.get("role") == "voiceover":
+                for event in track.get("events", []):
+                    start = event.get("timeline_start_seconds", 0)
+                    placed.append(f"[{mmss(start)}–{mmss(start + event.get('duration_seconds', 0))}]")
+        out.append("")
+        out.append(
+            "VOCES EN OFF YA COLOCADAS: "
+            + (", ".join(placed) if placed else "ninguna todavía.")
+        )
+
+        missing = concept.get("missing_shots") or []
+        # Match narration recommendations in either language.
+        narration_terms = ("voiceover", "voice-over", "voice over", "narrat",
+                           "voz en off", "narración", "narracion", "locución", "locucion")
+        narration = [
+            m for m in missing
+            if any(term in (m.get("purpose", "") + " "
+                            + m.get("recording_instruction", "")).lower()
+                   for term in narration_terms)
+        ]
+        if narration:
+            out.append("")
+            out.append("RECOMENDACIÓN DE NARRACIÓN (del concepto):")
+            for item in narration[:3]:
+                purpose = " ".join((item.get("purpose") or "").split())
+                instruction = " ".join((item.get("recording_instruction") or "").split())
+                line = f"- {purpose}"
+                if instruction:
+                    line += f" → {instruction}"
+                out.append(line)
+        return "\n".join(out)
+
+    def _evidence_text_for_window(
+        self, project_id: str, plan: dict, start: float, end: float
+    ) -> str:
+        """Approved evidence (captions + observed content) for the cut that
+        plays during a timeline window — the support a voiceover draft over that
+        window should be consistent with."""
+        captions_map = self._approved_captions(project_id)
+        parts: list[str] = []
+        for track in plan.get("tracks", []):
+            if track.get("kind") != "video":
+                continue
+            for event in track.get("events", []):
+                ev_start = event.get("timeline_start_seconds", 0)
+                ev_end = ev_start + event.get("duration_seconds", 0)
+                if ev_start >= end or ev_end <= start:
+                    continue  # this scene isn't on screen during the window
+                for _s, _e, caption in captions_map.get(event.get("asset_id"), []):
+                    if (_s < event.get("source_end_seconds", 0)
+                            and _e > event.get("source_start_seconds", 0)):
+                        parts.append(caption)
+                if event.get("observed_content"):
+                    parts.append(str(event["observed_content"]))
+        return " ".join(parts)
+
+    def _chat_turn_text(self, turn: dict) -> str:
+        """The text a stored turn contributes to the model conversation. Edit
+        proposals and applied-edit notes become short bracketed summaries so the
+        assistant remembers what was changed without seeing UI metadata."""
+        kind = turn.get("kind")
+        if kind == "proposal":
+            state = "aplicado" if turn.get("applied") else "propuesto, pendiente"
+            return f"[cambio {state}: {turn.get('summary') or turn.get('content') or ''}]"
+        if kind == "applied":
+            return f"[cambio aplicado: {turn.get('summary') or ''}]".replace(": ]", "]")
+        return str(turn.get("content") or "")
+
+    def chat_send(
+        self,
+        project_id: str,
+        message: str,
+        provider: str = "qwen",
+        model: str | None = None,
+    ) -> dict:
+        """One turn of the unified edit assistant. The model either replies
+        conversationally (discussion / voiceover drafting) or emits ONE explicit
+        edit instruction, which is routed through the SAME reviewed op path
+        (`plan_command_propose`) so every cut change is bounded and awaits the
+        creator's confirm. Persists the thread (shared phone↔laptop)."""
+        message = (message or "").strip()
+        if not message:
+            raise ProjectError("El mensaje está vacío")
+        if len(message) > 4000:
+            raise ProjectError("El mensaje es demasiado largo")
+        project = self.get_project(project_id)
+        plan = project.get("plan")
+        if not plan:
+            raise ProjectError(
+                "Este proyecto todavía no tiene un plan de edición aprobado"
+            )
+
+        history = self._read_chat_messages(project_id)
+        context = self._chat_context(project, plan)
+        conversation: list[dict] = [
+            {"role": "system", "content": _CHAT_SYSTEM + "\n\n" + context}
+        ]
+        for turn in history[-12:]:
+            text = self._chat_turn_text(turn)
+            if turn.get("role") in ("user", "assistant") and text:
+                conversation.append({"role": turn["role"], "content": text})
+        conversation.append({"role": "user", "content": message})
+
+        # Provider resolution AND the call share one error boundary — a missing
+        # key (ProviderError from resolve_provider) must surface as a clean
+        # ProjectError, never an unhandled 500 (Codex review 2026-09-06).
+        try:
+            client = ChatClient(resolve_provider(
+                provider, model or PLANNER_DEFAULT_MODELS.get(provider)
+            ))
+            result = client.chat(
+                conversation, json_object=True, temperature=0.4, max_tokens=900
+            )
+            raw = result["content"]
+        except ProviderError as exc:
+            raise ProjectError(f"El asistente falló: {exc}") from exc
+        # Meter the call so chat spend shows in the cost ledger (Codex review).
+        tele = result.get("telemetry") or {}
+        self._log_cost(project_id, "chat", {
+            "model": result.get("model"),
+            "prompt_tokens": tele.get("prompt_tokens"),
+            "completion_tokens": tele.get("completion_tokens"),
+        })
+        try:
+            parsed = parse_json_content(raw or "")
+        except Exception:  # noqa: BLE001 - fall back to a plain reply
+            parsed = {"kind": "reply", "text": (raw or "").strip()}
+        if not isinstance(parsed, dict):
+            parsed = {"kind": "reply", "text": str(parsed)}
+
+        stamp = utc_now()
+        user_msg = {"role": "user", "content": message, "at": stamp}
+
+        if parsed.get("kind") == "edit" and str(parsed.get("instruction") or "").strip():
+            instruction = str(parsed["instruction"]).strip()
+            # Reuse the reviewed, revision-guarded op path. It makes its own model
+            # call to pick ONE bounded op; nothing is applied here. A propose that
+            # rejects (ambiguous) OR fails validation (the op would break the
+            # plan) degrades to a plain explanatory reply — never an HTTP error.
+            base_rev = int(plan.get("revision", 1))
+            try:
+                proposed = self.plan_command_propose(project_id, instruction)
+            except (ProjectError, ProviderError, ValueError, KeyError,
+                    TypeError, OverflowError) as exc:
+                # ProviderError (op-pick call), ValueError (malformed op JSON —
+                # JSONDecodeError is a ValueError), KeyError (missing op field),
+                # TypeError/OverflowError (a bad op param like size={} or 1e309):
+                # all degrade to a plain reply, never an HTTP 500.
+                proposed = {"status": "rejected", "reason": str(exc)}
+            # Stale-plan guard: if another edit landed between the assistant
+            # reading the cut (revision base_rev) and the op being proposed, the
+            # proposal targets DIFFERENT footage than the conversation reasoned
+            # about — refuse it rather than silently retargeting (Codex review).
+            if (proposed.get("status") == "proposed"
+                    and proposed.get("revision_preview") != base_rev + 1):
+                # Fail closed: a missing/mismatched preview revision means the
+                # plan is not the one the assistant reasoned about.
+                proposed = {
+                    "status": "rejected",
+                    "reason": "el corte cambió mientras respondía — pídemelo de nuevo",
+                }
+            if proposed.get("status") == "proposed":
+                lead = str(parsed.get("text") or "").strip()
+                assistant_msg = {
+                    "role": "assistant", "at": stamp, "kind": "proposal",
+                    "content": lead or f"Propongo: {proposed['summary']}",
+                    "summary": proposed["summary"],
+                    "proposal_id": proposed["proposal_id"],
+                    "instruction": instruction,
+                    "revision_preview": proposed.get("revision_preview"),
+                    "applied": False,
+                }
+            else:
+                reason = str(proposed.get("reason")
+                             or "no pude convertir eso en un cambio concreto")
+                assistant_msg = {
+                    "role": "assistant", "at": stamp,
+                    "content": f"No pude hacer ese cambio: {reason}",
+                }
+        else:
+            text = str(parsed.get("text") or "").strip()
+            if not text:
+                # A degenerate model output (e.g. kind="edit" with no
+                # instruction, or empty text) becomes a gentle nudge, not an
+                # error the UI shows as a failure.
+                text = "No estoy seguro de qué necesitas — ¿me lo dices de otra forma?"
+            assistant_msg = {"role": "assistant", "content": text, "at": stamp}
+            draft = parsed.get("voiceover_draft")
+            if isinstance(draft, dict) and str(draft.get("text") or "").strip():
+                duration = float(plan.get("project", {}).get("duration_seconds") or 0)
+                try:
+                    start = max(0.0, float(draft.get("start_seconds")))
+                    end = float(draft.get("end_seconds"))
+                except (TypeError, ValueError):
+                    start = end = None
+                # Reject non-finite (1e999 → inf) and out-of-cut geometry so a
+                # bad draft can never carry into placement (Codex review).
+                finite = (start is not None and end is not None
+                          and start == start and end == end
+                          and abs(start) != float("inf") and abs(end) != float("inf"))
+                if finite and end > start and (duration <= 0 or start < duration):
+                    end = min(end, duration) if duration > 0 else end
+                    draft_text = str(draft["text"]).strip()[:600]
+                    draft_out = {
+                        "start_seconds": round(start, 2),
+                        "end_seconds": round(end, 2),
+                        "text": draft_text,
+                    }
+                    # Middle-ground grounding check (not a full citation gate):
+                    # if the drafted line ASSERTS something specific/risky that
+                    # the evidence for its window does not support, flag it so
+                    # the UI marks it "sin respaldo — verifica" before recording.
+                    from .planning import title_blocked
+                    support = self._evidence_text_for_window(
+                        project_id, plan, start, end)
+                    if title_blocked(draft_text, support):
+                        draft_out["unverified"] = True
+                    assistant_msg["voiceover_draft"] = draft_out
+
+        # Re-read INSIDE the lock and append: the model call above ran unlocked,
+        # so a concurrent send/clear must not be clobbered (the project's
+        # load→mutate→write TOCTOU lesson).
+        with self._project_write(project_id):
+            current = self._read_chat_messages(project_id)
+            current.append(user_msg)
+            current.append(assistant_msg)
+            trimmed = current[-80:]
+            write_json(self._chat_path(project_id), {"messages": trimmed})
+
+        result = {"messages": trimmed, "message": assistant_msg}
+        if assistant_msg.get("kind") == "proposal":
+            result["proposal"] = {
+                "proposal_id": assistant_msg["proposal_id"],
+                "summary": assistant_msg["summary"],
+                "revision_preview": assistant_msg.get("revision_preview"),
+            }
+        return result
+
+    def chat_apply(self, project_id: str, proposal_id: str) -> dict:
+        """Apply an edit the assistant proposed in the chat. Delegates to the
+        revision-guarded `plan_command_apply` (so a stale proposal is refused),
+        then marks the proposal message applied and appends a confirmation note
+        so the thread reflects the change across devices."""
+        if not proposal_id:
+            raise ProjectError("Falta la propuesta — pide el cambio de nuevo")
+        applied = self.plan_command_apply(project_id, proposal_id)
+        # The edit is now AUTHORITATIVELY committed and the token consumed. ALL
+        # chat bookkeeping below (including the initial read) is best-effort: a
+        # read/write failure must not turn a successful apply into a 500 that
+        # invites a retry (which would then see an expired proposal). Codex
+        # review 2026-09-06.
+        trimmed: list[dict] = []
+        try:
+            trimmed = self._read_chat_messages(project_id)
+            stamp = utc_now()
+            with self._project_write(project_id):
+                messages = self._read_chat_messages(project_id)
+                summary = None
+                for msg in messages:
+                    if (msg.get("kind") == "proposal"
+                            and msg.get("proposal_id") == proposal_id):
+                        msg["applied"] = True
+                        summary = msg.get("summary")
+                note = {
+                    "role": "assistant", "at": stamp, "kind": "applied",
+                    "summary": summary,
+                    "content": f"✅ Aplicado: {summary}" if summary else "✅ Cambio aplicado.",
+                }
+                messages.append(note)
+                trimmed = messages[-80:]
+                write_json(self._chat_path(project_id), {"messages": trimmed})
+        except Exception:  # noqa: BLE001 - bookkeeping only; the apply stands
+            logging.getLogger(__name__).warning(
+                "chat_apply: edit committed but chat bookkeeping failed",
+                exc_info=True,
+            )
+        return {**applied, "messages": trimmed}
+
+    def chat_dismiss(self, project_id: str, proposal_id: str) -> dict:
+        """Discard a proposed edit for real: mark its chat message dismissed AND
+        consume the pending proposal token so no device (this one on reload, or
+        another browser) can still apply it."""
+        self.get_project(project_id)
+        with self._project_write(project_id):
+            messages = self._read_chat_messages(project_id)
+            for msg in messages:
+                if (msg.get("kind") == "proposal"
+                        and msg.get("proposal_id") == proposal_id
+                        and not msg.get("applied")):
+                    msg["kind"] = "dismissed"
+                    msg["content"] = f"Descartado: {msg.get('summary') or ''}".strip()
+            write_json(self._chat_path(project_id), {"messages": messages})
+            # Consume the single-slot proposal only if it is still THIS one.
+            stored_path = self.settings.runtime / project_id / "plan-command.json"
+            if stored_path.is_file():
+                stored = load_json(stored_path)
+                if stored.get("proposal_id") == proposal_id:
+                    stored_path.unlink(missing_ok=True)
+        return {"messages": messages}
+
+    def place_voiceover(
+        self,
+        project_id: str,
+        saved_source_path: str,
+        timeline_start_seconds: float,
+        max_duration_seconds: float | None = None,
+    ) -> dict:
+        """Finish the 'grabar y colocar' shortcut. The just-saved recording is
+        identified by its EXACT source_path (root-relative, globally unique —
+        `sync_media` scans recursively and keys by basename, so a bare filename
+        can collide with a nested asset), never a project-wide inventory diff
+        that could attribute and delete unrelated media (Codex review round 3,
+        2026-09-06). Any failure — including a bad recording that fails the probe
+        during sync — cleans up ONLY this file/asset, and only when the plan does
+        not already reference it."""
+        try:
+            self.sync_media(project_id)
+            project = self.get_project(project_id)
+            assets = project.get("inventory", {}).get("assets", [])
+            asset = next(
+                (a for a in assets if a.get("source_path") == saved_source_path), None)
+            if asset is None:
+                raise ProjectError(
+                    "No se pudo indexar la nota de voz subida (¿archivo dañado?)"
+                )
+            if asset.get("media_type") != "audio":
+                raise ProjectError(
+                    "El archivo subido no es un audio válido para voz en off"
+                )
+            asset_id = asset["asset_id"]
+
+            start = float(timeline_start_seconds)
+            if start != start or start in (float("inf"), float("-inf")):
+                raise ProjectError("Inicio de la voz en off inválido")
+            start = max(0.0, start)
+            op = {
+                "op": "add_voiceover",
+                "asset_id": asset_id,
+                "timeline_start_seconds": start,
+            }
+            if max_duration_seconds is not None:
+                try:
+                    cap = float(max_duration_seconds)
+                except (TypeError, ValueError):
+                    cap = float("nan")
+                # REJECT a supplied-but-invalid cap rather than silently placing
+                # the whole recording past the drafted window (Codex review).
+                if cap != cap or cap in (float("inf"), float("-inf")) or cap < 0.5:
+                    raise ProjectError(
+                        "La ventana de la voz en off es demasiado corta (mín. 0.5s)"
+                    )
+                op["max_duration_seconds"] = cap
+
+            proposed = self.plan_op_propose(project_id, op)
+            applied = self.plan_command_apply(project_id, proposed["proposal_id"])
+            return {**applied, "asset_id": asset_id}
+        except Exception:
+            self._discard_upload(project_id, saved_source_path)
+            raise
+
+    def _discard_upload(self, project_id: str, saved_source_path: str) -> None:
+        """Clean up EXACTLY the file this placement saved (and its inventory
+        entry if indexed), matched by its unique root-relative source_path, and
+        only when the current plan does not reference it — never any other asset.
+        Best-effort."""
+        try:
+            project = self.get_project(project_id)
+            asset = next(
+                (a for a in project.get("inventory", {}).get("assets", [])
+                 if a.get("source_path") == saved_source_path),
+                None,
+            )
+            if asset is not None:
+                if not self._plan_references_asset(project_id, asset["asset_id"]):
+                    self.remove_asset(project_id, asset["asset_id"], delete_file=True)
+                return
+            # Not indexed (e.g. the probe failed during sync) — remove the orphan
+            # file so it cannot poison a later sync.
+            (self.settings.root / saved_source_path).unlink(missing_ok=True)
+        except Exception:  # noqa: BLE001 - cleanup is best-effort
+            LOGGER.warning("voiceover rollback: could not discard %s", saved_source_path)
+
+    def _plan_references_asset(self, project_id: str, asset_id: str) -> bool:
+        plan_path = self.settings.runtime / project_id / "plan" / "edit-plan.json"
+        if not plan_path.is_file():
+            return False
+        plan = load_json(plan_path)
+        return any(
+            event.get("asset_id") == asset_id
+            for track in plan.get("tracks", [])
+            for event in track.get("events", [])
+        )
+
+    def _assert_titles_supported(self, project_id: str, plan: dict) -> None:
+        """Rendered-language gate: refuse any title that ASSERTS something risky
+        (outcome, speech, identity, emotion, brand) unsupported by an approved
+        caption. Applied at both propose and render so a model-authored title
+        can never be smuggled past the claim gate (user-typed titles exempt via
+        the `user_authored` flag)."""
+        from .planning import title_blocked
+
+        captions_map = self._approved_captions(project_id)
+        supporting = " ".join(
+            caption
+            for track in plan.get("tracks", [])
+            if track.get("kind") == "video"
+            for event in track.get("events", [])
+            for _s, _e, caption in captions_map.get(event.get("asset_id"), [])
+            if _s < event.get("source_end_seconds", 0)
+            and _e > event.get("source_start_seconds", 0)
+        )
+        for track in plan.get("tracks", []):
+            if track.get("kind") != "title":
+                continue
+            for event in track.get("events", []):
+                if title_blocked(
+                    str(event.get("text") or ""), supporting,
+                    user_authored=bool(event.get("user_authored")),
+                ):
+                    raise ProjectError(
+                        f"El título «{event.get('text')}» afirma algo sin "
+                        "respaldo aprobado — cámbialo (di, p. ej., «cambia "
+                        "el título a …») o confirma la evidencia primero"
+                    )
 
     def _propose_op(
         self,
@@ -1799,7 +2577,6 @@ class ProjectService:
         instruction: str,
     ) -> dict:
         from .plan_ops import PlanOpError, apply_op
-
         try:
             candidate, summary = apply_op(
                 plan, op, project.get("inventory") or {}
@@ -1809,6 +2586,43 @@ class ProjectService:
             )
         except (PlanOpError, PlanningError) as exc:
             raise ProjectError(str(exc)) from exc
+        # Gate the CANDIDATE the same way render does, at propose time, so a bad
+        # edit never reaches a committed revision (it surfaces as a plain "no
+        # pude" in the chat instead of a render error). SCOPED to the op that
+        # introduces each risk, so an unrelated edit (e.g. music) is not blocked
+        # by a pre-existing title/lineage issue the user didn't touch — render
+        # stays the final backstop for those.
+        op_name = op.get("op")
+        if op_name == "set_title":
+            self._assert_titles_supported(project_id, candidate)
+        if op_name in ("add_broll", "replace_broll"):
+            # Resolve approved evidence_ids for the cutaway first (a chat B-roll
+            # starts with none; a replaced one keeps the prior asset's), THEN
+            # gate: a grounded cutaway renders, an ungrounded one is refused here
+            # rather than after commit (Codex review 2026-09-06). Derive the
+            # target event(s) DETERMINISTICALLY — the new id for add (candidate ∖
+            # base), the replaced id for replace — never from a model op field.
+            def _broll_ids(p: dict) -> set[str]:
+                return {
+                    e.get("event_id")
+                    for t in p.get("tracks", [])
+                    if t.get("kind") == "video" and t.get("role") == "broll"
+                    for e in t.get("events", [])
+                }
+            if op_name == "replace_broll":
+                targets = {op.get("event_id")}
+            else:  # add_broll — exactly the event(s) not present before
+                targets = _broll_ids(candidate) - _broll_ids(plan)
+            self._resolve_broll_evidence(project_id, candidate, targets)
+            try:
+                self._verify_plan_lineage(project_id, candidate)
+            except ProjectError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - a safety gate fails CLOSED
+                LOGGER.warning("lineage gate error at propose", exc_info=True)
+                raise ProjectError(
+                    "No pude verificar la evidencia de la escena — inténtalo de nuevo"
+                ) from exc
         proposal_id = uuid.uuid4().hex[:12]
         # Write the proposal under the same lock apply uses, so a propose and a
         # concurrent apply cannot interleave on the shared plan-command.json.
@@ -3226,36 +4040,7 @@ class ProjectService:
         # rendered-language gate at the LAST exit: even a plan compiled
         # before the claim gates cannot burn a risky unsupported model
         # title into pixels (user-typed titles exempt)
-        from .planning import title_blocked
-
-        captions_map = self._approved_captions(project_id)
-        plan_video_events = [
-            event
-            for track in plan.get("tracks", [])
-            if track.get("kind") == "video"
-            for event in track.get("events", [])
-        ]
-        supporting = " ".join(
-            caption
-            for event in plan_video_events
-            for _s, _e, caption in captions_map.get(event["asset_id"], [])
-            if _s < event["source_end_seconds"]
-            and _e > event["source_start_seconds"]
-        )
-        for track in plan.get("tracks", []):
-            if track.get("kind") != "title":
-                continue
-            for event in track.get("events", []):
-                if title_blocked(
-                    str(event.get("text") or ""), supporting,
-                    user_authored=bool(event.get("user_authored")),
-                ):
-                    raise ProjectError(
-                        f"El título «{event.get('text')}» afirma algo sin "
-                        "respaldo aprobado — cámbialo (di, p. ej., «cambia "
-                        "el título a …») o confirma la evidencia antes de "
-                        "renderizar"
-                    )
+        self._assert_titles_supported(project_id, plan)
         self._verify_plan_lineage(project_id, plan)
         captions_path = None
         if burn_captions:

@@ -13,6 +13,8 @@ const state = {
   workspace: null,       // 'story' | 'edit' | 'media' | 'publish' | 'diagnostics'
   mediaFilter: 'all',
   loadGeneration: 0,     // stale loadProject responses are dropped
+  chat: null,            // {projectId, messages, loaded, sending}
+  pendingVoiceover: null,// draft awaiting a recorded note for "grabar y colocar"
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -359,6 +361,7 @@ function storyWorkspace(project) {
         El habla se transcribe localmente y nunca sale de esta máquina.</p>
         <button class="primary big" id="create-vlog">${analyzed ? 'Continuar — escribir ideas' : 'Crear mi vlog'}</button>
       </section>
+      <div id="model-picker" class="model-picker-slot"></div>
       <div id="style-section"></div>
     `;
   }
@@ -665,21 +668,23 @@ function editWorkspace(project) {
         </div>
         <div id="revision-history" class="revision-history hidden"></div>
       </article>
-      <article class="card editor-panel">
-        <h3>Editor IA</h3>
-        <form id="ai-edit-form" class="revision-form vertical">
-          <textarea name="instruction" rows="3" required minlength="3" maxlength="2000"
-            placeholder="quita la escena del refri… acorta el inicio… pon la comida mientras hablo… haz un J-cut en la escena 4…"></textarea>
-          <button type="submit" class="primary">Cambiarlo</button>
+      <article class="card chat-panel">
+        <div class="chat-head">
+          <h3>Asistente</h3>
+          <button type="button" class="ghost compact" id="chat-clear" title="Borrar la conversación">Limpiar</button>
+        </div>
+        <div id="chat-thread" class="chat-thread" aria-live="polite"></div>
+        <form id="chat-form" class="chat-form">
+          <textarea name="message" rows="2" required maxlength="4000"
+            placeholder="Háblale: «quita la escena del café», «¿qué voz en off le pongo al inicio?», «haz un J-cut en la escena 4»…"></textarea>
+          <button type="submit" class="primary">Enviar</button>
         </form>
-        <p class="muted stateless-hint">Cada instrucción es independiente (no es un chat):
-        pide UN cambio concreto por mensaje. Para rehacer la historia completa,
-        usa «Ideas nuevas» en Historia.</p>
-        <div id="ai-edit-result"></div>
+        <p class="muted chat-disclaimer">Los cambios al corte los confirmas tú antes
+        de aplicarse. Las ideas y guiones de voz en off son borradores basados en
+        lo que vio del metraje — revísalos antes de grabar.</p>
         <div class="quick-actions">
-          <span class="eyebrow">Acciones rápidas</span>
           <button class="quick" id="qa-cleanup">🧹 Afinar diálogo</button>
-          <button class="quick" id="qa-captions">💬 Subtítulos en el video</button>
+          <button class="quick" id="qa-captions">💬 Subtítulos</button>
           <button class="quick" id="qa-story">📖 Cambiar de historia</button>
         </div>
         <div id="qa-panel"></div>
@@ -687,11 +692,296 @@ function editWorkspace(project) {
     </section>
     <section class="storyboard-section">
       <div class="section-header"><div><span class="eyebrow">Escena por escena</span></div>
-      <p class="muted">Un clic abre el clip original en ese segundo. ¿Algo no encaja? Dilo arriba.</p></div>
+      <p class="muted">Un clic abre el clip original en ese segundo. ¿Algo no encaja? Dilo en el chat.</p></div>
       <div class="scene-strip">${sceneStrip(project)}</div>
       ${overlayLanes(project)}
     </section>
+    <input type="file" id="vo-capture-input"
+      accept=".m4a,.wav,.mp3,audio/mp4,audio/x-m4a,audio/wav,audio/mpeg" capture hidden />
   `;
+}
+
+/* Unified assistant chat — one surface that both DISCUSSES the cut (voiceover
+   drafting, "what's weak here?") and, when you ask to change the video, proposes
+   a bounded edit you confirm before it applies (same revision-guarded path as
+   the old Editor IA box). Grounded in what every scene shows. */
+function chatBubble(m, index) {
+  if (m.kind === 'proposal') {
+    const actions = m.applied
+      ? '<span class="chat-applied">✓ aplicado</span>'
+      : `<div class="chat-proposal-actions">
+           <button class="primary compact" data-chat-apply="${escapeHtml(m.proposal_id)}">Aplicar</button>
+           <button class="ghost compact" data-chat-dismiss="${index}">Descartar</button>
+         </div>`;
+    return `<div class="chat-msg bot"><div class="chat-msg-body chat-proposal">
+      <span class="chat-proposal-label">✏️ Cambio propuesto</span>
+      <p>${escapeHtml(m.summary || m.content || '')}</p>
+      ${actions}
+    </div></div>`;
+  }
+  const vo = m.voiceover_draft;
+  const voWarn = vo && vo.unverified
+    ? '<span class="chat-vo-warn" title="El metraje no respalda claramente esta frase — revísala antes de grabarla">⚠ sin respaldo — verifica</span>'
+    : '';
+  const voButton = vo && vo.text
+    ? `<div class="chat-vo-wrap">
+         <button class="chat-vo-btn" data-chat-vo="${index}">🎤 Grabar y colocar
+           <span class="chat-vo-range">${fmtTime(vo.start_seconds)}–${fmtTime(vo.end_seconds)}</span></button>
+         ${voWarn}
+       </div>`
+    : '';
+  return `<div class="chat-msg ${m.role === 'user' ? 'me' : 'bot'}">
+    <div class="chat-msg-body">${escapeHtml(m.content)}${voButton}</div>
+  </div>`;
+}
+
+function fmtTime(seconds) {
+  const s = Math.max(0, Math.round(Number(seconds) || 0));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+/* Model picker — choose the model per pipeline stage (story writer, video
+   analysis). The choice persists on the project, so every trigger path (first
+   run, regenerate, forced re-run) uses it. */
+async function loadModelPicker() {
+  const slot = $('#model-picker');
+  if (!slot) return;
+  slot.innerHTML = '<p class="muted">Cargando modelos…</p>';
+  try {
+    if (!state.modelCatalog) state.modelCatalog = await api('/api/models');
+    const prefs = state.activeProject?.model_prefs || {};
+    const stages = state.modelCatalog.stages || {};
+    slot.innerHTML = Object.entries(stages).map(([stage, spec]) => {
+      const chosen = prefs[stage] || spec.default;
+      const key = (o) => `${o.provider}:${o.model}`;
+      const opts = spec.options.map((o) => {
+        const sel = key(o) === key(chosen) ? ' selected' : '';
+        const dis = o.available ? '' : ' disabled';
+        const tag = [o.note, o.available ? '' : 'sin llave API'].filter(Boolean).join(' · ');
+        return `<option value="${escapeHtml(key(o))}"${sel}${dis}>${escapeHtml(o.label)}${tag ? ` — ${escapeHtml(tag)}` : ''}</option>`;
+      }).join('');
+      return `
+        <label class="model-row">
+          <span>${escapeHtml(spec.label)}</span>
+          <select data-model-stage="${escapeHtml(stage)}">${opts}</select>
+        </label>`;
+    }).join('');
+    slot.querySelectorAll('[data-model-stage]').forEach((sel) => {
+      sel.addEventListener('change', () => setModelPref(sel.dataset.modelStage, sel.value));
+    });
+  } catch (error) {
+    slot.innerHTML = `<p class="notice error">No se pudieron cargar los modelos: ${escapeHtml(error.message)}</p>`;
+  }
+}
+
+async function setModelPref(stage, value) {
+  const [provider, model] = value.split(':');
+  const projectId = state.activeProjectId;
+  try {
+    const { model_prefs } = await api(`/api/projects/${projectId}/model-prefs`, {
+      method: 'POST', body: JSON.stringify({ stage, provider, model }),
+    });
+    // Only write the response back if we're still on the same project — a
+    // switch during the request must not stamp A's prefs onto B (Codex review).
+    if (state.activeProjectId === projectId && state.activeProject) {
+      state.activeProject.model_prefs = model_prefs;
+      notice('Modelo actualizado.');
+    }
+  } catch (error) {
+    notice(error.message, true);
+    loadModelPicker();  // revert the <select> to the stored value
+  }
+}
+
+function renderChatThread() {
+  const thread = $('#chat-thread');
+  if (!thread) return;
+  const chat = state.chat;
+  const messages = chat?.messages || [];
+  if (!chat?.loaded && !messages.length) {
+    thread.innerHTML = '<p class="muted chat-empty">Cargando…</p>';
+    return;
+  }
+  if (!messages.length && !chat?.sending) {
+    thread.innerHTML = `<p class="muted chat-empty">Habla con tu vlog. Ya vio tu
+      metraje escena por escena, así que puedes pedirle un cambio («quita la del
+      café»), pedir ideas de voz en off, o preguntarle qué le falta al corte.</p>`;
+    return;
+  }
+  const bubbles = messages.map((m, i) => chatBubble(m, i)).join('');
+  const pending = chat?.sending
+    ? '<div class="chat-msg bot"><div class="chat-msg-body muted">Pensando…</div></div>'
+    : '';
+  thread.innerHTML = bubbles + pending;
+  thread.scrollTop = thread.scrollHeight;
+}
+
+/* Concurrency guards (Codex review 2026-09-06): a project switch REPLACES
+   state.chat, so comparing the captured object identity (`state.chat === chat`)
+   rejects any stale A→B→A response. `writeSeq` bumps on every write (send/clear/
+   apply/dismiss), so a slow GET cannot clobber a newer send. */
+async function loadChat() {
+  const projectId = state.activeProjectId;
+  if (state.chat?.projectId !== projectId) {
+    state.chat = { projectId, messages: [], loaded: false, sending: false, writeSeq: 0 };
+  }
+  const chat = state.chat;
+  renderChatThread();
+  if (chat.loaded) return;
+  const seq = chat.writeSeq;
+  try {
+    const { messages } = await api(`/api/projects/${projectId}/chat`);
+    // Adopt the fetched history only if this chat is still current AND no write
+    // happened while the GET was in flight (else it would overwrite it).
+    if (state.chat === chat && chat.writeSeq === seq) chat.messages = messages || [];
+  } catch {
+    /* leave empty — the send path surfaces any real error */
+  } finally {
+    if (state.chat === chat) {
+      chat.loaded = true;
+      renderChatThread();
+    }
+  }
+}
+
+async function submitChat(event) {
+  event.preventDefault();
+  const chat = state.chat;
+  if (!chat || chat.sending) return;
+  const textarea = event.currentTarget.elements.message;
+  const message = textarea.value.trim();
+  if (!message) return;
+  textarea.value = '';
+  chat.messages = [...chat.messages, { role: 'user', content: message }];
+  chat.writeSeq++;
+  chat.sending = true;
+  renderChatThread();
+  try {
+    const { messages } = await api(`/api/projects/${chat.projectId}/chat`, {
+      method: 'POST', body: JSON.stringify({ message }),
+    });
+    if (state.chat === chat) { chat.messages = messages || chat.messages; chat.writeSeq++; }
+  } catch (error) {
+    if (state.chat === chat) {
+      textarea.value = message;  // let them retry without retyping
+      chat.messages = [...chat.messages, { role: 'assistant', content: `⚠️ ${error.message}` }];
+      chat.writeSeq++;
+    }
+  } finally {
+    if (state.chat === chat) {
+      chat.sending = false;
+      renderChatThread();
+    }
+  }
+}
+
+async function clearChat() {
+  const chat = state.chat;
+  if (!chat) return;
+  if (!confirm('¿Borrar la conversación?')) return;
+  try {
+    await api(`/api/projects/${chat.projectId}/chat`, { method: 'DELETE' });
+    if (state.chat === chat) {
+      chat.messages = [];
+      chat.writeSeq++;
+      renderChatThread();
+    }
+  } catch (error) {
+    notice(error.message, true);
+  }
+}
+
+/* Apply an edit the assistant proposed, then re-render the cut — same busy flow
+   as the old Editor IA apply. The confirm gate lives on the server (revision
+   guard); a stale proposal is refused with a clear message. */
+async function chatApply(proposalId) {
+  const chat = state.chat;
+  const projectId = state.activeProjectId;
+  try {
+    setBusy('Cambiando tu vlog', ['Aplicando el cambio', 'Renderizando'], 0);
+    const applied = await api(
+      `/api/projects/${projectId}/chat/apply?proposal_id=${encodeURIComponent(proposalId)}`,
+      { method: 'POST' });
+    if (state.chat === chat) { chat.messages = applied.messages || chat.messages; chat.writeSeq++; }
+    setBusy('Cambiando tu vlog', ['Aplicando el cambio', 'Renderizando'], 1);
+    await runStep('render', undefined, projectId);
+    state.busy = null;
+    notice('Listo — nuevo corte arriba.');
+    await loadProject(projectId);
+  } catch (error) {
+    state.busy = null;
+    notice(error.message, true);
+    await loadProject(projectId);
+  }
+}
+
+async function dismissChatProposal(index) {
+  const chat = state.chat;
+  const m = chat?.messages?.[index];
+  if (!m || m.kind !== 'proposal' || m.applied) return;
+  try {
+    // Invalidate the proposal server-side so it can't be applied on reload or
+    // from another device — not just hidden locally.
+    const { messages } = await api(
+      `/api/projects/${chat.projectId}/chat/dismiss?proposal_id=${encodeURIComponent(m.proposal_id)}`,
+      { method: 'POST' });
+    if (state.chat === chat) {
+      chat.messages = messages || chat.messages;
+      chat.writeSeq++;
+      renderChatThread();
+    }
+  } catch (error) {
+    notice(error.message, true);
+  }
+}
+
+/* "Grabar y colocar": record (or pick) a voice note, upload it to the project,
+   then place it as a voiceover at the drafted range — routed through the same
+   confirm-gated add_voiceover op. */
+async function chatRecordVoiceover(index) {
+  const draft = state.chat?.messages?.[index]?.voiceover_draft;
+  if (!draft) return;
+  // Bind the pending capture to THIS project — the picker/recorder can take a
+  // while, and the user might switch projects before returning (Codex review).
+  state.pendingVoiceover = { ...draft, projectId: state.activeProjectId };
+  const input = $('#vo-capture-input');
+  if (input) { input.value = ''; input.click(); }
+}
+
+async function onVoiceoverFilePicked(event) {
+  const file = event.currentTarget.files?.[0];
+  const draft = state.pendingVoiceover;
+  state.pendingVoiceover = null;
+  if (!file || !draft) return;
+  if (draft.projectId !== state.activeProjectId) {
+    notice('Cambiaste de proyecto — vuelve a pedir la voz en off.', true);
+    return;
+  }
+  const projectId = draft.projectId;
+  try {
+    setBusy('Colocando tu voz en off', ['Subiendo y colocando la nota de voz', 'Renderizando'], 0);
+    // One server call: save the recording, find it in the inventory, and place
+    // it as a voiceover at the drafted start (revision-guarded add_voiceover).
+    const form = new FormData();
+    form.append('files', file, file.name || 'voz-en-off.m4a');
+    form.append('start_seconds', String(draft.start_seconds));
+    // Trim the placed voiceover to the drafted window instead of playing the
+    // whole recording.
+    if (draft.end_seconds > draft.start_seconds) {
+      form.append('max_duration_seconds', String(draft.end_seconds - draft.start_seconds));
+    }
+    await fetch(`/api/projects/${projectId}/voiceover/place`, { method: 'POST', body: form })
+      .then((r) => r.json().then((p) => { if (!r.ok) throw new Error(p.detail || 'No se pudo colocar la voz en off'); return p; }));
+    setBusy('Colocando tu voz en off', ['Subiendo y colocando la nota de voz', 'Renderizando'], 1);
+    await runStep('render', undefined, projectId);
+    state.busy = null;
+    notice('Voz en off colocada — nuevo corte arriba.');
+    await loadProject(projectId);
+  } catch (error) {
+    state.busy = null;
+    notice(error.message, true);
+    await loadProject(projectId);
+  }
 }
 
 function overlayLanes(project) {
@@ -708,104 +998,6 @@ function overlayLanes(project) {
       ${broll.length ? `<div><span class="eyebrow">B-roll</span> ${broll.map((e) => chip(e, '🎞')).join('')}</div>` : ''}
       ${voiceover.length ? `<div><span class="eyebrow">Voz en off</span> ${voiceover.map((e) => chip(e, '🎙')).join('')}</div>` : ''}
     </div>`;
-}
-
-/* Unified AI edit: try the atomic path first; offer a full rewrite when
-   the instruction doesn't map to one operation. */
-async function submitAiEdit(event) {
-  event.preventDefault();
-  const instruction = new FormData(event.currentTarget).get('instruction')?.toString().trim();
-  if (!instruction) return;
-  if (instruction.length > 500) {
-    // Too long for one atomic operation — do not silently truncate.
-    state.aiEdit = { status: 'long', instruction };
-    renderAiEditResult();
-    return;
-  }
-  state.aiEdit = { status: 'interpreting', instruction };
-  renderAiEditResult();
-  try {
-    const proposed = await api(`/api/projects/${state.activeProjectId}/plan/command`, {
-      method: 'POST', body: JSON.stringify({ instruction }),
-    });
-    state.aiEdit = proposed.status === 'proposed'
-      ? { status: 'proposed', instruction, proposed }
-      : { status: 'declined', instruction,
-          reason: proposed.reason || 'La instrucción pide más de un cambio.' };
-  } catch (error) {
-    state.aiEdit = { status: 'error', instruction, reason: error.message };
-  }
-  renderAiEditResult();
-}
-
-// State-driven: the proposal survives tab switches and re-renders — a
-// result that only lived in a DOM node vanished when the node did.
-function renderAiEditResult() {
-  const box = $('#ai-edit-result');
-  if (!box || !state.aiEdit) { if (box) box.innerHTML = ''; return; }
-  const { status, instruction, proposed, reason } = state.aiEdit;
-  if (status === 'interpreting') {
-    box.innerHTML = '<p class="notice">Interpretando… (puedes cambiar de pestaña; la propuesta te espera aquí)</p>';
-    return;
-  }
-  if (status === 'long') {
-    box.innerHTML = `
-      <div class="sync-diff">
-        <p class="muted">Instrucción larga — se aplicará como reescritura del corte.</p>
-        <button class="primary compact" id="ai-rewrite">Reescribir el corte</button>
-      </div>`;
-    $('#ai-rewrite')?.addEventListener('click', () => { state.aiEdit = null; rewriteCut(instruction); });
-    return;
-  }
-  if (status === 'proposed') {
-    box.innerHTML = `
-      <div class="sync-diff">
-        <p><strong>Propuesta:</strong> ${escapeHtml(proposed.summary)}</p>
-        <div class="review-actions">
-          <button class="primary compact" id="ai-apply">Aplicar y renderizar</button>
-          <button class="ghost compact" id="ai-rewrite">Mejor reescribir el corte</button>
-        </div>
-      </div>`;
-    $('#ai-apply')?.addEventListener('click', async () => {
-      const projectId = state.activeProjectId;
-      state.aiEdit = null;
-      try {
-        setBusy('Cambiando tu vlog', ['Aplicando el cambio', 'Renderizando'], 0);
-        await api(`/api/projects/${projectId}/plan/command/apply?proposal_id=${proposed.proposal_id}`, { method: 'POST' });
-        setBusy('Cambiando tu vlog', ['Aplicando el cambio', 'Renderizando'], 1);
-        await runStep('render', undefined, projectId);
-        state.busy = null;
-        notice('Listo — nuevo corte arriba.');
-        await loadProject(projectId);
-      } catch (error) { state.busy = null; notice(error.message, true); await loadProject(projectId); }
-    });
-    $('#ai-rewrite')?.addEventListener('click', () => { state.aiEdit = null; rewriteCut(instruction); });
-    return;
-  }
-  // declined or error: offer the rewrite with the reason shown
-  box.innerHTML = `
-    <div class="sync-diff">
-      <p class="${status === 'error' ? 'notice error' : 'muted'}">${escapeHtml(reason)}</p>
-      <button class="primary compact" id="ai-rewrite">Reescribir el corte con esta instrucción</button>
-    </div>`;
-  $('#ai-rewrite')?.addEventListener('click', () => { state.aiEdit = null; rewriteCut(instruction); });
-}
-
-async function rewriteCut(instruction) {
-  const projectId = state.activeProjectId;
-  try {
-    setBusy('Cambiando tu vlog', ['Recortando según tu instrucción', 'Renderizando la vista previa'], 0);
-    const revision = await runStep('plan/revise', { instruction }, projectId);
-    setBusy('Cambiando tu vlog', ['Recortando según tu instrucción', 'Renderizando la vista previa'], 1);
-    await runStep('render', undefined, projectId);
-    state.busy = null;
-    notice(revision.result?.revision_note || 'Listo — nuevo corte arriba.');
-    await loadProject(projectId);
-  } catch (error) {
-    state.busy = null;
-    notice(error.message, true);
-    await loadProject(projectId);
-  }
 }
 
 async function toggleRevisionHistory() {
@@ -984,7 +1176,7 @@ function musicRecommendation(plan) {
 // Alternate candidates from the last suggestion, grouped by platform (TikTok /
 // Instagram) since the same track is not always available on both.
 function musicAlternatesHtml(current) {
-  const all = (state.musicCandidates || []).map((c, i) => ({ c, i }));
+  const all = currentMusicCandidates().map((c, i) => ({ c, i }));
   if (!all.length) return '';
   const groups = [
     ['tiktok', 'TikTok'],
@@ -998,8 +1190,9 @@ function musicAlternatesHtml(current) {
         <span class="music-group-label">Para ${label}</span>
         <div class="music-alts">
           ${opts.slice(0, 3).map(({ c, i }) => `
-            <button class="${(c.name || '') === (current.name || '') ? 'secondary' : 'ghost'} compact" data-music-use="${i}">
-              ${escapeHtml(c.name || c.vibe || 'opción')}${c.bpm ? ` · ${Math.round(c.bpm)} BPM` : ''}
+            <button class="${(c.name || '') === (current.name || '') ? 'secondary' : 'ghost'} compact" data-music-use="${i}"
+              title="${c.late_bound ? 'Pista real del catálogo de la plataforma' : 'Sugerida por IA — puede no existir; verifícala en la app'}">
+              ${escapeHtml(c.name || c.vibe || 'opción')}${c.bpm ? ` · ${Math.round(c.bpm)} BPM` : ''}${c.late_bound ? '' : ' · IA ⚠'}
             </button>`).join('')}
         </div>
       </div>`;
@@ -1060,22 +1253,32 @@ async function musicSuggest() {
   try {
     setBusy('Buscando música', ['Buscando pistas acordes al corte'], 0);
     const result = await api(`/api/projects/${projectId}/plan/music/suggest`, { method: 'POST' });
-    // remember the alternates (per platform) so the user can switch without re-searching
-    state.musicCandidates = Array.isArray(result?.candidates) ? result.candidates : [];
+    // If the user switched projects while the search ran, do NOT touch busy
+    // state or navigate — that would yank the UI back to the old project
+    // (Codex review 2026-09-06). Store the (project-bound) candidates regardless.
+    state.musicCandidates = { projectId, list: Array.isArray(result?.candidates) ? result.candidates : [] };
     state.musicSources = result?.sources || {};
+    if (state.activeProjectId !== projectId) return;
     state.busy = null;
     notice('Opciones de música listas — TikTok e Instagram en Publicar.');
     await loadProject(projectId);
   } catch (error) {
+    if (state.activeProjectId !== projectId) return;
     state.busy = null;
     notice(error.message, true);
     await loadProject(projectId);
   }
 }
 
+// The last suggestion's candidates, but only if they belong to the OPEN project.
+function currentMusicCandidates() {
+  return (state.musicCandidates?.projectId === state.activeProjectId)
+    ? (state.musicCandidates.list || []) : [];
+}
+
 // Switch to one of the alternate candidates returned by the last suggestion.
 async function musicUseCandidate(index) {
-  const candidate = (state.musicCandidates || [])[index];
+  const candidate = currentMusicCandidates()[index];
   if (!candidate) return;
   try {
     await applyPlanOp(
@@ -1288,13 +1491,21 @@ function publishWorkspace(project) {
         <h3>🎵 Música para este video</h3>
         ${!music ? `
           <p class="muted">Este corte no tiene música todavía. Deja que el
-          modelo sugiera una pista acorde al ritmo y el tono, para agregarla
-          como audio nativo al publicar en IG/TikTok (sin incrustar audio, sin
-          reclamos de copyright).</p>
-          <div class="review-actions">
-            <button class="primary compact" id="music-suggest">Sugerir música</button>
-            <button class="secondary compact" id="music-set-bed">Incorporar música al MP4…</button>
-          </div>`
+          modelo sugiera pistas acordes al ritmo y el tono; tú eliges cuál
+          agregar como audio nativo al publicar en IG/TikTok (sin incrustar
+          audio, sin reclamos de copyright).</p>
+          ${currentMusicCandidates().length ? `
+            <p class="muted">Elige una pista para agregarla (⚠ = sugerida por IA, sin verificar):</p>
+            ${musicAlternatesHtml({})}
+            <div class="review-actions">
+              <button class="secondary compact" id="music-suggest">Buscar otra vez</button>
+              <button class="secondary compact" id="music-set-bed">Incorporar música al MP4…</button>
+            </div>`
+          : `
+            <div class="review-actions">
+              <button class="primary compact" id="music-suggest">Sugerir música</button>
+              <button class="secondary compact" id="music-set-bed">Incorporar música al MP4…</button>
+            </div>`}`
         : music.mode === 'bed' ? `
           <p class="muted">Este corte lleva música incorporada en el MP4
           (mezclada y bajada bajo la voz). Para IG/TikTok, considera quitarla y
@@ -1384,6 +1595,8 @@ function diagnosticsWorkspace() {
             <strong>${escapeHtml(step.label)}</strong>
           </button>`).join('')}
       </div>
+      <div class="section-header" style="margin-top:1.4rem"><div><span class="eyebrow">Modelos de IA</span></div></div>
+      <div id="model-picker" class="model-picker-slot"></div>
       <div class="section-header" style="margin-top:1.4rem"><div><span class="eyebrow">Costos (estimados)</span></div></div>
       <div id="costs-panel" class="sync-diff">Cargando costos…</div>
       <div class="section-header" style="margin-top:1.4rem"><div><span class="eyebrow">Estilos de referencia</span></div></div>
@@ -1584,15 +1797,30 @@ function wireHandlers() {
   });
   if ($('#style-section')) loadStyleSection();
   if ($('#step-times')) loadStepTimes();
-  if ($('#ai-edit-result')) renderAiEditResult();
+  if ($('#model-picker')) loadModelPicker();
 
-  // Edición
-  $('#ai-edit-form')?.addEventListener('submit', submitAiEdit);
+  // Edición — one assistant chat (discussion + voiceover + confirm-gated edits)
   $('#revision-toggle')?.addEventListener('click', toggleRevisionHistory);
   $('#qa-cleanup')?.addEventListener('click', quickCleanup);
   $('#qa-captions')?.addEventListener('click', quickCaptions);
   $('#qa-story')?.addEventListener('click', () => { state.workspace = 'story'; renderProject(); });
   $('#rerender-now')?.addEventListener('click', quickRerender);
+  const chatThread = $('#chat-thread');
+  if (chatThread) {
+    $('#chat-form')?.addEventListener('submit', submitChat);
+    $('#chat-clear')?.addEventListener('click', clearChat);
+    $('#vo-capture-input')?.addEventListener('change', onVoiceoverFilePicked);
+    // Delegated: proposal cards and voiceover buttons are re-rendered often.
+    chatThread.addEventListener('click', (event) => {
+      const apply = event.target.closest('[data-chat-apply]');
+      if (apply) { chatApply(apply.dataset.chatApply); return; }
+      const dismiss = event.target.closest('[data-chat-dismiss]');
+      if (dismiss) { dismissChatProposal(Number(dismiss.dataset.chatDismiss)); return; }
+      const vo = event.target.closest('[data-chat-vo]');
+      if (vo) { chatRecordVoiceover(Number(vo.dataset.chatVo)); }
+    });
+    loadChat();
+  }
 
   // Metraje
   document.querySelectorAll('[data-media-filter]').forEach((button) => {
@@ -2064,19 +2292,27 @@ const JOB_LABELS = {
   plan_revision: 'Recortando según tu instrucción',
 };
 
-async function loadProject(projectId) {
+async function loadProject(projectId, { silent = false } = {}) {
   if (state.activeProjectId !== projectId) {
     state.workspace = null;
     state.mediaFilter = 'all';
     state.pendingStory = null;
+    silent = false;  // a real project switch always shows the fresh load
   }
   state.activeProjectId = projectId;
   const generation = ++state.loadGeneration;
   const current = () => state.loadGeneration === generation
     && state.activeProjectId === projectId;
-  state.runs = [];
-  renderProjectList();
-  if (!state.busy) $('#project-view').innerHTML = '<div class="empty-state">Cargando…</div>';
+  // Silent refresh (e.g. regained focus): keep the cached view + runs until a
+  // COMPLETE response arrives, so reopening offline never blanks the cut
+  // (Codex review 2026-09-06). A normal load clears and shows "Cargando…".
+  if (!silent) {
+    state.runs = [];
+    renderProjectList();
+    if (!state.busy) $('#project-view').innerHTML = '<div class="empty-state">Cargando…</div>';
+  } else {
+    renderProjectList();
+  }
   try {
     const project = await api(`/api/projects/${projectId}`);
     if (!current()) return;
@@ -2127,7 +2363,9 @@ async function loadProject(projectId) {
     }
     if (current()) renderProject();
   } catch (error) {
-    notice(error.message, true);
+    // A silent refresh that fails keeps the cached view (offline reopen);
+    // a normal load surfaces the error.
+    if (!silent) notice(error.message, true);
   }
 }
 
@@ -2236,7 +2474,8 @@ async function maybeRefreshActiveProject() {
   if (document.querySelector('dialog[open]')) return;
   const el = document.activeElement;
   if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') && el.value) return;
-  try { await loadProject(state.activeProjectId); } catch { /* offline: keep cached view */ }
+  // Silent: keep the cached cut on screen until fresh data fully loads.
+  try { await loadProject(state.activeProjectId, { silent: true }); } catch { /* offline: keep cached view */ }
 }
 
 async function importFromDrive(folder) {

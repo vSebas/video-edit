@@ -153,7 +153,12 @@ class TestApplyOp:
         candidate, _ = apply_op(_plan(), {
             "op": "set_title", "event_id": "t01", "text": "Nuevo título",
         }, INVENTORY)
-        assert candidate["tracks"][2]["events"][0]["text"] == "Nuevo título"
+        title = candidate["tracks"][2]["events"][0]
+        assert title["text"] == "Nuevo título"
+        # Instruction-set title text is MODEL-mediated, not typed verbatim, so it
+        # must NOT be user_authored — that flag would exempt it from the title
+        # claim gate (Codex review 2026-09-06).
+        assert not title.get("user_authored")
 
     def test_set_title_style_validated(self) -> None:
         candidate, summary = apply_op(_plan(), {
@@ -170,6 +175,11 @@ class TestApplyOp:
         with pytest.raises(PlanOpError, match="size must be"):
             apply_op(_plan(), {"op": "set_title", "event_id": "t01",
                                "text": "x", "size": 500}, INVENTORY)
+        # A JSON 1e309 parses to inf; int(inf) would raise OverflowError → 500.
+        # It must degrade to a clean PlanOpError instead (Codex review).
+        with pytest.raises(PlanOpError, match="finite"):
+            apply_op(_plan(), {"op": "set_title", "event_id": "t01",
+                               "text": "x", "size": float("inf")}, INVENTORY)
 
     def test_unknown_op_and_missing_fields_fail_closed(self) -> None:
         with pytest.raises(PlanOpError, match="Unknown operation"):
@@ -434,6 +444,23 @@ class TestVoiceoverOps:
         assert event["duration_seconds"] == 3.0
         assert "voz en off" in summary.lower()
 
+    def test_add_voiceover_max_duration_caps_the_window(self) -> None:
+        # Without a cap the whole recording (bounded by the cut) is placed;
+        # max_duration_seconds trims it to the drafted window (Codex review).
+        inv = self._inventory()
+        full, _ = apply_op(_plan(), {
+            "op": "add_voiceover", "asset_id": "memo",
+            "timeline_start_seconds": 2.0}, inv)
+        vo_full = next(t for t in full["tracks"]
+                       if t.get("role") == "voiceover")["events"][0]
+        capped, _ = apply_op(_plan(), {
+            "op": "add_voiceover", "asset_id": "memo",
+            "timeline_start_seconds": 2.0, "max_duration_seconds": 1.0}, inv)
+        vo_cap = next(t for t in capped["tracks"]
+                      if t.get("role") == "voiceover")["events"][0]
+        assert vo_cap["duration_seconds"] <= 1.05
+        assert vo_cap["duration_seconds"] < vo_full["duration_seconds"]
+
     def test_voiceover_requires_audio_asset(self) -> None:
         with pytest.raises(PlanOpError, match="not an audio asset"):
             apply_op(_plan(), {
@@ -677,6 +704,31 @@ class TestMusicAndCaptionOps:
         assert "Música de fondo" in summary
         cleared, _ = apply_op(candidate, {"op": "remove_music"}, inv)
         assert not any(t.get("role") == "music" for t in cleared["tracks"])
+
+    def test_refit_music_bed_preserves_source_capacity(self) -> None:
+        # A one-shot bed shortened then re-lengthened must REGROW from its
+        # immutable source capacity, not stay stuck at the shrunk span
+        # (Codex review 2026-09-06).
+        from video_app.plan_ops import _refit_music_bed
+        inv = {"assets": [{"asset_id": "song", "filename": "song.mp3",
+                           "media_type": "audio", "duration_seconds": 90,
+                           "audio": True}]}
+        plan, _ = apply_op(_plan(), {"op": "set_music_bed",
+                                     "asset_id": "song", "loop": False}, inv)
+
+        def bed_span(p):
+            music = next(t for t in p["tracks"] if t.get("role") == "music")
+            return music["events"][0]["duration_seconds"]
+
+        plan["project"]["duration_seconds"] = 5.0
+        _refit_music_bed(plan)
+        assert bed_span(plan) == 5.0
+        # Grow the cut BEYOND its original length: the 90s song's capacity was
+        # stamped at creation, so the bed regrows (not stuck at 5, nor capped at
+        # the original short cut).
+        plan["project"]["duration_seconds"] = 60.0
+        _refit_music_bed(plan)
+        assert bed_span(plan) == 60.0
 
     def test_music_source_must_be_audio_or_video(self) -> None:
         inv = {"assets": [{"asset_id": "x", "filename": "x.txt",

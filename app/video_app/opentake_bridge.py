@@ -8,6 +8,7 @@ contract from the trial), so callers surface a confirmation first.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -807,9 +808,44 @@ def saved_bundle_state(projects_dir: Path | None = None) -> dict | None:
             "bundle": bundle.name,
             "saved_video_clips": counts["video"],
             "saved_audio_clips": counts["audio"],
+            "saved_fingerprint": bundle_clip_fingerprint(saved),
             "saved_at": project_file.stat().st_mtime,
         }
     return None
+
+
+# Structural signature of a saved OpenTake timeline. A clip-COUNT check misses a
+# trim / move / reorder / source-offset / volume change that keeps the same
+# number of clips (Codex review 2026-09-06), which would let a re-place silently
+# overwrite those edits. This hashes the ORDERED, per-track structural fields so
+# any of those changes flips the fingerprint. Curated keys only, so volatile
+# metadata (render caches, ids) does not cause spurious "changed" signals.
+
+# OpenTake's Clip serializes camelCase (opentake-domain/src/clip.rs,
+# `#[serde(rename_all = "camelCase")]`), so these are the REAL persisted keys —
+# an earlier guess used snake_case/generic names that never matched, making the
+# fingerprint vacuous (Codex review 2026-09-06). Cover position/trim/media/
+# volume/speed/fades so a same-count trim/move/reorder/source/volume change all
+# flip the hash.
+_CLIP_SIG_KEYS = (
+    "mediaRef", "startFrame", "durationFrames",
+    "trimStartFrame", "trimEndFrame", "speed", "volume",
+    "fadeInFrames", "fadeOutFrames", "mediaType", "sourceClipType",
+)
+
+
+def bundle_clip_fingerprint(saved: dict) -> str:
+    """A short, order-sensitive hash of the timeline's clip structure."""
+    tracks = saved.get("timeline", {}).get("tracks") or saved.get("tracks") or []
+    signature = []
+    for track in tracks:
+        clips = [
+            {k: clip.get(k) for k in _CLIP_SIG_KEYS if k in clip}
+            for clip in track.get("clips", [])
+        ]
+        signature.append([track.get("type"), clips])
+    payload = json.dumps(signature, sort_keys=True, default=str).encode()
+    return hashlib.sha1(payload).hexdigest()[:16]
 
 
 def staleness_warning(readback: dict, saved: dict | None) -> dict | None:

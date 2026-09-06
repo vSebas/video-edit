@@ -89,6 +89,18 @@ def _grid(value: float, fps: float) -> float:
     return round(round(value * fps) / fps, 6)
 
 
+def _floor_grid(value: float, fps: float) -> float:
+    """FLOOR seconds to the frame grid. A duration clamped to a limit (the cut,
+    the recording, a requested cap) must never round UP past it — nearest-frame
+    rounding could overrun the source and the renderer would clamp back, so the
+    plan would claim more than it can deliver (Codex review 2026-09-06). The
+    tiny epsilon absorbs binary-FP noise so a value already on the grid is not
+    under-floored by a frame."""
+    import math
+
+    return round(math.floor(value * fps + 1e-6) / fps, 6)
+
+
 def _op_number(op: dict, key: str) -> float:
     try:
         value = float(op[key])
@@ -212,10 +224,22 @@ def _refit_music_bed(plan: dict) -> None:
         if music.get("mode") != "bed" or bed.get("loop", True):
             event["duration_seconds"] = _r(new_duration)
         else:
-            span = _r(min(event["duration_seconds"], new_duration))
+            source_start = event.get("source_start_seconds") or 0.0
+            # Immutable capacity = the one-shot bed's full playable source span.
+            # Stamp it once (from the current source range) so repeated
+            # shrink→grow re-fits recompute from the CEILING, not from an
+            # already-shrunk duration (Codex review 2026-09-06).
+            capacity = bed.get("source_capacity_seconds")
+            if capacity is None:
+                end = event.get("source_end_seconds")
+                capacity = (end - source_start) if end is not None \
+                    else event["duration_seconds"]
+                bed["source_capacity_seconds"] = _r(max(0.0, capacity))
+                event["music"] = {**music, "bed": bed}
+            span = _r(min(float(capacity), new_duration))
             event["duration_seconds"] = span
             if event.get("source_end_seconds") is not None:
-                event["source_end_seconds"] = span
+                event["source_end_seconds"] = _r(source_start + span)
 
 
 def _clamp_titles_to_duration(plan: dict) -> None:
@@ -461,9 +485,13 @@ def _apply_title(plan: dict, op: dict, assets: dict) -> str:
     if not 1 <= len(text) <= 120:
         raise PlanOpError("Title text must be 1-120 characters")
     events[index]["text"] = text
-    # a user-typed title is the USER's claim, not the model's — the
-    # rendered-language gates exempt it, and provenance records why
-    events[index]["user_authored"] = True
+    # Title text set through an instruction is MODEL-MEDIATED, not typed
+    # verbatim by the user ("haz el título más emocionante" lets the model
+    # invent the words), so it must NOT be marked user_authored — that flag
+    # exempts a title from the rendered-language claim gate, and a model must
+    # never smuggle an invented factual title past it (Codex review 2026-09-06).
+    # A prior user-authored flag is cleared for the same reason.
+    events[index].pop("user_authored", None)
     notes = []
     style = dict(events[index].get("text_style") or {})
     if op.get("font") is not None:
@@ -474,7 +502,16 @@ def _apply_title(plan: dict, op: dict, assets: dict) -> str:
         style["font"] = op["font"]
         notes.append(f"fuente {op['font']}")
     if op.get("size") is not None:
-        size = int(op["size"])
+        try:
+            # float() first so a JSON 1e309 (parses to inf) is caught here as a
+            # clean PlanOpError instead of int(inf) raising OverflowError → 500
+            # (Codex review 2026-09-06).
+            size_value = float(op["size"])
+            if size_value != size_value or size_value in (float("inf"), float("-inf")):
+                raise ValueError("non-finite")
+            size = int(size_value)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise PlanOpError("size must be a finite number 24-140") from exc
         if not 24 <= size <= 140:
             raise PlanOpError("size must be 24-140")
         style["size"] = size
@@ -525,7 +562,29 @@ def _apply_add_voiceover(plan: dict, op: dict, assets: dict) -> str:
     available = float(asset.get("duration_seconds") or 0.0)
     if available < 0.5:
         raise PlanOpError(f"{op['asset_id']} is shorter than 0.5s")
-    duration = _grid(min(available, total - start), plan["project"]["fps"])
+    span = min(available, total - start)
+    # Optional cap: trim the placed voiceover to a target window (e.g. the
+    # drafted [start–end] range from the chat) instead of playing the whole
+    # recording. Never below 0.5s and never past the recording/cut.
+    cap = op.get("max_duration_seconds")
+    if cap is not None:
+        try:
+            cap = float(cap)
+        except (TypeError, ValueError) as exc:
+            raise PlanOpError("max_duration_seconds must be a number") from exc
+        # REJECT a supplied-but-invalid cap in the authoritative applier too — a
+        # malformed op must not silently place the whole recording past the
+        # requested window (Codex review round 3, 2026-09-06).
+        if cap != cap or cap in (float("inf"), float("-inf")) or cap < 0.5:
+            raise PlanOpError("max_duration_seconds must be a finite value >= 0.5")
+        span = min(span, cap)
+    # FLOOR (not round) to the grid so the placed voiceover never overruns the
+    # recording, the cut, or the requested cap; refuse if it falls below 0.5s.
+    duration = _floor_grid(span, plan["project"]["fps"])
+    if duration < 0.5:
+        raise PlanOpError(
+            "La voz en off queda por debajo de 0.5s tras ajustar al cuadro"
+        )
     track = _voiceover_track(plan, create=True)
     used = {e["event_id"] for e in track["events"]}
     number = 1
@@ -775,12 +834,18 @@ def _apply_set_music_bed(plan: dict, op: dict, assets: dict) -> str:
     # Looping fills the whole cut from a source of any length; a one-shot bed
     # occupies only min(asset, cut) so its source range stays inside the asset
     # and the plan validator accepts it.
+    bed_extra: dict = {}
     if loop:
         source_end = round(asset_duration, 3) if asset_duration else round(duration, 3)
         span = round(duration, 3)
     else:
         span = round(min(duration, asset_duration or duration), 3)
         source_end = span
+        # Stamp the FULL source capacity now (from the asset), not the initial
+        # shrunk span — else a bed added to a short cut could never regrow when
+        # the cut later lengthens (Codex review 2026-09-06).
+        if asset_duration:
+            bed_extra["source_capacity_seconds"] = round(asset_duration, 3)
     track = _music_track(plan, create=True)
     track["events"] = [{
         "event_id": "mus-01", "asset_id": asset_id,
@@ -790,7 +855,7 @@ def _apply_set_music_bed(plan: dict, op: dict, assets: dict) -> str:
         "confidence": 1.0, "text": None, "volume_db": gain,
         "music": {"mode": "bed", "recommended": None,
                   "bed": {"asset_id": asset_id, "gain_db": gain,
-                          "duck_db": duck, "loop": loop}},
+                          "duck_db": duck, "loop": loop, **bed_extra}},
     }]
     return f"Música de fondo puesta ({asset['filename']}, {gain:g}dB, ducking {duck:g}dB)"
 
