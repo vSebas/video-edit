@@ -687,6 +687,55 @@ def test_voiceover_retime_refuses_when_a_track_trails_past_the_voiceover(tmp_pat
         svc.voiceover_retime_apply("vlog-ctrail", base_revision=c and 2)
 
 
+def test_place_voiceover_from_drive_validates_and_places(tmp_path, monkeypatch):
+    """Loading a voice file from Drive copies exactly ONE listed audio file into
+    the project and routes it through the normal placement — and refuses any path
+    the listing didn't return (no traversal / arbitrary Drive paths)."""
+    from video_app import projects as projects_mod
+    from video_app.config import Settings
+    from video_app.projects import ProjectService
+
+    root = tmp_path / "root"
+    runtime = root / "runtime"
+    pid = "vlog-drive"
+    (runtime / pid).mkdir(parents=True)
+    (root / "footage" / pid).mkdir(parents=True)
+    write_json(runtime / pid / "project.json", {
+        "schema_version": "video-app-project.v1", "project_id": pid, "name": "D",
+        "source_directory": f"footage/{pid}", "plan": {}, "inventory": {"assets": []},
+    })
+    svc = ProjectService(Settings(root=root, runtime=runtime))
+
+    monkeypatch.setattr(svc, "drive_voice_files", lambda: [
+        {"path": "abril/nota-voz.m4a", "name": "nota-voz.m4a",
+         "bytes": 12345, "modified": "2026-09-06T00:00:00Z"}])
+
+    placed = {}
+
+    def fake_place(project_id, source_path, start, cap):
+        placed.update(project_id=project_id, source_path=source_path,
+                      start=start, cap=cap)
+        return {"status": "plan_ready", "revision": 2}
+
+    def fake_run(cmd, **kwargs):
+        # rclone copyto <remote> <dest> — create the destination file
+        if cmd[:2] == ["rclone", "copyto"]:
+            Path(cmd[3]).write_bytes(b"voice")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(svc, "place_voiceover", fake_place)
+    monkeypatch.setattr(projects_mod.subprocess, "run", fake_run)
+
+    # a path the listing did not return is refused
+    with pytest.raises(projects_mod.ProjectError):
+        svc.place_voiceover_from_drive(pid, "../secret.m4a", 3.0, 1.0)
+
+    svc.place_voiceover_from_drive(pid, "abril/nota-voz.m4a", 3.0, 1.5)
+    assert placed["source_path"] == f"footage/{pid}/nota-voz.m4a"
+    assert placed["start"] == 3.0 and placed["cap"] == 1.5
+    assert (root / "footage" / pid / "nota-voz.m4a").is_file()
+
+
 def _chat_fixture(tmp_path):
     """A project with an approved plan (primary video track + a B-roll track we
     assert is EXCLUDED from the grounded scene map) and a concept."""

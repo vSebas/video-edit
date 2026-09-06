@@ -699,6 +699,8 @@ function editWorkspace(project) {
     </section>
     <input type="file" id="vo-capture-input"
       accept=".m4a,.wav,.mp3,audio/mp4,audio/x-m4a,audio/wav,audio/mpeg" capture hidden />
+    <input type="file" id="vo-file-input"
+      accept=".m4a,.wav,.mp3,.aac,.ogg,.opus,.flac,audio/*" hidden />
   `;
 }
 
@@ -726,8 +728,10 @@ function chatBubble(m, index) {
     : '';
   const voButton = vo && vo.text
     ? `<div class="chat-vo-wrap">
-         <button class="chat-vo-btn" data-chat-vo="${index}">🎤 Grabar y colocar
-           <span class="chat-vo-range">${fmtTime(vo.start_seconds)}–${fmtTime(vo.end_seconds)}</span></button>
+         <span class="chat-vo-range">${fmtTime(vo.start_seconds)}–${fmtTime(vo.end_seconds)}</span>
+         <button class="chat-vo-btn" data-chat-vo="${index}">🎤 Grabar</button>
+         <button class="chat-vo-btn" data-chat-vo-file="${index}">📁 Archivo</button>
+         <button class="chat-vo-btn" data-chat-vo-drive="${index}">☁️ Drive</button>
          ${voWarn}
        </div>`
     : '';
@@ -939,14 +943,76 @@ async function dismissChatProposal(index) {
 /* "Grabar y colocar": record (or pick) a voice note, upload it to the project,
    then place it as a voiceover at the drafted range — routed through the same
    confirm-gated add_voiceover op. */
-async function chatRecordVoiceover(index) {
+// Load the voice note three ways — all end at the same confirm-gated
+// add_voiceover placement: record on the phone mic, pick an existing audio file
+// from the phone, or copy one out of Drive.
+function chatRecordVoiceover(index) { chatPickVoiceover(index, '#vo-capture-input'); }
+function chatFileVoiceover(index) { chatPickVoiceover(index, '#vo-file-input'); }
+
+function chatPickVoiceover(index, inputSelector) {
   const draft = state.chat?.messages?.[index]?.voiceover_draft;
   if (!draft) return;
   // Bind the pending capture to THIS project — the picker/recorder can take a
   // while, and the user might switch projects before returning (Codex review).
   state.pendingVoiceover = { ...draft, projectId: state.activeProjectId };
-  const input = $('#vo-capture-input');
+  const input = $(inputSelector);
   if (input) { input.value = ''; input.click(); }
+}
+
+async function chatDriveVoiceover(index) {
+  const draft = state.chat?.messages?.[index]?.voiceover_draft;
+  if (!draft) return;
+  const projectId = state.activeProjectId;
+  const box = $('#qa-panel');
+  if (box) box.innerHTML = '<p class="notice">Buscando notas de voz en Drive…</p>';
+  try {
+    const { files } = await api(`/api/projects/${projectId}/voiceover/drive-files`);
+    if (state.activeProjectId !== projectId) return;
+    if (!box) return;
+    if (!files.length) {
+      box.innerHTML = '<p class="notice">No hay audios en tu Drive (VlogInbox). Sube la nota de voz allí y vuelve a intentar.</p>';
+      return;
+    }
+    box.innerHTML = `<div class="sync-diff">
+      <p>Elige la nota de voz para <em>«${escapeHtml(draft.text)}»</em> (${fmtTime(draft.start_seconds)}–${fmtTime(draft.end_seconds)}):</p>
+      ${files.map((f) => `<div class="cleanup-item">
+        <span>☁️ ${escapeHtml(f.name)} <span class="muted">(${(f.bytes / 1e6).toFixed(1)} MB)</span></span>
+        <button class="primary compact" data-drive-voice="${escapeHtml(f.path)}">Colocar</button>
+      </div>`).join('')}
+    </div>`;
+    box.querySelectorAll('[data-drive-voice]').forEach((btn) => {
+      btn.addEventListener('click', () => placeVoiceoverFromDrive(
+        projectId, btn.dataset.driveVoice, draft));
+    });
+  } catch (error) {
+    if (state.activeProjectId !== projectId) return;
+    if (box) box.innerHTML = `<p class="notice error">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+async function placeVoiceoverFromDrive(projectId, remotePath, draft) {
+  try {
+    setBusy('Colocando tu voz en off', ['Trayendo la nota de voz de Drive', 'Renderizando'], 0, projectId);
+    const body = { remote_path: remotePath, start_seconds: draft.start_seconds };
+    if (draft.end_seconds > draft.start_seconds) {
+      body.max_duration_seconds = draft.end_seconds - draft.start_seconds;
+    }
+    await api(`/api/projects/${projectId}/voiceover/place-from-drive`, {
+      method: 'POST', body: JSON.stringify(body),
+    });
+    if (state.activeProjectId !== projectId) { clearBusyIfOwner(projectId); return; }
+    setBusy('Colocando tu voz en off', ['Trayendo la nota de voz de Drive', 'Renderizando'], 1, projectId);
+    await runStep('render', undefined, projectId);
+    clearBusyIfOwner(projectId);
+    if (state.activeProjectId !== projectId) return;
+    notice('Voz en off colocada desde Drive — nuevo corte arriba.');
+    await loadProject(projectId);
+  } catch (error) {
+    clearBusyIfOwner(projectId);
+    if (state.activeProjectId !== projectId) return;
+    notice(error.message, true);
+    await loadProject(projectId);
+  }
 }
 
 async function onVoiceoverFilePicked(event) {
@@ -2098,14 +2164,19 @@ function wireHandlers() {
     $('#chat-form')?.addEventListener('submit', submitChat);
     $('#chat-clear')?.addEventListener('click', clearChat);
     $('#vo-capture-input')?.addEventListener('change', onVoiceoverFilePicked);
+    $('#vo-file-input')?.addEventListener('change', onVoiceoverFilePicked);
     // Delegated: proposal cards and voiceover buttons are re-rendered often.
     chatThread.addEventListener('click', (event) => {
       const apply = event.target.closest('[data-chat-apply]');
       if (apply) { chatApply(apply.dataset.chatApply); return; }
       const dismiss = event.target.closest('[data-chat-dismiss]');
       if (dismiss) { dismissChatProposal(Number(dismiss.dataset.chatDismiss)); return; }
-      const vo = event.target.closest('[data-chat-vo]');
-      if (vo) { chatRecordVoiceover(Number(vo.dataset.chatVo)); }
+      const rec = event.target.closest('[data-chat-vo]');
+      if (rec) { chatRecordVoiceover(Number(rec.dataset.chatVo)); return; }
+      const pick = event.target.closest('[data-chat-vo-file]');
+      if (pick) { chatFileVoiceover(Number(pick.dataset.chatVoFile)); return; }
+      const drive = event.target.closest('[data-chat-vo-drive]');
+      if (drive) { chatDriveVoiceover(Number(drive.dataset.chatVoDrive)); }
     });
     loadChat();
   }

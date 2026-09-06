@@ -165,6 +165,12 @@ class VoiceoverRetimeApplyRequest(BaseModel):
     base_revision: int
 
 
+class VoiceoverDrivePlaceRequest(BaseModel):
+    remote_path: str = Field(min_length=1, max_length=1024)
+    start_seconds: float
+    max_duration_seconds: float | None = None
+
+
 class ModelPrefRequest(BaseModel):
     stage: str = Field(pattern=r"^[a-z_]{1,32}$")
     provider: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
@@ -454,6 +460,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return project_call(
             lambda: projects.place_voiceover(
                 project_id, saved_source_path, start_seconds, max_duration_seconds)
+        )
+
+    @application.get("/api/projects/{project_id}/voiceover/drive-files")
+    def voiceover_drive_files(project_id: str):
+        project_call(lambda: projects.get_project(project_id))
+        return {"files": project_call(projects.drive_voice_files)}
+
+    @application.post("/api/projects/{project_id}/voiceover/place-from-drive")
+    def voiceover_place_from_drive(
+        project_id: str, request: VoiceoverDrivePlaceRequest
+    ):
+        return project_call(
+            lambda: projects.place_voiceover_from_drive(
+                project_id, request.remote_path, request.start_seconds,
+                request.max_duration_seconds)
         )
 
     @application.post("/api/projects/{project_id}/sync-media")

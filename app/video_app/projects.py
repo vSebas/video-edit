@@ -4179,6 +4179,60 @@ class ProjectService:
         return {"removed": asset_id, "file_deleted": delete_file}
 
     DRIVE_INBOX = "gdrive:VlogInbox"
+    VOICE_EXTENSIONS = {".m4a", ".mp3", ".wav", ".aac", ".ogg", ".opus", ".flac"}
+
+    def drive_voice_files(self) -> list[dict]:
+        """Audio files anywhere in the Drive inbox — so a voice note recorded on
+        the phone and dropped in Drive can be placed as a voiceover WITHOUT being
+        a whole project folder. Newest first; the returned `path` is the only
+        token the placement accepts (guards against traversal)."""
+        result = subprocess.run(
+            ["rclone", "lsjson", "-R", "--files-only", self.DRIVE_INBOX],
+            capture_output=True, text=True, timeout=60,
+        )
+        if result.returncode:
+            raise ProjectError(
+                f"Drive no disponible: {result.stderr.strip()[-200:]}")
+        files = []
+        for entry in json.loads(result.stdout or "[]"):
+            path = entry.get("Path") or ""
+            if Path(path).suffix.lower() in self.VOICE_EXTENSIONS:
+                files.append({
+                    "path": path, "name": Path(path).name,
+                    "bytes": int(entry.get("Size") or 0),
+                    "modified": entry.get("ModTime") or "",
+                })
+        files.sort(key=lambda f: f["modified"], reverse=True)
+        return files[:50]
+
+    def place_voiceover_from_drive(
+        self, project_id: str, remote_path: str,
+        start_seconds: float, max_duration_seconds: float | None = None,
+    ) -> dict:
+        """Copy ONE audio file out of the Drive inbox into the project and place
+        it as a voiceover — the same confirm-gated add_voiceover path as an
+        uploaded recording. `remote_path` must be one the listing returned (no
+        arbitrary Drive paths / traversal)."""
+        project = self.get_project(project_id)
+        allowed = {f["path"] for f in self.drive_voice_files()}
+        if remote_path not in allowed:
+            raise ProjectError("Ese archivo de voz ya no está en Drive")
+        target_dir = self.settings.root / project["source_directory"]
+        target_dir.mkdir(parents=True, exist_ok=True)
+        dest = target_dir / Path(remote_path).name
+        result = subprocess.run(
+            ["rclone", "copyto", f"{self.DRIVE_INBOX}/{remote_path}", str(dest)],
+            capture_output=True, text=True, timeout=300,
+        )
+        if result.returncode or not dest.is_file():
+            raise ProjectError(
+                f"No se pudo traer la voz de Drive: {result.stderr.strip()[-200:]}")
+        saved_source_path = str(dest.relative_to(self.settings.root))
+        # place_voiceover identifies the recording by this exact source_path and
+        # owns cleanup of only that file/asset on any failure (its own except),
+        # so the copied file never lingers on a failed placement.
+        return self.place_voiceover(
+            project_id, saved_source_path, start_seconds, max_duration_seconds)
 
     def drive_inbox(self) -> list[dict]:
         """Folders waiting in the Drive VlogInbox, with import status,
