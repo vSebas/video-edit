@@ -280,6 +280,17 @@ PROJECT_ROOT = __import__("pathlib").Path(__file__).resolve().parents[2]
 class TestSyncEndpoints:
     """Preview/apply flow over the API, using the golden fixtures."""
 
+    @pytest.fixture(autouse=True)
+    def _isolate_opentake_env(self, tmp_path, monkeypatch):
+        """The preview's staleness cross-check reads OPENTAKE_PROJECTS_DIR from
+        the ENVIRONMENT — on a dev machine with a real OpenTake bundle open, the
+        fixture readback vs. the real saved bundle mismatch and the preview is
+        marked stale, so apply refuses (correct product behavior, wrong test
+        input). Point the var at an empty dir so saved_bundle_state() is None
+        and the tests exercise the sync flow, not the host's OpenTake state."""
+        monkeypatch.setenv(
+            "OPENTAKE_PROJECTS_DIR", str(tmp_path / "no-opentake"))
+
     def _project(self, tmp_path):
         import json as _json
         import shutil
