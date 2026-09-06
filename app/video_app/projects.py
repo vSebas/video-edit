@@ -2330,7 +2330,13 @@ class ProjectService:
                     vo_asset.get("sha256", ""))
                 if va.evidence_fingerprint(records) != basis.get("evidence"):
                     reasons.append("cambió la evidencia aprobada")
-            return {**rep, "stale": bool(reasons), "stale_reasons": reasons}
+            stamped = {**rep, "stale": bool(reasons), "stale_reasons": reasons}
+            # Authoritative timebase state for the UI: frozen only when fresh AND
+            # (nothing to clean OR explicitly accepted) — so A1/C buttons match
+            # the server gate exactly (Codex review final).
+            stamped["timebase_frozen"] = (
+                not reasons and self._timebase_frozen(project_id, plan, stamped))
+            return stamped
 
         if event_id is not None:
             rep = analyses.get(event_id)
@@ -2594,8 +2600,22 @@ class ProjectService:
         if report.get("stale"):
             raise ProjectError(
                 "El análisis está desactualizado — vuelve a analizar antes de limpiar")
+        from .cleanup import DEAD_AIR_KEEP, DEAD_AIR_MIN
         words = (report.get("transcript") or {}).get("words") or []
         cands = []
+
+        def _add(kind, reason, a, b):
+            a = round(a, 3)
+            b = round(b, 3)
+            if b <= a:
+                return
+            # CONTENT-derived id: the exact range+kind it authorizes (source
+            # coords are original-asset, so distinct across segments).
+            cid = "vc-" + hashlib.sha1(
+                f"{kind}|{a:.3f}|{b:.3f}".encode()).hexdigest()[:10]
+            cands.append({"kind": kind, "reason": reason, "id": cid,
+                          "source_start_seconds": a, "source_end_seconds": b})
+
         for seg in group:
             s0 = float(seg.get("source_start_seconds") or 0.0)
             s1 = float(seg.get("source_end_seconds") or 0.0)
@@ -2603,16 +2623,21 @@ class ProjectService:
                          if float(w.get("start_seconds", 0)) >= s0 - 0.05
                          and float(w.get("end_seconds", 0)) <= s1 + 0.05]
             for c in va.voiceover_filler_candidates(seg_words):
-                a = round(max(s0, float(c["source_start_seconds"])), 3)
-                b = round(min(s1, float(c["source_end_seconds"])), 3)
-                if b <= a:
-                    continue
-                # CONTENT-derived id: the exact range+kind it authorizes (source
-                # coords are original-asset, so distinct across segments).
-                cid = "vc-" + hashlib.sha1(
-                    f"{c.get('kind')}|{a:.3f}|{b:.3f}".encode()).hexdigest()[:10]
-                cands.append({**c, "id": cid,
-                              "source_start_seconds": a, "source_end_seconds": b})
+                _add(c.get("kind"), c.get("reason"),
+                     max(s0, float(c["source_start_seconds"])),
+                     min(s1, float(c["source_end_seconds"])))
+            # Boundary silence: leading/trailing dead air relative to the placed
+            # segment window (the word-to-word detector never emits these), so the
+            # silence A0 flags as pending can actually be removed (Codex review).
+            if seg_words:
+                lead = float(seg_words[0]["start_seconds"]) - s0
+                if lead >= DEAD_AIR_MIN:
+                    _add("dead_air", f"silencio inicial {lead:.1f}s",
+                         s0, float(seg_words[0]["start_seconds"]) - DEAD_AIR_KEEP)
+                trail = s1 - float(seg_words[-1]["end_seconds"])
+                if trail >= DEAD_AIR_MIN:
+                    _add("dead_air", f"silencio final {trail:.1f}s",
+                         float(seg_words[-1]["end_seconds"]) + DEAD_AIR_KEEP, s1)
         return anchor_id, int(plan.get("revision", 1)), group, cands
 
     def voiceover_cleanup_candidates(
@@ -2704,12 +2729,30 @@ class ProjectService:
         except Exception:  # noqa: BLE001
             return None
 
-    def _timebase_frozen(self, project_id: str, report: dict) -> bool:
+    def _vo_freeze_fingerprint(self, plan: dict, report: dict):
+        """Identity a freeze is tied to: the VO content fingerprint AND the whole
+        group's ordered geometry, so a freeze cannot survive a later segment
+        moving/gaining silence even if its words are unchanged (Codex review
+        final)."""
+        base = (report.get("basis") or {}).get("voiceover")
+        if not base:
+            return None
+        anchor = self._voiceover_event(plan, report.get("event_id"))
+        group = self._voiceover_group(plan, anchor) if anchor else []
+        geo = "|".join(
+            f"{float(e.get('source_start_seconds') or 0):.3f},"
+            f"{float(e.get('source_end_seconds') or 0):.3f},"
+            f"{float(e.get('timeline_start_seconds') or 0):.3f},"
+            f"{float(e.get('duration_seconds') or 0):.3f}" for e in group)
+        return hashlib.sha1(f"{base}|{geo}".encode()).hexdigest()[:16]
+
+    def _timebase_frozen(self, project_id: str, plan: dict, report: dict) -> bool:
         """Is this narration's timebase frozen — either nothing left to clean, OR
-        the user explicitly accepted it as-is at its CURRENT content fingerprint?"""
+        the user explicitly accepted it as-is at its CURRENT content+geometry
+        fingerprint?"""
         if not report.get("pending_cleanup", True):
             return True
-        fp = ((report.get("basis") or {}).get("voiceover"))
+        fp = self._vo_freeze_fingerprint(plan, report)
         return bool(fp) and self._frozen_fingerprint(
             project_id, report.get("event_id")) == fp
 
@@ -2732,7 +2775,14 @@ class ProjectService:
         if report is None or report.get("stale"):
             raise ProjectError(
                 "Revisa la voz en off antes de aceptarla tal cual")
-        fp = (report.get("basis") or {}).get("voiceover")
+        # A silent recording is not a valid timing spine — never freezable, or C
+        # could retime the picture to silence (Codex review final).
+        if report.get("status") != "ok" \
+                or not ((report.get("transcript") or {}).get("words")):
+            raise ProjectError(
+                "No se detectó voz en esta grabación — no se puede aceptar como "
+                "base de tiempo")
+        fp = self._vo_freeze_fingerprint(plan, report)
         if not fp:
             raise ProjectError("No se pudo fijar el tiempo de la voz en off")
         path = self.settings.runtime / project_id / "voiceover-frozen.json"
@@ -2779,7 +2829,7 @@ class ProjectService:
         # to remove, UNLESS the user explicitly accepted it as-is. Fail CLOSED when
         # the field is absent — a pre-gate sidecar (already stale after the version
         # bump) must never slip through as "clean".
-        if not self._timebase_frozen(project_id, report):
+        if not self._timebase_frozen(project_id, plan, report):
             raise ProjectError(
                 "Limpia la voz en off (muletillas/silencios) o acéptala tal cual "
                 "— luego propongo el metraje, sobre un tiempo ya fijo")
@@ -2911,7 +2961,7 @@ class ProjectService:
         for anchor_id in anchors:
             a0 = self.load_voiceover_analysis(project_id, anchor_id)
             if a0 is None or a0.get("stale") \
-                    or not self._timebase_frozen(project_id, a0):
+                    or not self._timebase_frozen(project_id, plan, a0):
                 raise ProjectError(
                     "Revisa y limpia (o acepta) la voz en off antes de ajustar la "
                     "imagen — el reajuste necesita un tiempo ya fijo")
@@ -2958,16 +3008,17 @@ class ProjectService:
         # only the exposed delta would leave the pre-existing part unsupported and
         # fail at apply (Codex review 2026-09-06). We stamp the full covering set.
         if delta_frames > 0:
-            # Don't LAUNDER a revoked claim: stamping the new covering set would
-            # drop the tail's original ids, so if one of THEM was rejected after
-            # compile, the whole scene should be reconsidered — refuse rather than
-            # let another observation quietly re-authorize it (Codex review r2).
+            # Don't LAUNDER the tail's original lineage: stamping the new covering
+            # set replaces the old ids, so if any of THEM is no longer CURRENTLY
+            # APPROVED (rejected, or pending/vanished after compile), the scene
+            # must be reconsidered — refuse rather than let another observation
+            # quietly re-authorize it (Codex review final).
             if plan.get("lineage_contract"):
-                rejected = self._evidence_review_sets(project_id).get("rejected") or set()
-                if any(eid in rejected for eid in (last.get("evidence_ids") or [])):
+                approved = self._evidence_review_sets(project_id).get("approved") or set()
+                if any(eid not in approved for eid in (last.get("evidence_ids") or [])):
                     candidate["reason"] = (
-                        "El último clip usa una afirmación rechazada — revísala "
-                        "antes de estirar la imagen.")
+                        "El último clip depende de una afirmación sin confirmar o "
+                        "rechazada — revísala antes de estirar la imagen.")
                     return plan, revision, candidate
             ids = self._retime_exposure_ids(
                 project_id, plan, last.get("asset_id"),
@@ -3006,8 +3057,11 @@ class ProjectService:
             validate_edit_plan(
                 candidate, SCHEMA_DIR / "edit-plan.schema.json", project)
             # Run the SAME propose-time gates (evidence/lineage/title) on the
-            # copy, so a preview never shows an apply that the gate would refuse.
+            # copy, then re-validate (the gate can attach evidence ids), so a
+            # preview never shows an apply that the gate/schema would refuse.
             self._gate_op_candidate(project_id, plan, op, candidate)
+            validate_edit_plan(
+                candidate, SCHEMA_DIR / "edit-plan.schema.json", project)
             return True, ""
         except (PlanOpError, PlanningError, ProjectError) as exc:
             return False, str(exc)
@@ -3596,9 +3650,16 @@ class ProjectService:
             validate_edit_plan(
                 candidate, SCHEMA_DIR / "edit-plan.schema.json", project
             )
+            self._gate_op_candidate(project_id, plan, op, candidate)
+            # The gate can MUTATE the candidate (e.g. _resolve_broll_evidence
+            # attaches evidence_ids, which the schema caps) — re-validate so a
+            # gate-introduced schema violation is refused, never committed
+            # (Codex review final).
+            validate_edit_plan(
+                candidate, SCHEMA_DIR / "edit-plan.schema.json", project
+            )
         except (PlanOpError, PlanningError) as exc:
             raise ProjectError(str(exc)) from exc
-        self._gate_op_candidate(project_id, plan, op, candidate)
         proposal_id = uuid.uuid4().hex[:12]
         # Write the proposal under the same lock apply uses, so a propose and a
         # concurrent apply cannot interleave on the shared plan-command.json.

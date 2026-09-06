@@ -1175,9 +1175,10 @@ function renderVoiceoverReport(a) {
   const cleanupCta = fresh
     ? `<button class="primary compact vo-cleanup-btn" data-event-id="${escapeHtml(a.event_id)}">🧹 Limpiar muletillas y silencios</button>`
     : '';
-  // A1/C run only on a FROZEN timebase — once the voiceover has nothing left to
-  // clean (matches the server gate; a stale or pending report hides them).
-  const frozen = fresh && !a.pending_cleanup;
+  // A1/C run only on a FROZEN timebase — the server's authoritative flag
+  // (nothing left to clean OR explicitly accepted), so an accepted freeze reveals
+  // the actions even with a retained filler.
+  const frozen = fresh && a.timebase_frozen;
   const needsCoverage = Array.isArray(a.beats)
     && a.beats.some((b) => b.class === 'available_elsewhere' || b.class === 'gap');
   const remedyCta = frozen && needsCoverage
@@ -1186,7 +1187,7 @@ function renderVoiceoverReport(a) {
   const retimeCta = frozen
     ? '<button class="primary compact vo-retime-btn">⏱️ Ajustar la imagen a la voz en off</button>'
     : '';
-  const pendingNote = fresh && a.pending_cleanup
+  const pendingNote = fresh && a.pending_cleanup && !a.timebase_frozen
     ? `<p class="muted">Limpia la voz en off para desbloquear los ajustes de imagen (metraje y duración), o acéptala tal cual.</p>
        <button class="quick compact vo-freeze-btn" data-event-id="${escapeHtml(a.event_id)}">✔️ Usar tal cual (saltar limpieza)</button>`
     : '';

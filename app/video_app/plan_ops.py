@@ -577,6 +577,23 @@ def _apply_cleanup_voiceover(plan: dict, op: dict, assets: dict) -> str:
         group = [event]
     group.sort(key=lambda e: float(e.get("timeline_start_seconds") or 0.0))
 
+    # Validate the Phase-B group invariants: one asset, source-ordered and
+    # non-overlapping, timeline-contiguous. If a segment was moved/reordered
+    # outside (e.g. an OpenTake edit), recompacting it would silently reorder or
+    # drop manual work — refuse instead (Codex review final).
+    eps = 0.5 / fps
+    if len({e.get("asset_id") for e in group}) > 1:
+        raise PlanOpError(
+            "Los segmentos de la voz en off ya no son del mismo audio — "
+            "revísalos antes de limpiar")
+    for prev, cur in zip(group, group[1:]):
+        prev_end = float(prev["timeline_start_seconds"]) + float(prev["duration_seconds"])
+        if float(cur["source_start_seconds"]) < float(prev["source_end_seconds"]) - eps \
+                or abs(float(cur["timeline_start_seconds"]) - prev_end) > eps:
+            raise PlanOpError(
+                "La voz en off fue editada manualmente (segmentos movidos o "
+                "solapados) — revísala antes de limpiar")
+
     # Every group segment must be frame-exact at 1x, or nearest-frame rounding
     # would shift a boundary and add/drop edge audio (Codex review).
     for e in group:
@@ -652,8 +669,31 @@ def _apply_cleanup_voiceover(plan: dict, op: dict, assets: dict) -> str:
         used.add(vid)
         return vid
 
+    # A COLLISION-PROOF group id: keep the existing one; otherwise mint a fresh
+    # `vg-NN` not used by ANY current voiceover group, so a deleted-then-reused
+    # anchor event id can never re-merge with the old group's descendants (Codex
+    # review final).
+    group_vo = anchor.get("vo_group")
+    if not group_vo:
+        existing_groups = {e.get("vo_group") for e in events if e.get("vo_group")}
+        gnum = 1
+        while f"vg-{gnum:02d}" in existing_groups:
+            gnum += 1
+        group_vo = f"vg-{gnum:02d}"
+
+    # Which original segment OWNS a kept source range, so we carry ITS per-segment
+    # metadata (e.g. volume_db) forward instead of cloning the anchor's onto every
+    # descendant and erasing a manual per-segment change (Codex review final).
+    seg_bounds = [(round(float(e["source_start_seconds"]) * fps),
+                   round(float(e["source_end_seconds"]) * fps), e) for e in group]
+
+    def _owner(f_a: int, f_b: int) -> dict:
+        for so, se, e in seg_bounds:
+            if so <= f_a and f_b <= se:
+                return e
+        return anchor
+
     tl_frame = round(float(anchor["timeline_start_seconds"]) * fps)
-    group_vo = anchor.get("vo_group") or anchor["event_id"]
     new_events: list[dict] = []
     for f_a, f_b in kept:
         frames = f_b - f_a
@@ -661,10 +701,11 @@ def _apply_cleanup_voiceover(plan: dict, op: dict, assets: dict) -> str:
             continue
         # First kept segment keeps the group ANCHOR id (stable identity for the
         # A0 report + re-review); later segments get fresh ids; all share the
-        # persistent vo_group.
+        # persistent vo_group. Metadata comes from the OWNING original segment.
+        owner = _owner(f_a, f_b)
         eid = anchor["event_id"] if not new_events else _next_id()
         new_events.append({
-            **anchor, "event_id": eid, "vo_group": group_vo,
+            **owner, "event_id": eid, "vo_group": group_vo,
             "source_start_seconds": round(f_a / fps, 6),
             "source_end_seconds": round(f_b / fps, 6),
             "timeline_start_seconds": round(tl_frame / fps, 6),
@@ -792,12 +833,11 @@ def _apply_voiceover_retime(plan: dict, op: dict, assets: dict) -> str:
     ids = op.get("evidence_ids")
     if isinstance(ids, list):
         video["evidence_ids"] = list(ids)
-    # Shortening drops the tail footage's captions [target, old_end) before we
-    # reconcile. Then clamp/drop BY SPAN any caption still crossing the new end —
-    # the midpoint-based drop above can leave a cue that spans the boundary (e.g.
-    # 3.70–4.10 trimmed to 4.00) extending past the project duration (Codex r2).
+    # Shortening reconciles the tail captions BY SPAN (not midpoint, which could
+    # both leave a boundary-crossing cue past the new duration AND wrongly delete
+    # one whose midpoint fell past the cut): drop a cue entirely past the new end,
+    # clamp a cue crossing it, keep the rest (Codex review final).
     if delta_frames < 0:
-        _drop_captions_between(plan, target, old_end)
         survivors = []
         for cue in _caption_events(plan):
             cs = float(cue.get("timeline_start_seconds") or 0.0)
