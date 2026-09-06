@@ -2213,13 +2213,18 @@ class ProjectService:
         return events[0] if len(events) == 1 else None
 
     def _voiceover_group(self, plan: dict, event: dict) -> list[dict]:
-        """The logical narration `event` belongs to: the maximal run of SAME-asset
-        1x voiceover events that are TIMELINE-CONTIGUOUS (back-to-back within a
-        frame) and SOURCE-ORDERED, i.e. exactly Phase B's split descendants. A
-        second, independent placement of the same recording elsewhere on the
-        timeline has a gap before it and is NOT merged in — so unrelated
-        placements never combine and immutable word ids never duplicate (Codex
-        review 2026-09-06)."""
+        """The logical narration `event` belongs to. PREFER the persisted
+        `vo_group` id (stamped when Phase B split the recording) — the
+        authoritative, unambiguous identity that never merges an unrelated
+        same-asset placement. Only when it is absent (an unsplit or legacy VO) do
+        we fall back to the geometric heuristic: the maximal run of same-asset 1x
+        events that are TIMELINE-CONTIGUOUS and SOURCE-ORDERED (Codex review r2)."""
+        gid = event.get("vo_group")
+        if gid:
+            grp = [e for e in self._voiceover_events(plan)
+                   if e.get("vo_group") == gid]
+            grp.sort(key=lambda e: float(e.get("timeline_start_seconds") or 0.0))
+            return grp or [event]
         asset = event.get("asset_id")
         fps = float(plan.get("project", {}).get("fps") or 30)
         eps = 0.5 / fps
@@ -2561,12 +2566,13 @@ class ProjectService:
                               "analyses": analyses})
 
     def _voiceover_cleanup_candidates(self, project_id: str, event_id: str | None):
-        """Shared core: resolve the target VO event, require a FRESH A0 analysis,
-        and derive the deterministic filler/dead-air candidate list off the
-        persisted transcript (no re-ASR). Each candidate gets a stable `id`
-        (`vc-<n>` by position) so a later apply selects BY ID against the SAME
+        """Shared core: resolve the target VO event's GROUP, require a FRESH A0
+        analysis (keyed under the group anchor), and derive the deterministic
+        filler/dead-air candidates PER SEGMENT (never over the union, which would
+        re-flag the removed inter-segment gaps as dead air). Each candidate gets a
+        content-derived `id` so a later apply selects BY ID against the SAME
         server-derived list — a client never supplies raw source ranges. Returns
-        (event_id, plan_revision, event, candidates)."""
+        (anchor_id, plan_revision, group, candidates)."""
         from . import voiceover_analysis as va
 
         project = self.get_project(project_id)
@@ -2579,7 +2585,9 @@ class ProjectService:
         event = self._voiceover_event(plan, event_id)
         if event is None:
             raise ProjectError(f"No existe la voz en off {event_id!r}")
-        report = self.load_voiceover_analysis(project_id, event_id)
+        group = self._voiceover_group(plan, event)
+        anchor_id = group[0].get("event_id")
+        report = self.load_voiceover_analysis(project_id, anchor_id)
         if report is None:
             raise ProjectError(
                 "Ejecuta primero «Revisar voz en off» para esta voz en off")
@@ -2587,26 +2595,25 @@ class ProjectService:
             raise ProjectError(
                 "El análisis está desactualizado — vuelve a analizar antes de limpiar")
         words = (report.get("transcript") or {}).get("words") or []
-        # Clamp candidate padding to THIS event's placed source window so the
-        # preview never claims to remove audio outside the voiceover (the op
-        # clamps too, but a clamped preview keeps the shown numbers honest).
-        src0 = float(event.get("source_start_seconds") or 0.0)
-        src1 = float(event.get("source_end_seconds") or 0.0)
         cands = []
-        for c in va.voiceover_filler_candidates(words):
-            a = round(max(src0, float(c["source_start_seconds"])), 3)
-            b = round(min(src1, float(c["source_end_seconds"])), 3)
-            if b <= a:
-                continue
-            # CONTENT-derived id: the exact range+kind it authorizes, so a
-            # re-analysis or a cleanup-policy change can never make an old id
-            # select a DIFFERENT range — a shifted candidate simply gets a new id
-            # the apply won't recognise (Codex review 2026-09-06).
-            cid = "vc-" + hashlib.sha1(
-                f"{c.get('kind')}|{a:.3f}|{b:.3f}".encode()).hexdigest()[:10]
-            cands.append({**c, "id": cid,
-                          "source_start_seconds": a, "source_end_seconds": b})
-        return event_id, int(plan.get("revision", 1)), event, cands
+        for seg in group:
+            s0 = float(seg.get("source_start_seconds") or 0.0)
+            s1 = float(seg.get("source_end_seconds") or 0.0)
+            seg_words = [w for w in words
+                         if float(w.get("start_seconds", 0)) >= s0 - 0.05
+                         and float(w.get("end_seconds", 0)) <= s1 + 0.05]
+            for c in va.voiceover_filler_candidates(seg_words):
+                a = round(max(s0, float(c["source_start_seconds"])), 3)
+                b = round(min(s1, float(c["source_end_seconds"])), 3)
+                if b <= a:
+                    continue
+                # CONTENT-derived id: the exact range+kind it authorizes (source
+                # coords are original-asset, so distinct across segments).
+                cid = "vc-" + hashlib.sha1(
+                    f"{c.get('kind')}|{a:.3f}|{b:.3f}".encode()).hexdigest()[:10]
+                cands.append({**c, "id": cid,
+                              "source_start_seconds": a, "source_end_seconds": b})
+        return anchor_id, int(plan.get("revision", 1)), group, cands
 
     def voiceover_cleanup_candidates(
         self, project_id: str, event_id: str | None = None
@@ -2614,9 +2621,9 @@ class ProjectService:
         """Phase B preview: the filler/dead-air candidates to remove from the
         voiceover, with the plan revision they were computed against (the apply
         echoes it back, so a plan that moved underneath is refused)."""
-        event_id, revision, _event, cands = self._voiceover_cleanup_candidates(
+        anchor_id, revision, _group, cands = self._voiceover_cleanup_candidates(
             project_id, event_id)
-        return {"event_id": event_id, "plan_revision": revision,
+        return {"event_id": anchor_id, "plan_revision": revision,
                 "candidates": cands}
 
     def voiceover_cleanup_apply(
@@ -2638,7 +2645,7 @@ class ProjectService:
             raise ProjectError("No hay nada seleccionado que quitar")
         if base_revision is None:
             raise ProjectError("Falta la revisión de la vista previa")
-        event_id, revision, _event, cands = self._voiceover_cleanup_candidates(
+        anchor_id, revision, _group, cands = self._voiceover_cleanup_candidates(
             project_id, event_id)
         if int(base_revision) != revision:
             raise ProjectError(
@@ -2654,7 +2661,10 @@ class ProjectService:
         selected = [c for c in cands if c["id"] in wanted]
         ranges = [[c["source_start_seconds"], c["source_end_seconds"]]
                   for c in selected]
-        op = {"op": "cleanup_voiceover", "event_id": event_id,
+        # One group-aware op (keyed by the anchor): the applier subtracts these
+        # original-source ranges from the whole narration and recompacts it, so a
+        # filler in ANY segment is removed without leaving a gap.
+        op = {"op": "cleanup_voiceover", "event_id": anchor_id,
               "remove_ranges": ranges}
         # The cleaned PLAN itself is the raw→edited map: each kept voiceover
         # segment keeps its ORIGINAL-asset source coordinates, in source order,
@@ -2680,6 +2690,60 @@ class ProjectService:
             raise ProjectError(
                 "El proyecto cambió mientras editaba — vuelve a previsualizar")
         return self.plan_command_apply(project_id, proposal_id)
+
+    def _frozen_fingerprint(self, project_id: str, anchor_id: str):
+        """The voiceover fingerprint the user explicitly FROZE this narration at
+        (accepting any retained filler as intentional), or None. Keyed by the
+        group anchor and tied to the VO content fingerprint, so re-recording or
+        re-cleaning the voiceover invalidates the decision."""
+        path = self.settings.runtime / project_id / "voiceover-frozen.json"
+        if not path.is_file():
+            return None
+        try:
+            return (load_json(path).get("frozen") or {}).get(anchor_id)
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _timebase_frozen(self, project_id: str, report: dict) -> bool:
+        """Is this narration's timebase frozen — either nothing left to clean, OR
+        the user explicitly accepted it as-is at its CURRENT content fingerprint?"""
+        if not report.get("pending_cleanup", True):
+            return True
+        fp = ((report.get("basis") or {}).get("voiceover"))
+        return bool(fp) and self._frozen_fingerprint(
+            project_id, report.get("event_id")) == fp
+
+    def voiceover_freeze(self, project_id: str, event_id: str | None = None) -> dict:
+        """Explicit human decision: accept the voiceover AS-IS (skip further
+        cleanup) and unlock A1/C on this exact recording. Tied to the VO content
+        fingerprint, so any later change to the voiceover re-opens the decision."""
+        project = self.get_project(project_id)
+        plan = project.get("plan") or {}
+        if event_id is None:
+            events = self._voiceover_events(plan)
+            if len(events) != 1:
+                raise ProjectError("Indica cuál voz en off (event_id)")
+            event_id = events[0].get("event_id")
+        event = self._voiceover_event(plan, event_id)
+        if event is None:
+            raise ProjectError(f"No existe la voz en off {event_id!r}")
+        anchor_id = self._voiceover_group(plan, event)[0].get("event_id")
+        report = self.load_voiceover_analysis(project_id, anchor_id)
+        if report is None or report.get("stale"):
+            raise ProjectError(
+                "Revisa la voz en off antes de aceptarla tal cual")
+        fp = (report.get("basis") or {}).get("voiceover")
+        if not fp:
+            raise ProjectError("No se pudo fijar el tiempo de la voz en off")
+        path = self.settings.runtime / project_id / "voiceover-frozen.json"
+        with self._project_write(project_id):
+            doc = load_json(path) if path.is_file() else {}
+            frozen = doc.get("frozen") if isinstance(doc, dict) else None
+            if not isinstance(frozen, dict):
+                frozen = {}
+            frozen[anchor_id] = fp
+            write_json(path, {"frozen": frozen})
+        return {"event_id": anchor_id, "frozen": True}
 
     # ----------------------- Phase A1: footage remedies -------------------- #
 
@@ -2712,13 +2776,13 @@ class ProjectService:
                 "El análisis está desactualizado — vuelve a analizar antes de "
                 "proponer arreglos")
         # A1 needs a FROZEN timebase: refuse while the voiceover still has filler
-        # to remove (the beat windows would shift under cleanup). Fail CLOSED when
-        # the field is absent — a pre-gate sidecar (already stale after the
-        # version bump) must never slip through as "clean".
-        if report.get("pending_cleanup", True):
+        # to remove, UNLESS the user explicitly accepted it as-is. Fail CLOSED when
+        # the field is absent — a pre-gate sidecar (already stale after the version
+        # bump) must never slip through as "clean".
+        if not self._timebase_frozen(project_id, report):
             raise ProjectError(
-                "Limpia primero la voz en off (muletillas/silencios) — luego "
-                "propongo el metraje, sobre un tiempo ya fijo")
+                "Limpia la voz en off (muletillas/silencios) o acéptala tal cual "
+                "— luego propongo el metraje, sobre un tiempo ya fijo")
         resolved_event = report.get("event_id") or event_id
         # Assets that can actually back a cutaway (add_broll takes VIDEO only).
         video_assets = {a["asset_id"] for a in
@@ -2735,25 +2799,42 @@ class ProjectService:
                 # 0.3s of the next). B-roll needs >=0.5s, so a sub-0.5s beat can't
                 # take a pull — flag it instead of forcing a too-long overlay.
                 window = w1 - w0
-                cands = [c for c in beat.get("candidates") or []
-                         if not c.get("visible") and c.get("asset_id") in video_assets]
-                if not cands:
-                    continue
-                if window < 0.5:
+                nonvis = [c for c in beat.get("candidates") or []
+                          if not c.get("visible")]
+                if not nonvis:
+                    continue   # genuinely nothing relevant unused
+                vids = [c for c in nonvis if c.get("asset_id") in video_assets]
+
+                def _manual(advice):
                     remedies.append({
                         "remedy_id": None, "beat_id": beat["beat_id"],
                         "text": beat["text"], "tier": "manual", "op": None,
-                        "advice": "Este momento es muy corto para una inserción "
-                                  "(<0.5s) — ajústalo con el reajuste o el chat."})
+                        "advice": advice})
+
+                if window < 0.5:
+                    _manual("Este momento es muy corto para una inserción "
+                            "(<0.5s) — ajústalo con el reajuste o el chat.")
                     continue
-                dur = min(window, self._REMEDY_MAX_OVERLAY_SECONDS)
-                # Try each relevant candidate (not just the first) and offer the
-                # first that the AUTHORITATIVE applier accepts on a copy.
+                if not vids:
+                    # Relevant support exists but it's IMAGE-only (add_broll takes
+                    # video); surface it instead of falsely reading as "covered".
+                    _manual("Hay imágenes relevantes para este momento — añádelas "
+                            "manualmente (la inserción automática usa video).")
+                    continue
+                # Try each relevant VIDEO candidate; clamp the overlay to the
+                # SELECTED evidence envelope so a sliver observation can't
+                # authorize a long cutaway (Codex review r2). Offer the first the
+                # authoritative applier + gates accept on a copy.
                 chosen = None
-                for c in cands:
+                for c in vids:
+                    env = float(c.get("end_seconds") or 0.0) - float(c.get("start_seconds") or 0.0)
+                    dur = min(window, self._REMEDY_MAX_OVERLAY_SECONDS, env)
+                    if dur < 0.5:
+                        continue   # the observation itself is too short to cover
                     op = {
                         "op": "add_broll", "asset_id": c.get("asset_id"),
-                        "timeline_start_seconds": w0, "duration_seconds": dur,
+                        "timeline_start_seconds": w0,
+                        "duration_seconds": round(dur, 3),
                         "source_start_seconds": float(c.get("start_seconds") or 0.0),
                         "require_evidence_id": c.get("evidence_id"),
                     }
@@ -2762,15 +2843,11 @@ class ProjectService:
                         chosen = (c, op)
                         break
                 if chosen is None:
-                    # There IS relevant footage but none fits here — surface it,
-                    # don't drop it silently (would read as "all covered").
-                    remedies.append({
-                        "remedy_id": None, "beat_id": beat["beat_id"],
-                        "text": beat["text"], "tier": "manual", "op": None,
-                        "advice": "Hay metraje relevante pero no encaja aquí "
-                                  "(solapamiento o poco material) — ajústalo en el chat."})
+                    _manual("Hay metraje relevante pero no encaja aquí "
+                            "(solapamiento o poco material) — ajústalo en el chat.")
                     continue
                 top, op = chosen
+                dur = op["duration_seconds"]
                 # CONTENT-derived id binds the confirmation to THIS remedy (beat
                 # word ids + evidence + asset + range + window), so a re-analysis
                 # that changes the beat under the same revision can't be applied
@@ -2833,10 +2910,11 @@ class ProjectService:
                    for ev in vo_events}
         for anchor_id in anchors:
             a0 = self.load_voiceover_analysis(project_id, anchor_id)
-            if a0 is None or a0.get("stale") or a0.get("pending_cleanup", True):
+            if a0 is None or a0.get("stale") \
+                    or not self._timebase_frozen(project_id, a0):
                 raise ProjectError(
-                    "Revisa y limpia la voz en off antes de ajustar la imagen — "
-                    "el reajuste necesita un tiempo ya fijo")
+                    "Revisa y limpia (o acepta) la voz en off antes de ajustar la "
+                    "imagen — el reajuste necesita un tiempo ya fijo")
         primary = next(
             (t for t in plan.get("tracks", [])
              if t.get("kind") == "video" and t.get("role") in (None, "", "primary")),
@@ -2927,8 +3005,11 @@ class ProjectService:
                 deepcopy(plan), op, project.get("inventory") or {})
             validate_edit_plan(
                 candidate, SCHEMA_DIR / "edit-plan.schema.json", project)
+            # Run the SAME propose-time gates (evidence/lineage/title) on the
+            # copy, so a preview never shows an apply that the gate would refuse.
+            self._gate_op_candidate(project_id, plan, op, candidate)
             return True, ""
-        except (PlanOpError, PlanningError) as exc:
+        except (PlanOpError, PlanningError, ProjectError) as exc:
             return False, str(exc)
 
     def _retime_exposure_ids(
@@ -3517,12 +3598,38 @@ class ProjectService:
             )
         except (PlanOpError, PlanningError) as exc:
             raise ProjectError(str(exc)) from exc
-        # Gate the CANDIDATE the same way render does, at propose time, so a bad
-        # edit never reaches a committed revision (it surfaces as a plain "no
-        # pude" in the chat instead of a render error). SCOPED to the op that
-        # introduces each risk, so an unrelated edit (e.g. music) is not blocked
-        # by a pre-existing title/lineage issue the user didn't touch — render
-        # stays the final backstop for those.
+        self._gate_op_candidate(project_id, plan, op, candidate)
+        proposal_id = uuid.uuid4().hex[:12]
+        # Write the proposal under the same lock apply uses, so a propose and a
+        # concurrent apply cannot interleave on the shared plan-command.json.
+        with self._project_write(project_id):
+            write_json(
+                self.settings.runtime / project_id / "plan-command.json",
+                {
+                    "proposal_id": proposal_id,
+                    "base_revision": int(plan.get("revision", 1)),
+                    "instruction": instruction,
+                    "op": op,
+                    "summary": summary,
+                    "candidate": candidate,
+                },
+            )
+        return {
+            "status": "proposed",
+            "proposal_id": proposal_id,
+            "op": op,
+            "summary": summary,
+            "revision_preview": candidate["revision"],
+        }
+
+    def _gate_op_candidate(
+        self, project_id: str, plan: dict, op: dict, candidate: dict
+    ) -> None:
+        """Gate the CANDIDATE the same way render does, so a bad edit never
+        reaches a committed revision (it surfaces as a plain refusal instead of a
+        render error). SCOPED to the op that introduces each risk. Shared by
+        propose AND the preview dry-run, so a preview reports the SAME feasibility
+        the apply will (Codex review r2)."""
         op_name = op.get("op")
         if op_name == "set_title":
             self._assert_titles_supported(project_id, candidate)
@@ -3586,28 +3693,6 @@ class ProjectService:
                 raise ProjectError(
                     "No pude verificar la evidencia del reajuste — inténtalo de nuevo"
                 ) from exc
-        proposal_id = uuid.uuid4().hex[:12]
-        # Write the proposal under the same lock apply uses, so a propose and a
-        # concurrent apply cannot interleave on the shared plan-command.json.
-        with self._project_write(project_id):
-            write_json(
-                self.settings.runtime / project_id / "plan-command.json",
-                {
-                    "proposal_id": proposal_id,
-                    "base_revision": int(plan.get("revision", 1)),
-                    "instruction": instruction,
-                    "op": op,
-                    "summary": summary,
-                    "candidate": candidate,
-                },
-            )
-        return {
-            "status": "proposed",
-            "proposal_id": proposal_id,
-            "op": op,
-            "summary": summary,
-            "revision_preview": candidate["revision"],
-        }
 
     def plan_restore_revision(self, project_id: str, revision: int) -> dict:
         """Install an archived revision as a NEW revision (roll forward,

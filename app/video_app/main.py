@@ -142,6 +142,10 @@ class VoiceoverCleanupCandidatesRequest(BaseModel):
     event_id: str | None = Field(default=None, max_length=64)
 
 
+class VoiceoverEventRequest(BaseModel):
+    event_id: str | None = Field(default=None, max_length=64)
+
+
 class VoiceoverCleanupRequest(BaseModel):
     event_id: str = Field(min_length=1, max_length=64)
     # Selected candidate ids from a fresh preview (never raw source ranges).
@@ -641,6 +645,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             lambda: projects.voiceover_cleanup_apply(
                 project_id, request.event_id, request.candidate_ids,
                 request.base_revision)
+        )
+
+    @application.post("/api/projects/{project_id}/voiceover/freeze")
+    def voiceover_freeze(project_id: str, request: VoiceoverEventRequest):
+        return project_call(
+            lambda: projects.voiceover_freeze(project_id, request.event_id)
         )
 
     @application.post("/api/projects/{project_id}/voiceover/remedies")

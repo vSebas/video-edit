@@ -642,6 +642,13 @@
               }
             }
           }
+        },
+        "vo_group": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Stable id of the logical voiceover narration this segment belongs to (stamped when Phase B cleanup splits a recording); null/absent for non-voiceover or unsplit events."
         }
       }
     }

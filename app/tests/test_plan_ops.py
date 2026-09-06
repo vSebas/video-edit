@@ -542,6 +542,41 @@ class TestVoiceoverOps:
                 "op": "cleanup_voiceover", "event_id": "vo-01",
                 "remove_ranges": [[0.0, 3.0]]}, self._inventory())
 
+    def test_cleanup_voiceover_recompacts_the_whole_group(self) -> None:
+        # A split voiceover (two vo_group segments); removing filler from the
+        # SECOND segment recompacts the WHOLE group with no gap.
+        plan = _plan()
+        vo = {"track_id": "vo1", "kind": "audio", "role": "voiceover", "events": [
+            {"event_id": "vo-01", "asset_id": "memo", "vo_group": "g",
+             "source_start_seconds": 0.0, "source_end_seconds": 2.0,
+             "timeline_start_seconds": 2.0, "duration_seconds": 2.0,
+             "playback_rate": 1.0, "intent": "voiceover", "observed_content": None,
+             "confidence": 0.9, "reframe": None, "transition_out": None,
+             "text": None, "volume_db": None},
+            {"event_id": "vo-02", "asset_id": "memo", "vo_group": "g",
+             "source_start_seconds": 4.0, "source_end_seconds": 8.0,
+             "timeline_start_seconds": 4.0, "duration_seconds": 4.0,
+             "playback_rate": 1.0, "intent": "voiceover", "observed_content": None,
+             "confidence": 0.9, "reframe": None, "transition_out": None,
+             "text": None, "volume_db": None}]}
+        plan["tracks"].append(vo)
+        inv = {"assets": [{"asset_id": "memo", "media_type": "audio",
+                           "duration_seconds": 8.0}]}
+        cleaned, _ = apply_op(plan, {
+            "op": "cleanup_voiceover", "event_id": "vo-02",
+            "remove_ranges": [[5.0, 6.0]]}, inv)
+        segs = next(t for t in cleaned["tracks"]
+                    if t.get("role") == "voiceover")["events"]
+        # kept source [0-2],[4-5],[6-8] compacted from tl 2 → 2-4, 4-5, 5-7
+        assert [(e["source_start_seconds"], e["source_end_seconds"]) for e in segs] \
+            == [(0.0, 2.0), (4.0, 5.0), (6.0, 8.0)]
+        starts = [e["timeline_start_seconds"] for e in segs]
+        durs = [e["duration_seconds"] for e in segs]
+        assert starts == [2.0, 4.0, 5.0]          # contiguous, no gap
+        assert durs == [2.0, 1.0, 2.0]
+        assert all(e["vo_group"] == "g" for e in segs)   # group id preserved
+        assert segs[0]["event_id"] == "vo-01"            # anchor kept
+
     def test_cleanup_voiceover_refuses_non_frame_aligned_source(self) -> None:
         placed = self._placed_vo()
         vo = next(t for t in placed["tracks"] if t.get("role") == "voiceover")

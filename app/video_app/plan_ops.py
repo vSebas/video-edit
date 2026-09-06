@@ -563,34 +563,45 @@ def _apply_cleanup_voiceover(plan: dict, op: dict, assets: dict) -> str:
     idx = _index_of(events, op["event_id"])
     event = events[idx]
     fps = float(plan["project"]["fps"])
-    src0 = float(event["source_start_seconds"])
-    src1 = float(event["source_end_seconds"])
-    s0 = round(src0 * fps)
-    s1 = round(src1 * fps)
 
-    # Refuse a voiceover whose geometry is NOT already frame-exact at 1x:
-    # nearest-frame rounding would otherwise shift a boundary by a sub-frame
-    # amount, adding or dropping edge audio the user never selected. EVERY
-    # boundary (source start/end, timeline start, duration) must land on a frame,
-    # and the duration must equal the source span to the frame — our own
-    # placement guarantees this, a legacy/hand-authored event may not and must be
-    # re-placed first (Codex review 2026-09-06).
-    rate = float(event.get("playback_rate") or 1.0)
-    tl0 = float(event["timeline_start_seconds"])
-    dur = float(event.get("duration_seconds") or 0.0)
-    tlf = round(tl0 * fps)
-    df = round(dur * fps)
-    if abs(rate - 1.0) > 1e-6:
-        raise PlanOpError(
-            "La limpieza solo admite voz en off a velocidad normal (1x)")
-    if (abs(s0 - src0 * fps) > 1e-4 or abs(s1 - src1 * fps) > 1e-4
-            or abs(tlf - tl0 * fps) > 1e-4 or abs(df - dur * fps) > 1e-4
-            or df != (s1 - s0)):
-        raise PlanOpError(
-            "La voz en off no está alineada a fotogramas — vuelve a colocarla "
-            "antes de limpiarla")
+    # Operate on the whole logical narration (the GROUP), not one segment: a
+    # re-cleanup that removed filler from only a middle segment would leave a
+    # gap that reads as dead air. Instead we take the group's current KEPT source
+    # spans, subtract the new removals, and recompact the entire group back-to-
+    # back from its first timeline start — no gaps, one atomic edit. For an
+    # unsplit voiceover the group is just [event] (Codex review r2).
+    gid = event.get("vo_group")
+    if gid:
+        group = [e for e in events if e.get("vo_group") == gid]
+    else:
+        group = [event]
+    group.sort(key=lambda e: float(e.get("timeline_start_seconds") or 0.0))
 
-    # Reviewed removals, clamped to the event and quantized inward to whole
+    # Every group segment must be frame-exact at 1x, or nearest-frame rounding
+    # would shift a boundary and add/drop edge audio (Codex review).
+    for e in group:
+        s0e = round(float(e["source_start_seconds"]) * fps)
+        s1e = round(float(e["source_end_seconds"]) * fps)
+        for v in ("source_start_seconds", "source_end_seconds",
+                  "timeline_start_seconds", "duration_seconds"):
+            if abs(float(e[v]) * fps - round(float(e[v]) * fps)) > 1e-4:
+                raise PlanOpError(
+                    "La voz en off no está alineada a fotogramas — vuelve a "
+                    "colocarla antes de limpiarla")
+        if abs(float(e.get("playback_rate") or 1.0) - 1.0) > 1e-6 \
+                or round(float(e["duration_seconds"]) * fps) != s1e - s0e:
+            raise PlanOpError(
+                "La voz en off no está alineada a fotogramas — vuelve a "
+                "colocarla antes de limpiarla")
+
+    # The group's CURRENT kept source spans (already exclude any prior removals).
+    kept_frames = sorted(
+        (round(float(e["source_start_seconds"]) * fps),
+         round(float(e["source_end_seconds"]) * fps)) for e in group)
+    lo_all = kept_frames[0][0]
+    hi_all = kept_frames[-1][1]
+
+    # Reviewed removals in ORIGINAL source coords, quantized INWARD to whole
     # frames. A sub-frame removal (floor(end) <= ceil(start)) removes nothing.
     removed_frames: list[tuple[int, int]] = []
     for r in op.get("remove_ranges") or []:
@@ -600,31 +611,36 @@ def _apply_cleanup_voiceover(plan: dict, op: dict, assets: dict) -> str:
             raise PlanOpError("remove_ranges inválido") from exc
         if not (math.isfinite(a) and math.isfinite(b)) or b <= a:
             continue
-        fa = max(s0, math.ceil(a * fps - 1e-6))    # inward: start no earlier
-        fb = min(s1, math.floor(b * fps + 1e-6))   # inward: end no later
+        fa = max(lo_all, math.ceil(a * fps - 1e-6))    # inward: start no earlier
+        fb = min(hi_all, math.floor(b * fps + 1e-6))   # inward: end no later
         if fb > fa:
             removed_frames.append((fa, fb))
     if not removed_frames:
         raise PlanOpError("No hay rangos válidos que quitar")
-
-    # Merge overlaps, then keep the complement within [s0, s1) — every positive
-    # kept frame-interval becomes its own compacted VO segment.
     removed_frames.sort()
-    merged: list[list[int]] = []
+    merged_rm: list[list[int]] = []
     for fa, fb in removed_frames:
-        if merged and fa <= merged[-1][1]:
-            merged[-1][1] = max(merged[-1][1], fb)
+        if merged_rm and fa <= merged_rm[-1][1]:
+            merged_rm[-1][1] = max(merged_rm[-1][1], fb)
         else:
-            merged.append([fa, fb])
-    kept: list[tuple[int, int]] = []
-    cursor = s0
-    for fa, fb in merged:
-        if fa > cursor:
-            kept.append((cursor, fa))
-        cursor = max(cursor, fb)
-    if s1 > cursor:
-        kept.append((cursor, s1))
+            merged_rm.append([fa, fb])
 
+    # kept := (group kept spans) MINUS (removals): subtract the merged removals
+    # from each current kept span, preserving every surviving frame.
+    kept: list[tuple[int, int]] = []
+    for k0, k1 in kept_frames:
+        cursor = k0
+        for fa, fb in merged_rm:
+            if fb <= cursor or fa >= k1:
+                continue
+            if fa > cursor:
+                kept.append((cursor, min(fa, k1)))
+            cursor = max(cursor, fb)
+        if k1 > cursor:
+            kept.append((cursor, k1))
+    kept = [(a, b) for a, b in kept if b > a]
+
+    anchor = group[0]
     used = {e["event_id"] for e in events}
     number = 1
 
@@ -636,19 +652,19 @@ def _apply_cleanup_voiceover(plan: dict, op: dict, assets: dict) -> str:
         used.add(vid)
         return vid
 
-    tl_frame = round(float(event["timeline_start_seconds"]) * fps)
+    tl_frame = round(float(anchor["timeline_start_seconds"]) * fps)
+    group_vo = anchor.get("vo_group") or anchor["event_id"]
     new_events: list[dict] = []
     for f_a, f_b in kept:
         frames = f_b - f_a
         if frames <= 0:
             continue
-        # The FIRST kept segment keeps the parent event_id, so the voiceover keeps
-        # a stable identity anchor (the A0 report keyed to it, "revisar voz en off"
-        # re-selecting it) instead of being orphaned under a fresh id; later
-        # segments get fresh, collision-free ids (Codex review 2026-09-06).
-        eid = event["event_id"] if not new_events else _next_id()
+        # First kept segment keeps the group ANCHOR id (stable identity for the
+        # A0 report + re-review); later segments get fresh ids; all share the
+        # persistent vo_group.
+        eid = anchor["event_id"] if not new_events else _next_id()
         new_events.append({
-            **event, "event_id": eid,
+            **anchor, "event_id": eid, "vo_group": group_vo,
             "source_start_seconds": round(f_a / fps, 6),
             "source_end_seconds": round(f_b / fps, 6),
             "timeline_start_seconds": round(tl_frame / fps, 6),
@@ -657,8 +673,16 @@ def _apply_cleanup_voiceover(plan: dict, op: dict, assets: dict) -> str:
         tl_frame += frames
     if not new_events:
         raise PlanOpError("La limpieza dejaría la voz en off vacía")
-    removed = round((s1 - s0 - sum(e_b - e_a for e_a, e_b in kept)) / fps, 3)
-    events[idx:idx + 1] = new_events
+    old_kept = sum(b - a for a, b in kept_frames)
+    removed = round((old_kept - sum(e_b - e_a for e_a, e_b in kept)) / fps, 3)
+    # Replace the whole group in place (at the anchor's position) with the
+    # recompacted segments.
+    group_ids = {e["event_id"] for e in group}
+    anchor_pos = _index_of(events, anchor["event_id"])
+    track["events"] = (
+        [e for e in events[:anchor_pos] if e["event_id"] not in group_ids]
+        + new_events
+        + [e for e in events[anchor_pos + 1:] if e["event_id"] not in group_ids])
     return (f"Voz en off limpiada: −{removed:g}s en {len(new_events)} "
             f"segmento(s) (la imagen no se movió)")
 
@@ -769,9 +793,23 @@ def _apply_voiceover_retime(plan: dict, op: dict, assets: dict) -> str:
     if isinstance(ids, list):
         video["evidence_ids"] = list(ids)
     # Shortening drops the tail footage's captions [target, old_end) before we
-    # reconcile, so a caption over trimmed footage never survives.
+    # reconcile. Then clamp/drop BY SPAN any caption still crossing the new end —
+    # the midpoint-based drop above can leave a cue that spans the boundary (e.g.
+    # 3.70–4.10 trimmed to 4.00) extending past the project duration (Codex r2).
     if delta_frames < 0:
         _drop_captions_between(plan, target, old_end)
+        survivors = []
+        for cue in _caption_events(plan):
+            cs = float(cue.get("timeline_start_seconds") or 0.0)
+            ce = cs + float(cue.get("duration_seconds") or 0.0)
+            if cs >= target - 1e-6:
+                continue                    # entirely past the new end → drop
+            if ce > target + 1e-6:          # crosses the end → clamp to it
+                cue["duration_seconds"] = round(target - cs, 6)
+            survivors.append(cue)
+        cap = next((t for t in plan["tracks"] if t.get("kind") == "caption"), None)
+        if cap is not None:
+            cap["events"] = survivors
     # The picture end now IS the voiceover target; reconcile every dependent that
     # a duration change affects — the SAME sequence a ripple runs — so the stored
     # plan never claims a fade/dip/title/bed the renderer would have to fix up.

@@ -1173,7 +1173,7 @@ function renderVoiceoverReport(a) {
   const fresh = !a.stale && a.event_id;
   // Cleanup (B) comes first; it's offered whenever the analysis is fresh.
   const cleanupCta = fresh
-    ? `<button class="primary compact" id="vo-cleanup-btn" data-event-id="${escapeHtml(a.event_id)}">🧹 Limpiar muletillas y silencios</button>`
+    ? `<button class="primary compact vo-cleanup-btn" data-event-id="${escapeHtml(a.event_id)}">🧹 Limpiar muletillas y silencios</button>`
     : '';
   // A1/C run only on a FROZEN timebase — once the voiceover has nothing left to
   // clean (matches the server gate; a stale or pending report hides them).
@@ -1181,13 +1181,14 @@ function renderVoiceoverReport(a) {
   const needsCoverage = Array.isArray(a.beats)
     && a.beats.some((b) => b.class === 'available_elsewhere' || b.class === 'gap');
   const remedyCta = frozen && needsCoverage
-    ? `<button class="primary compact" id="vo-remedy-btn" data-event-id="${escapeHtml(a.event_id)}">🎬 Arreglar imagen con metraje del proyecto</button>`
+    ? `<button class="primary compact vo-remedy-btn" data-event-id="${escapeHtml(a.event_id)}">🎬 Arreglar imagen con metraje del proyecto</button>`
     : '';
   const retimeCta = frozen
-    ? '<button class="primary compact" id="vo-retime-btn">⏱️ Ajustar la imagen a la voz en off</button>'
+    ? '<button class="primary compact vo-retime-btn">⏱️ Ajustar la imagen a la voz en off</button>'
     : '';
   const pendingNote = fresh && a.pending_cleanup
-    ? '<p class="muted">Limpia la voz en off para desbloquear los ajustes de imagen (metraje y duración).</p>'
+    ? `<p class="muted">Limpia la voz en off para desbloquear los ajustes de imagen (metraje y duración), o acéptala tal cual.</p>
+       <button class="quick compact vo-freeze-btn" data-event-id="${escapeHtml(a.event_id)}">✔️ Usar tal cual (saltar limpieza)</button>`
     : '';
   return `<div class="vo-report">
     ${staleBanner}
@@ -1369,44 +1370,77 @@ async function voiceoverCleanupFlow(projectId, eventId, panel) {
   }
 }
 
+// Distinct logical narrations on the voiceover track: group by the persisted
+// vo_group (Phase-B split id), else the event's own id; each is represented by
+// its earliest (anchor) segment — the id the A0 report is keyed under.
+function voiceoverNarrations() {
+  const evs = (state.activeProject?.plan?.tracks || [])
+    .flatMap((t) => (t.role === 'voiceover' ? (t.events || []) : []));
+  const groups = new Map();
+  for (const e of evs) {
+    const key = e.vo_group || e.event_id;
+    const cur = groups.get(key);
+    if (!cur || e.timeline_start_seconds < cur.timeline_start_seconds) groups.set(key, e);
+  }
+  return [...groups.values()].sort((a, b) => a.timeline_start_seconds - b.timeline_start_seconds);
+}
+
+function wireVoiceoverReportButtons(box) {
+  box.querySelectorAll('.vo-cleanup-btn').forEach((b) => b.addEventListener('click', (e) =>
+    voiceoverCleanupFlow(state.activeProjectId, e.currentTarget.dataset.eventId, box)));
+  box.querySelectorAll('.vo-remedy-btn').forEach((b) => b.addEventListener('click', (e) =>
+    voiceoverRemediesFlow(state.activeProjectId, e.currentTarget.dataset.eventId, box)));
+  box.querySelectorAll('.vo-retime-btn').forEach((b) => b.addEventListener('click', () =>
+    voiceoverRetimeFlow(state.activeProjectId, box)));
+  box.querySelectorAll('.vo-freeze-btn').forEach((b) => b.addEventListener('click', (e) =>
+    voiceoverFreeze(state.activeProjectId, e.currentTarget.dataset.eventId)));
+}
+
 async function quickVoiceoverReview() {
   const projectId = state.activeProjectId;
-  const voEvents = (state.activeProject?.plan?.tracks || [])
-    .flatMap((t) => (t.role === 'voiceover' ? (t.events || []) : []));
+  const anchors = voiceoverNarrations();
   const box0 = $('#qa-panel');
-  if (!voEvents.length) {
+  if (!anchors.length) {
     if (box0) box0.innerHTML = '<p class="notice">No hay voz en off colocada. Grábala y colócala primero (🎤 Grabar y colocar), luego reviso si el metraje la respalda.</p>';
     return;
   }
-  // Analyze the first placed voiceover (the backend needs an explicit event_id
-  // once there is more than one).
-  const eventId = voEvents[0].event_id;
-  if (box0) box0.innerHTML = `<p class="notice">Transcribiendo y analizando la voz en off${voEvents.length > 1 ? ` (${escapeHtml(eventId)})` : ''}… (puede tardar unos segundos)</p>`;
+  if (box0) box0.innerHTML = `<p class="notice">Transcribiendo y analizando ${anchors.length > 1 ? `${anchors.length} voces en off` : 'la voz en off'}… (puede tardar unos segundos)</p>`;
   try {
-    await runStep(`voiceover/analyze?event_id=${encodeURIComponent(eventId)}`);
-    if (state.activeProjectId !== projectId) return;
-    const { analysis } = await api(`/api/projects/${projectId}/voiceover/analysis`);
-    if (state.activeProjectId !== projectId) return;   // guard after the GET too
-    const report = analysis && analysis.analyses ? analysis.analyses[eventId] : null;
-    const box = $('#qa-panel');   // reacquire — the workspace may have re-rendered
-    if (box) {
-      box.innerHTML = report ? renderVoiceoverReport(report) : '<p class="notice">Sin análisis.</p>';
-      $('#vo-cleanup-btn')?.addEventListener('click', (e) => {
-        const evId = e.currentTarget.dataset.eventId;
-        voiceoverCleanupFlow(state.activeProjectId, evId, box);
-      });
-      $('#vo-remedy-btn')?.addEventListener('click', (e) => {
-        const evId = e.currentTarget.dataset.eventId;
-        voiceoverRemediesFlow(state.activeProjectId, evId, box);
-      });
-      $('#vo-retime-btn')?.addEventListener('click', () => {
-        voiceoverRetimeFlow(state.activeProjectId, box);
-      });
+    // Analyze each narration (each analyze covers its whole split group).
+    for (const a of anchors) {
+      await runStep(`voiceover/analyze?event_id=${encodeURIComponent(a.event_id)}`);
+      if (state.activeProjectId !== projectId) return;
     }
+    const { analysis } = await api(`/api/projects/${projectId}/voiceover/analysis`);
+    if (state.activeProjectId !== projectId) return;
+    const box = $('#qa-panel');
+    if (!box) return;
+    const reports = anchors
+      .map((a) => (analysis && analysis.analyses ? analysis.analyses[a.event_id] : null))
+      .filter(Boolean);
+    if (!reports.length) { box.innerHTML = '<p class="notice">Sin análisis.</p>'; return; }
+    box.innerHTML = reports.map((r, i) =>
+      (reports.length > 1 ? `<p class="eyebrow">Voz en off ${i + 1}</p>` : '')
+      + renderVoiceoverReport(r)).join('<hr class="vo-sep" />');
+    wireVoiceoverReportButtons(box);
   } catch (error) {
     if (state.activeProjectId !== projectId) return;
     const box = $('#qa-panel');
     if (box) box.innerHTML = `<p class="notice error">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+async function voiceoverFreeze(projectId, eventId) {
+  try {
+    await api(`/api/projects/${projectId}/voiceover/freeze`, {
+      method: 'POST', body: JSON.stringify({ event_id: eventId }),
+    });
+    if (state.activeProjectId !== projectId) return;
+    notice('Voz en off aceptada tal cual — ajustes de imagen desbloqueados.');
+    await quickVoiceoverReview();   // re-render so the A1/C actions appear
+  } catch (error) {
+    if (state.activeProjectId !== projectId) return;
+    notice(error.message, true);
   }
 }
 

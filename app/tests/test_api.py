@@ -670,6 +670,11 @@ def test_voiceover_remedies_refuse_until_cleanup_is_done(tmp_path, monkeypatch):
     with pytest.raises(projects_mod.ProjectError, match="[Ll]impia"):
         svc.voiceover_retime_preview(pid)
 
+    # An explicit human "use as-is" freeze unlocks A1/C on this exact recording.
+    svc.voiceover_freeze(pid, "vo-01")
+    svc.voiceover_remedies(pid, "vo-01")          # no longer raises
+    svc.voiceover_retime_preview(pid)             # no longer raises
+
 
 def test_analyze_voiceover_covers_all_segments_of_a_split_group(tmp_path, monkeypatch):
     """After Phase B splits a voiceover, A0 must analyze the WHOLE logical group
