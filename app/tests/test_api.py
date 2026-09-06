@@ -394,7 +394,7 @@ def test_voiceover_remedies_pull_from_pool_and_flag_record(tmp_path, monkeypatch
             {"track_id": "a1", "kind": "audio", "events": [
                 _ev("a01", "clip_intro", 0.0, 0.0, 6.0)]},
             {"track_id": "vo1", "kind": "audio", "role": "voiceover", "events": [
-                _ev("vo-01", "vo_note", 0.0, 0.0, 4.0, intent="voiceover")]},
+                _ev("vo-01", "vo_note", 0.0, 0.0, 2.5, intent="voiceover")]},
         ],
     }
     write_json(pdir / "project.json", {
@@ -535,10 +535,15 @@ def _retime_project(tmp_path, pid, vo_duration, clip_source_available,
     write_json(pdir / "plan" / "edit-plan.json", plan)
     svc = ProjectService(Settings(root=root, runtime=runtime))
 
-    # A fresh, clean (no pending cleanup) A0 report so the retime gate passes.
-    segs = [{"words": [
-        {"word": "Hola", "start_seconds": 0.0, "end_seconds": 0.4},
-        {"word": "mundo.", "start_seconds": 0.4, "end_seconds": 0.9}]}]
+    # A fresh, clean report: speech fills the whole VO window (no long leading or
+    # trailing silence, gaps under the dead-air threshold), so no pending cleanup.
+    ws = []
+    t = 0.0
+    while t < vo_duration - 0.35:
+        ws.append({"word": "palabra", "start_seconds": round(t, 3),
+                   "end_seconds": round(min(t + 0.4, vo_duration), 3)})
+        t += 0.7
+    segs = [{"words": ws}]
     monkeypatch.setattr(speech_mod, "_load_model", lambda size: (object(), "s", "cpu"))
     monkeypatch.setattr(speech_mod, "transcribe_asset", lambda m, p: (segs, {}))
 
@@ -753,32 +758,33 @@ def test_analyze_voiceover_covers_all_segments_of_a_split_group(tmp_path, monkey
     assert "eh" not in " ".join(texts)
 
 
-def test_voiceover_retime_refuses_when_a_track_trails_past_the_voiceover(tmp_path, monkeypatch):
-    """Phase C must not leave black-with-music: if music/titles/B-roll trail past
-    the voiceover end, the retime refuses rather than trimming only the picture."""
+def test_voiceover_retime_refuses_when_broll_trails_past_the_voiceover(tmp_path, monkeypatch):
+    """Phase C refuses when a B-roll cutaway trails past the voiceover end (it
+    would float past the picture) — music/titles are reconciled, but a trailing
+    scene/cutaway is a real conflict the single-clip resize cannot fix."""
     from video_app import projects as projects_mod
 
     svc = _retime_project(tmp_path, "vlog-ctrail", vo_duration=4.0,
                           clip_source_available=10.0, monkeypatch=monkeypatch)
-    # add a music bed that runs to 10s, well past the 4s voiceover
+    # a B-roll overlay that runs to 8s, well past the 4s voiceover
     pdir = svc.settings.runtime / "vlog-ctrail"
     for path in (pdir / "project.json", pdir / "plan" / "edit-plan.json"):
         doc = json.loads(path.read_text())
         plan = doc.get("plan", doc)
         plan["tracks"].append({
-            "track_id": "m1", "kind": "audio", "role": "music", "events": [{
-                "event_id": "mus-01", "asset_id": "song",
-                "source_start_seconds": 0.0, "source_end_seconds": 10.0,
-                "timeline_start_seconds": 0.0, "duration_seconds": 10.0,
-                "playback_rate": 1.0, "intent": "music", "observed_content": None,
+            "track_id": "b1", "kind": "video", "role": "broll", "events": [{
+                "event_id": "bro-01", "asset_id": "clip",
+                "source_start_seconds": 0.0, "source_end_seconds": 8.0,
+                "timeline_start_seconds": 0.0, "duration_seconds": 8.0,
+                "playback_rate": 1.0, "intent": "b-roll", "observed_content": None,
                 "confidence": 1.0, "reframe": None, "transition_out": None,
-                "text": None, "volume_db": -12.0}]})
+                "text": None, "volume_db": None}]})
         path.write_text(json.dumps(doc))
 
     c = svc.voiceover_retime_preview("vlog-ctrail")["candidate"]
-    assert c["action"] == "trim" and c["feasible"] is False   # refused, not black
+    assert c["action"] == "trim" and c["feasible"] is False   # refused, not floating
     with pytest.raises(projects_mod.ProjectError):
-        svc.voiceover_retime_apply("vlog-ctrail", base_revision=c and 2)
+        svc.voiceover_retime_apply("vlog-ctrail", base_revision=2)
 
 
 def test_place_voiceover_from_drive_validates_and_places(tmp_path, monkeypatch):

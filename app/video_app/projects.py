@@ -2402,10 +2402,14 @@ class ProjectService:
         # unsplit voiceover the group is just [event] (Codex review 2026-09-06).
         group_events = self._voiceover_group(plan, event)
 
-        def _seg_words(seg):
+        def _seg_bounds(seg):
             s0 = float(seg.get("source_start_seconds") or 0.0)
             s1 = float(seg.get("source_end_seconds")
                        or asset.get("duration_seconds") or 0.0)
+            return s0, s1
+
+        def _seg_words(seg):
+            s0, s1 = _seg_bounds(seg)
             return [w for w in all_words
                     if w["start_seconds"] >= s0 - 0.05
                     and w["end_seconds"] <= s1 + 0.05]
@@ -2414,11 +2418,18 @@ class ProjectService:
         # pending_cleanup is computed PER SEGMENT — a filler/dead-air detector run
         # over the UNION would re-flag the deliberately-removed gaps between
         # segments as dead air and leave A1 refusing forever (Codex review).
+        # ALSO not-frozen: a segment with no speech, or long leading/trailing
+        # silence relative to its placed source window (the spine would carry
+        # dead air C could retime the picture to) — Codex review r2.
         pending_cleanup = False
         for seg in group_events:
             sw = _seg_words(seg)
             words.extend(sw)
-            if va.voiceover_filler_candidates(sw):
+            s0, s1 = _seg_bounds(seg)
+            lead = (sw[0]["start_seconds"] - s0) if sw else (s1 - s0)
+            trail = (s1 - sw[-1]["end_seconds"]) if sw else 0.0
+            if (va.voiceover_filler_candidates(sw) or not sw
+                    or lead >= va.DEADAIR_SECONDS or trail >= va.DEADAIR_SECONDS):
                 pending_cleanup = True
         transcript_text = " ".join(w["word"] for w in words)
 
@@ -2439,10 +2450,15 @@ class ProjectService:
         except ProviderError:
             resolved_model = model or ""
 
+        # Persist under the group's ANCHOR (its first segment) regardless of which
+        # segment was asked for, so cleanup and the C gate — which look the report
+        # up by the canonical anchor id — always find it (Codex review r2).
+        anchor_id = group_events[0].get("event_id") if group_events \
+            else event.get("event_id")
         base = {
             "schema_version": va.SCHEMA_VERSION,
             "generated_at": utc_now(),
-            "event_id": event.get("event_id"),
+            "event_id": anchor_id,
             "voiceover_asset_id": vo_asset_id,
             "timebase": "raw", "actionable": False, "provisional": True,
             "coverage_complete": coverage_complete,
@@ -2830,6 +2846,14 @@ class ProjectService:
         fps = float(plan["project"]["fps"])
         vo_end = max(float(e["timeline_start_seconds"]) + float(e["duration_seconds"])
                      for e in vo_events)
+        # The voiceover end is the timing SPINE — it must land exactly on a frame,
+        # or rounding it to the target would silently drop/add sub-frame audio at
+        # the tail. Our placement is frame-exact; refuse a legacy/hand-authored VO
+        # that isn't rather than round it away (Codex review r2).
+        if abs(vo_end * fps - round(vo_end * fps)) > 1e-4:
+            raise ProjectError(
+                "La voz en off no termina en un fotograma exacto — vuelve a "
+                "colocarla antes de ajustar la imagen")
         target = round(round(vo_end * fps) / fps, 6)
         events = primary["events"]
         last = max(events, key=lambda e: float(e["timeline_start_seconds"])
@@ -2856,6 +2880,17 @@ class ProjectService:
         # only the exposed delta would leave the pre-existing part unsupported and
         # fail at apply (Codex review 2026-09-06). We stamp the full covering set.
         if delta_frames > 0:
+            # Don't LAUNDER a revoked claim: stamping the new covering set would
+            # drop the tail's original ids, so if one of THEM was rejected after
+            # compile, the whole scene should be reconsidered — refuse rather than
+            # let another observation quietly re-authorize it (Codex review r2).
+            if plan.get("lineage_contract"):
+                rejected = self._evidence_review_sets(project_id).get("rejected") or set()
+                if any(eid in rejected for eid in (last.get("evidence_ids") or [])):
+                    candidate["reason"] = (
+                        "El último clip usa una afirmación rechazada — revísala "
+                        "antes de estirar la imagen.")
+                    return plan, revision, candidate
             ids = self._retime_exposure_ids(
                 project_id, plan, last.get("asset_id"),
                 float(last["source_start_seconds"]),
