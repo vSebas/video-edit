@@ -792,6 +792,101 @@ def test_voiceover_retime_refuses_when_broll_trails_past_the_voiceover(tmp_path,
         svc.voiceover_retime_apply("vlog-ctrail", base_revision=2)
 
 
+def _contract_retime_project(tmp_path, pid, env_end, monkeypatch):
+    """A CONTRACT plan (lineage_contract) with a 6s clip + 10s voiceover, and E1
+    approved over clip [0, env_end] — for exercising the retime coverage gate."""
+    import video_app.speech as speech_mod
+    from video_app import projects as projects_mod
+    from video_app.config import Settings
+    from video_app.projects import ProjectService
+
+    root = tmp_path / pid
+    runtime = root / "runtime"
+    pdir = runtime / pid
+    pdir.mkdir(parents=True)
+    (root / "footage").mkdir()
+    (root / "footage" / "vo.m4a").write_bytes(b"x")
+
+    def _ev(eid, aid, s0, tl, d, intent="scene", eids=None):
+        e = {"event_id": eid, "asset_id": aid, "source_start_seconds": s0,
+             "source_end_seconds": round(s0 + d, 6), "timeline_start_seconds": tl,
+             "duration_seconds": d, "playback_rate": 1.0, "intent": intent,
+             "observed_content": None, "confidence": 0.9, "reframe": None,
+             "transition_out": None, "text": None, "volume_db": None}
+        if eids is not None:
+            e["evidence_ids"] = eids
+        return e
+
+    plan = {"schema_version": "edit-plan.v1", "revision": 2,
+            "generated_at": "2026-09-06T00:00:00Z", "benchmark_id": "t",
+            "concept_id": "c1", "lineage_contract": True,
+            "project": {"width": 1080, "height": 1920, "fps": 30,
+                        "duration_seconds": 12.0, "background_color": "black"},
+            "tracks": [
+                {"track_id": "v1", "kind": "video",
+                 "events": [_ev("v01", "clip", 0.0, 0.0, 6.0, eids=["E1"])]},
+                {"track_id": "a1", "kind": "audio",
+                 "events": [_ev("a01", "clip", 0.0, 0.0, 6.0)]},
+                {"track_id": "vo1", "kind": "audio", "role": "voiceover",
+                 "events": [_ev("vo-01", "vo_note", 0.0, 0.0, 10.0, "voiceover")]}]}
+    write_json(pdir / "project.json", {
+        "schema_version": "video-app-project.v1", "project_id": pid, "name": "X",
+        "plan": plan, "inventory": {"assets": [
+            {"asset_id": "vo_note", "media_type": "audio", "sha256": "s",
+             "source_path": "footage/vo.m4a", "duration_seconds": 10.0},
+            {"asset_id": "clip", "media_type": "video",
+             "source_path": "footage/c.mp4", "duration_seconds": 12.0}]}})
+    (pdir / "plan").mkdir()
+    write_json(pdir / "plan" / "edit-plan.json", plan)
+    svc = ProjectService(Settings(root=root, runtime=runtime))
+    ws = [{"word": "w", "start_seconds": round(t * 0.7, 3),
+           "end_seconds": round(t * 0.7 + 0.4, 3)} for t in range(14)]
+    monkeypatch.setattr(speech_mod, "_load_model", lambda size: (object(), "s", "cpu"))
+    monkeypatch.setattr(speech_mod, "transcribe_asset", lambda m, p: ([{"words": ws}], {}))
+
+    class _FC:
+        def __init__(self, c):
+            pass
+
+        def chat(self, m, **k):
+            return {"content": json.dumps({"beats": [
+                {"beat_id": "b001", "class": "nonvisual", "evidence_ids": []}]})}
+
+    monkeypatch.setattr(projects_mod, "resolve_provider", lambda *a, **k: None)
+    monkeypatch.setattr(projects_mod, "ChatClient", _FC)
+    monkeypatch.setattr(svc, "approved_evidence", lambda p: [])
+    monkeypatch.setattr(svc, "_evidence_review_sets", lambda p: {
+        "approved": {"E1": "cap"}, "rejected": set(), "pending": set(),
+        "envelopes": {"E1": ("clip", 0.0, env_end)}})
+    svc.analyze_voiceover(pid, "vo-01")
+    return svc
+
+
+def test_contract_retime_requires_full_coverage_of_new_span(tmp_path, monkeypatch):
+    """Codex counterexample: evidence over only [0,6] must NOT authorize extending
+    a [0,6] clip to [0,10] (60% overall coverage would let 4 unobserved seconds
+    render). Full coverage allows and applies the extension."""
+    # A) uncovered [6,10] -> infeasible, refused as unverified footage
+    svcA = _contract_retime_project(tmp_path, "ctrA", env_end=6.0,
+                                    monkeypatch=monkeypatch)
+    cA = svcA.voiceover_retime_preview("ctrA")["candidate"]
+    assert cA["action"] == "extend" and cA["feasible"] is False
+    assert "evidencia" in cA["reason"]
+
+    # B) fully covered -> feasible with E1 stamped, and applies end-to-end
+    svcB = _contract_retime_project(tmp_path, "ctrB", env_end=10.5,
+                                    monkeypatch=monkeypatch)
+    cB = svcB.voiceover_retime_preview("ctrB")["candidate"]
+    assert cB["feasible"] is True
+    assert "E1" in (cB["op"].get("evidence_ids") or [])
+    svcB.voiceover_retime_apply("ctrB", base_revision=2)
+    plan = svcB.get_project("ctrB")["plan"]
+    vid = next(t for t in plan["tracks"]
+               if t["kind"] == "video" and t.get("role") in (None, "", "primary"))
+    assert vid["events"][0]["source_end_seconds"] == 10.0
+    assert plan["project"]["duration_seconds"] == 10.0
+
+
 def test_place_voiceover_from_drive_validates_and_places(tmp_path, monkeypatch):
     """Loading a voice file from Drive copies exactly ONE listed audio file into
     the project and routes it through the normal placement — and refuses any path

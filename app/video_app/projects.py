@@ -891,10 +891,17 @@ class ProjectService:
         return ranges
 
     @staticmethod
-    def _strict_union_cover(spans: list[tuple[float, float]], start: float, end: float) -> bool:
+    def _strict_union_cover(
+        spans: list[tuple[float, float]], start: float, end: float,
+        fraction: float | None = None,
+    ) -> bool:
         """Union coverage of [start,end] with NO edge tolerance — a stricter test
         than `envelopes_cover`, so a sliver-overlap observation can't ground a
-        short cutaway via the gate's 0.5s edge slop (Codex review 2026-09-06)."""
+        short cutaway via the gate's 0.5s edge slop (Codex review 2026-09-06).
+        Default threshold is the planner's MIN_SUPPORTED_FRACTION; pass
+        `fraction=1.0` for FULL coverage (used by the retime, where every newly
+        exposed second must be observed — 60% would let unobserved footage
+        render; Codex review final)."""
         length = end - start
         if length <= 0:
             return False
@@ -908,8 +915,11 @@ class ProjectService:
                 cursor = high
             if cursor >= end:
                 break
-        from .planning import MIN_SUPPORTED_FRACTION
-        return covered / length >= MIN_SUPPORTED_FRACTION
+        if fraction is None:
+            from .planning import MIN_SUPPORTED_FRACTION
+            fraction = MIN_SUPPORTED_FRACTION
+        # tiny epsilon absorbs float accumulation on frame-aligned coords
+        return covered + 1e-6 >= length * fraction
 
     def _resolve_broll_evidence(
         self, project_id: str, plan: dict, target_event_ids: set[str]
@@ -3083,7 +3093,11 @@ class ProjectService:
             if (env := envelopes.get(eid)) is not None
             and env[0] == (asset_id or "") and env[2] > src0 and env[1] < src1)
         spans = [(envelopes[eid][1], envelopes[eid][2]) for eid in covering]
-        return covering if self._strict_union_cover(spans, src0, src1) else None
+        # FULL coverage (fraction=1.0): every second the retime would show must be
+        # observed — the planner's 60% threshold is for compile-time scene support,
+        # never for footage a server edit newly exposes (Codex review final).
+        return covering if self._strict_union_cover(
+            spans, src0, src1, fraction=1.0) else None
 
     def voiceover_retime_preview(self, project_id: str) -> dict:
         """Phase C preview: the one voiceover-led retime candidate for this cut,
