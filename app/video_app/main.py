@@ -559,6 +559,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 project_id, request.stage, request.provider, request.model)}
         )
 
+    @application.post("/api/projects/{project_id}/voiceover/analyze", status_code=202)
+    def analyze_voiceover(project_id: str, event_id: str | None = None):
+        """A0 preflight: transcribe the placed voiceover and classify each beat's
+        footage support. Slow (on-demand ASR) → runs as a job."""
+        project_call(lambda: projects.get_project(project_id))
+        return jobs.submit(
+            "voiceover_analysis",
+            project_id,
+            lambda: projects.analyze_voiceover(project_id, event_id),
+            fingerprint=f"vo-analysis:{event_id}",
+        )
+
+    @application.get("/api/projects/{project_id}/voiceover/analysis")
+    def voiceover_analysis(project_id: str):
+        return project_call(
+            lambda: {"analysis": projects.load_voiceover_analysis(project_id)}
+        )
+
     @application.get("/api/projects/{project_id}/chat")
     def chat_history(project_id: str):
         return project_call(

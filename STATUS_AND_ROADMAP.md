@@ -238,6 +238,41 @@ verdicts is in `app/VALIDATION.md`. What shipped beyond the base chat:
   offline silent-refresh, chat token metering, per-platform-tolerant music
   discovery, fail-closed op-param validation (TypeError/OverflowError/NaN).
 
+### Voiceover-driven editing — Phase 1 LIVE (2026-09-06)
+
+Treat a RECORDED voiceover as an editing SIGNAL that checks and (later) drives the
+cut. Design settled with two Codex second-opinion rounds; the pipeline is
+timebase-gated: **A0 raw provisional preflight → B filler cleanup (or explicit
+skip) freezes the timebase → A1 canonical report + actionable remedies → C atomic
+voiceover-led retime.** Principles: the VO proves the creator's INTENT/words, not
+that footage depicts them; footage is never invented to match narration (an
+unsupported beat is a flagged GAP); the three questions — *does matching footage
+exist / is it currently visible / does it substantiate the narration* — stay
+separate; semantic support is a MODEL suggestion over an ENUMERATED approved-
+evidence set (never the temporal 60% grounding gate).
+
+**Built (Phase 1 / A0):** `voiceover_analysis.py` (deterministic beats, timeline
+mapping, filler detection, basis-ID fingerprints) + `projects.analyze_voiceover`
+(on-demand per-asset ASR of the placed VO — the VO's own transcript is NOT added
+to the footage evidence pool — beats classified `current_match` /
+`available_elsewhere` / `ambiguous` / `gap` / `nonvisual` by one grounded model
+call constrained to enumerated ids). Read-only, provisional, persisted as a
+non-citable `voiceover-analysis.v1` sidecar with VO-hash / plan-revision /
+evidence-fingerprint basis IDs. `POST …/voiceover/analyze` (job) + `GET
+…/voiceover/analysis`; surfaced as a "🎙️ Revisar voz en off" chat quick-action
+with per-beat cards. Tested (`test_voiceover_analysis`,
+`test_analyze_voiceover_classifies_beats_and_excludes_own_audio`).
+
+**Pending (Phases B, C) — the tiered remedy hierarchy + retime:** the actionable
+remedies per weak beat are `extend` (lengthen the current clip into its own
+already-observed source) → `pull` (bring relevant approved footage from the pool
+as B-roll/replace) → `record` (true gap, LAST resort). These plus the atomic
+`voiceover_retime` candidate run only AFTER filler cleanup (a VO-lane-only ripple,
+picture untouched) or an explicit "usar sin limpiar" freezes the timebase — with
+the basis-ID invalidation model (re-record/trim invalidates all; cleanup
+invalidates beats→downstream; an extension's newly-exposed delta must itself be
+covered by approved evidence). Not yet built.
+
 ### Deferred (honest, as of 2026-09-06)
 
 Not built, with reasons — none are correctness gaps in what shipped:

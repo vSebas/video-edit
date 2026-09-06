@@ -867,6 +867,24 @@ input[type="file"] {
   border: 1px solid var(--danger); border-radius: 999px; padding: 2px 8px; }
 .chat-disclaimer { font-size: 11.5px; line-height: 1.45; margin: 2px 0 0; }
 
+/* Voiceover review (A0 preflight report) */
+.vo-report { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.vo-beat { border: 1px solid var(--line); border-left-width: 3px; border-radius: 10px;
+  padding: 9px 11px; background: var(--panel-2); }
+.vo-beat.vo-ok { border-left-color: var(--good); }
+.vo-beat.vo-warn { border-left-color: var(--amber); }
+.vo-beat.vo-bad { border-left-color: var(--danger); }
+.vo-beat.vo-muted { border-left-color: var(--line); }
+.vo-beat-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.vo-badge { font-size: 11.5px; font-weight: 800; letter-spacing: .04em; }
+.vo-ok .vo-badge { color: var(--good); }
+.vo-warn .vo-badge { color: var(--amber); }
+.vo-bad .vo-badge { color: var(--danger); }
+.vo-muted .vo-badge { color: var(--muted); }
+.vo-beat-text { margin: 4px 0 2px; font-size: 13.5px; line-height: 1.5; }
+.vo-why { font-size: 12px; margin: 2px 0; }
+.vo-cands { margin: 3px 0 0; padding-left: 16px; color: var(--muted); font-size: 12px; }
+
 /* Model picker */
 .model-picker-slot { display: flex; flex-direction: column; gap: 10px; }
 .model-row { display: flex; align-items: center; justify-content: space-between;

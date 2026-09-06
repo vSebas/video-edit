@@ -684,6 +684,7 @@ function editWorkspace(project) {
         lo que vio del metraje — revísalos antes de grabar.</p>
         <div class="quick-actions">
           <button class="quick" id="qa-cleanup">🧹 Afinar diálogo</button>
+          <button class="quick" id="qa-vo-review">🎙️ Revisar voz en off</button>
           <button class="quick" id="qa-captions">💬 Subtítulos</button>
           <button class="quick" id="qa-story">📖 Cambiar de historia</button>
         </div>
@@ -1051,6 +1052,92 @@ async function restoreRevision(revision) {
 }
 
 /* ---- quick actions ---- */
+
+/* Voiceover review (A0 preflight, read-only): transcribe the placed VO, split
+   into beats, and show per-beat whether the footage supports it. Provisional —
+   actionable remedies (extend/pull/retime) come in later phases, after cleanup
+   or an explicit skip freezes the VO timebase. */
+const VO_BEAT_CLASS = {
+  current_match: ['✓', 'ok', 'Ya se ve'],
+  available_elsewhere: ['↺', 'warn', 'Hay metraje relevante sin usar'],
+  ambiguous: ['?', 'warn', 'Ambiguo'],
+  gap: ['⚠', 'bad', 'Posible falta de imagen'],
+  nonvisual: ['—', 'muted', 'Narración (no necesita imagen)'],
+  unknown: ['…', 'muted', 'Sin determinar (revisión incompleta)'],
+};
+
+function renderVoiceoverReport(a) {
+  if (!a) return '<p class="notice">Sin análisis todavía.</p>';
+  if (a.status === 'no_speech') {
+    return '<p class="notice">No se detectó voz en la grabación colocada. ¿Es la nota correcta?</p>';
+  }
+  if (!Array.isArray(a.beats) || !a.beats.length) {
+    return '<p class="notice">Sin análisis todavía.</p>';
+  }
+  const beats = a.beats.map((b) => {
+    const [icon, cls, label] = VO_BEAT_CLASS[b.class] || ['?', 'muted', b.class];
+    const cands = (b.candidates || [])
+      .map((c) => `<li>${escapeHtml(c.caption || c.asset_id || '')}${c.visible ? ' <span class="muted">(ya visible)</span>' : ''}</li>`).join('');
+    let extra = '';
+    if (b.class === 'gap') {
+      // A0 is provisional — flag, don't yet tell the user to record (that's A1).
+      extra = '<p class="muted">Nada en tu material parece respaldarlo. Confírmalo tras limpiar la voz en off.</p>';
+    } else if (b.class !== 'current_match' && b.class !== 'nonvisual' && cands) {
+      extra = `<p class="muted">Metraje relevante disponible:</p><ul class="vo-cands">${cands}</ul>`;
+    }
+    return `<div class="vo-beat vo-${cls}">
+      <div class="vo-beat-head">
+        <span class="vo-badge">${icon} ${escapeHtml(label)}</span>
+        <span class="muted">${fmtTime(b.timeline_start_seconds)}</span>
+      </div>
+      <p class="vo-beat-text">«${escapeHtml(b.text)}»</p>
+      ${b.rationale ? `<p class="muted vo-why">${escapeHtml(b.rationale)}</p>` : ''}
+      ${extra}
+    </div>`;
+  }).join('');
+  const deadair = (a.deadair_candidates || []).length;
+  const staleBanner = a.stale
+    ? `<p class="notice error">⚠ Análisis desactualizado (${(a.stale_reasons || []).map(escapeHtml).join(', ')}). Vuelve a analizar.</p>`
+    : '';
+  const incomplete = a.coverage_complete === false
+    ? '<p class="muted">Nota: hay mucho metraje; algunos beats quedan «sin determinar» en vez de marcarse como falta.</p>'
+    : '';
+  return `<div class="vo-report">
+    ${staleBanner}
+    <p class="muted">${escapeHtml(a.note || '')}</p>
+    ${incomplete}
+    ${deadair ? `<p class="muted">🧹 ${deadair} silencio(s) largo(s) en la voz en off — la limpieza y el ajuste de tiempos llegan en una fase próxima.</p>` : ''}
+    ${beats}
+  </div>`;
+}
+
+async function quickVoiceoverReview() {
+  const projectId = state.activeProjectId;
+  const voEvents = (state.activeProject?.plan?.tracks || [])
+    .flatMap((t) => (t.role === 'voiceover' ? (t.events || []) : []));
+  const box0 = $('#qa-panel');
+  if (!voEvents.length) {
+    if (box0) box0.innerHTML = '<p class="notice">No hay voz en off colocada. Grábala y colócala primero (🎤 Grabar y colocar), luego reviso si el metraje la respalda.</p>';
+    return;
+  }
+  // Analyze the first placed voiceover (the backend needs an explicit event_id
+  // once there is more than one).
+  const eventId = voEvents[0].event_id;
+  if (box0) box0.innerHTML = `<p class="notice">Transcribiendo y analizando la voz en off${voEvents.length > 1 ? ` (${escapeHtml(eventId)})` : ''}… (puede tardar unos segundos)</p>`;
+  try {
+    await runStep(`voiceover/analyze?event_id=${encodeURIComponent(eventId)}`);
+    if (state.activeProjectId !== projectId) return;
+    const { analysis } = await api(`/api/projects/${projectId}/voiceover/analysis`);
+    if (state.activeProjectId !== projectId) return;   // guard after the GET too
+    const report = analysis && analysis.analyses ? analysis.analyses[eventId] : null;
+    const box = $('#qa-panel');   // reacquire — the workspace may have re-rendered
+    if (box) box.innerHTML = report ? renderVoiceoverReport(report) : '<p class="notice">Sin análisis.</p>';
+  } catch (error) {
+    if (state.activeProjectId !== projectId) return;
+    const box = $('#qa-panel');
+    if (box) box.innerHTML = `<p class="notice error">${escapeHtml(error.message)}</p>`;
+  }
+}
 
 async function quickCleanup() {
   const projectId = state.activeProjectId;
@@ -1802,6 +1889,7 @@ function wireHandlers() {
   // Edición — one assistant chat (discussion + voiceover + confirm-gated edits)
   $('#revision-toggle')?.addEventListener('click', toggleRevisionHistory);
   $('#qa-cleanup')?.addEventListener('click', quickCleanup);
+  $('#qa-vo-review')?.addEventListener('click', quickVoiceoverReview);
   $('#qa-captions')?.addEventListener('click', quickCaptions);
   $('#qa-story')?.addEventListener('click', () => { state.workspace = 'story'; renderProject(); });
   $('#rerender-now')?.addEventListener('click', quickRerender);
@@ -2290,6 +2378,7 @@ const JOB_LABELS = {
   render: 'Renderizando la vista previa',
   editable_exports: 'Preparando archivos de editor',
   plan_revision: 'Recortando según tu instrucción',
+  voiceover_analysis: 'Analizando la voz en off',
 };
 
 async function loadProject(projectId, { silent = false } = {}) {

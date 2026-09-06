@@ -1176,3 +1176,26 @@ were implemented:
   scene; music `suggest` returns project-bound candidates without mutating and
   no longer navigates on a stale response; the PCM guard is deployed in the
   release binary (rebuilt under resource caps, 3m42s, no OOM). Suite: **305**.
+
+## Voiceover-driven editing — Phase 1 / A0 preflight (2026-09-06)
+
+Read-only analysis that classifies a placed voiceover's beats against approved
+footage evidence (design in STATUS → "Voiceover-driven editing"). Deterministic
+backbone in `voiceover_analysis.py` (beat segmentation at pauses/sentence ends,
+source→timeline mapping, filler detection, basis-ID fingerprints);
+`projects.analyze_voiceover` transcribes the placed VO ON DEMAND (per-asset, not a
+whole-project ASR rerun), excludes the VO's OWN asset from the candidate pool (so
+"I went swimming" can't ground itself), and runs ONE grounded model call that may
+only rank/label an enumerated approved-evidence set — invented ids and off-menu
+classes are dropped server-side. Persisted as a non-citable `voiceover-analysis.v1`
+sidecar (raw timebase, `actionable:false` — provisional per Codex). Endpoints
+`POST …/voiceover/analyze` (job) + `GET …/voiceover/analysis`; chat quick-action
+"🎙️ Revisar voz en off".
+
+- **Verified:** unit — `test_voiceover_analysis` (beat split on pause+sentence
+  end, timeline mapping, scene overlap, filler word/phrase/pause detection,
+  invalidation fingerprints); integration — `test_analyze_voiceover_classifies
+  _beats_and_excludes_own_audio` (ASR + model stubbed: beats classified, invented
+  evidence id dropped, the VO's own transcript absent from the candidate catalog,
+  raw/provisional artifact persisted + reloadable). Full suite: **312 passed**.
+  **Codex review pending** (about to run).   re-verified. **Codex review: 4 rounds converged — 'A0 is now a sound, fail-closed foundation for B/C.'** Suite: **313 passed**. Phases B and C not yet built.

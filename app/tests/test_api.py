@@ -110,6 +110,112 @@ def test_pwa_shell_is_served(tmp_path):
     assert c.get("/icons/icon-192.png").status_code == 200
 
 
+def test_analyze_voiceover_classifies_beats_and_excludes_own_audio(tmp_path, monkeypatch):
+    """A0 preflight: transcribes the placed VO, segments beats, classifies each
+    against approved footage evidence — with the VO's OWN asset excluded from the
+    candidate pool — and persists a raw/provisional voiceover-analysis.v1."""
+    import video_app.speech as speech_mod
+    from video_app import projects as projects_mod
+    from video_app.config import Settings
+    from video_app.projects import ProjectService
+
+    root = tmp_path / "root"
+    runtime = root / "runtime"
+    pid = "vlog-va"
+    pdir = runtime / pid
+    pdir.mkdir(parents=True)
+    (root / "footage" / pid).mkdir(parents=True)
+    (root / "footage" / pid / "vo.m4a").write_bytes(b"fake")
+
+    plan = {
+        "schema_version": "edit-plan.v1", "revision": 3, "concept_id": "c1",
+        "project": {"width": 1080, "height": 1920, "fps": 30,
+                    "duration_seconds": 12.0, "background_color": "black"},
+        "tracks": [
+            {"kind": "video", "events": [
+                {"event_id": "v01", "asset_id": "clip_cafe",
+                 "timeline_start_seconds": 0.0, "duration_seconds": 6.0,
+                 "source_start_seconds": 0.0, "source_end_seconds": 6.0,
+                 "observed_content": "Coffee poured at a cafe counter."}]},
+            {"kind": "audio", "role": "voiceover", "events": [
+                {"event_id": "vo-01", "asset_id": "vo_note",
+                 "timeline_start_seconds": 0.0, "duration_seconds": 4.0,
+                 "source_start_seconds": 0.0, "source_end_seconds": 4.0}]},
+        ],
+    }
+    write_json(pdir / "project.json", {
+        "schema_version": "video-app-project.v1", "project_id": pid, "name": "VA",
+        "plan": plan,
+        "inventory": {"assets": [
+            {"asset_id": "vo_note", "media_type": "audio", "sha256": "abc",
+             "source_path": f"footage/{pid}/vo.m4a", "duration_seconds": 4.0},
+            {"asset_id": "clip_cafe", "media_type": "video",
+             "source_path": f"footage/{pid}/cafe.mp4", "duration_seconds": 6.0}]},
+    })
+
+    segs = [{"words": [
+        {"word": "Tomé", "start_seconds": 0.0, "end_seconds": 0.4},
+        {"word": "café.", "start_seconds": 0.4, "end_seconds": 0.9},
+        {"word": "Después", "start_seconds": 2.5, "end_seconds": 3.0},
+        {"word": "nadé.", "start_seconds": 3.0, "end_seconds": 3.6},
+    ]}]
+    monkeypatch.setattr(speech_mod, "_load_model", lambda size: (object(), "small", "cpu"))
+    monkeypatch.setattr(speech_mod, "transcribe_asset", lambda m, p: (segs, {}))
+
+    captured = {}
+
+    class FakeClient:
+        def __init__(self, config):
+            pass
+
+        def chat(self, messages, **kwargs):
+            captured["system"] = messages[0]["content"]
+            captured["user"] = messages[1]["content"]
+            return {"content": json.dumps({"beats": [
+                {"beat_id": "b001", "class": "current_match",
+                 "evidence_ids": ["ev1"], "rationale": "café shot is shown"},
+                {"beat_id": "b002", "class": "gap",
+                 "evidence_ids": ["c999"], "rationale": "no swimming footage"}]})}
+
+    monkeypatch.setattr(projects_mod, "resolve_provider", lambda *a, **k: None)
+    monkeypatch.setattr(projects_mod, "ChatClient", FakeClient)
+
+    svc = ProjectService(Settings(root=root, runtime=runtime))
+    # Pool includes the VO's OWN audio asset AND a non-visual audio memo — both
+    # must be excluded (footage-only, self-exclusion).
+    monkeypatch.setattr(svc, "approved_evidence", lambda pid_: [
+        {"evidence_id": "ev1", "asset_id": "clip_cafe", "caption": "coffee at a cafe",
+         "start_seconds": 0.0, "end_seconds": 5.0, "evidence_type": "visual"},
+        {"evidence_id": "evX", "asset_id": "vo_note", "caption": "I went swimming",
+         "start_seconds": 0.0, "end_seconds": 4.0, "evidence_type": "speech"},
+    ])
+
+    report = svc.analyze_voiceover(pid)
+
+    assert report["schema_version"] == "voiceover-analysis.v1"
+    assert report["status"] == "ok"
+    assert report["timebase"] == "raw" and report["actionable"] is False
+    assert report["basis"]["plan_revision"] == 3
+    assert report["coverage_complete"] is True
+    assert [b["beat_id"] for b in report["beats"]] == ["b001", "b002"]
+    b1, b2 = report["beats"]
+    # current_match is COHERENT: ev1 is the approved id on the visible café scene.
+    assert b1["text"] == "Tomé café." and b1["class"] == "current_match"
+    assert b1["candidates"][0]["evidence_id"] == "ev1"
+    assert b1["candidates"][0]["visible"] is True
+    assert b1["timeline_start_seconds"] == 0.0
+    assert b1["word_ids"]                      # canonical lineage carried
+    # gap survives only because the pool is COMPLETE and the invented id dropped.
+    assert b2["class"] == "gap" and b2["candidates"] == []
+    # the VO's own transcript is nowhere in the model input; footage caption is.
+    assert "I went swimming" not in captured["user"]
+    assert "I went swimming" not in captured["system"]
+    assert "coffee at a cafe" in captured["user"]
+    # persisted keyed by event, reloadable, and stamped fresh.
+    loaded = svc.load_voiceover_analysis(pid, "vo-01")
+    assert loaded["event_id"] == "vo-01" and loaded["stale"] is False
+
+
 def _chat_fixture(tmp_path):
     """A project with an approved plan (primary video track + a B-roll track we
     assert is EXCLUDED from the grounded scene map) and a concept."""
