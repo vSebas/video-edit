@@ -3265,7 +3265,9 @@ class ProjectService:
                 result = client.chat(
                     [{"role": "system", "content": system},
                      {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
-                    json_object=True, temperature=0.2, max_tokens=1800,
+                    # roomy for reasoning models (deepseek burns budget on
+                    # reasoning_content before the JSON answer)
+                    json_object=True, temperature=0.2, max_tokens=4000,
                 )
                 raw = result.get("content") if isinstance(result, dict) else None
                 parsed = parse_json_content(raw if isinstance(raw, str) else "")
@@ -3380,8 +3382,13 @@ class ProjectService:
             client = ChatClient(resolve_provider(
                 provider, model or PLANNER_DEFAULT_MODELS.get(provider)
             ))
+            # 4000, not ~900: deepseek-v4-pro is a REASONING model — its
+            # reasoning_content spends the budget BEFORE the visible answer, and
+            # a tight cap returns empty content with finish_reason "length". The
+            # provider client also retries empty content with a 4x budget, but a
+            # roomy first attempt avoids burning a round-trip on every message.
             result = client.chat(
-                conversation, json_object=True, temperature=0.4, max_tokens=900
+                conversation, json_object=True, temperature=0.4, max_tokens=4000
             )
             raw = result["content"]
         except ProviderError as exc:

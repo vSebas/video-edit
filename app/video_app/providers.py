@@ -17,6 +17,17 @@ class ProviderError(RuntimeError):
         self.telemetry = telemetry
 
 
+class _EmptyContent(ProviderError):
+    """A 200 response whose message content is empty. Retryable: either a
+    transient provider hiccup, or a REASONING model (e.g. deepseek-v4-pro) that
+    burned the whole max_tokens budget on reasoning_content and got cut off
+    (finish_reason "length") before emitting the answer."""
+
+    def __init__(self, message: str, finish_reason: str | None = None) -> None:
+        super().__init__(message)
+        self.finish_reason = finish_reason
+
+
 PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
     "qwen": {
         "api_key_env": "DASHSCOPE_API_KEY",
@@ -301,9 +312,11 @@ class AnthropicClient:
                         if part.get("type") == "text"
                     )
                     if not text.strip():
-                        raise ProviderError(
-                            f"{self.config.model} returned empty content"
-                        )
+                        # transient — retry instead of failing the whole call
+                        last_error = f"{self.config.model} returned empty content"
+                        if attempt < self._max_attempts:
+                            time.sleep(2**attempt)
+                        continue
                     usage = body.get("usage") or {}
                     return {
                         "content": text,
@@ -391,6 +404,22 @@ class ChatClient:
                     try:
                         body = response.json()
                         result = self._extract(body)
+                    except _EmptyContent as exc:
+                        # RETRYABLE: empty content is either transient or a
+                        # reasoning model (deepseek-v4-pro) whose max_tokens was
+                        # consumed by reasoning_content before the answer. On
+                        # "length", grow the budget 4x (capped) so the retry can
+                        # actually finish instead of failing identically.
+                        last_error = str(exc)
+                        if exc.finish_reason == "length":
+                            cap_key = ("max_completion_tokens"
+                                       if self.config.provider == "openai"
+                                       else "max_tokens")
+                            current = payload.get(cap_key) or 4000
+                            payload[cap_key] = min(int(current) * 4, 16000)
+                        if attempt < self._max_attempts:
+                            time.sleep(2**attempt)
+                        continue
                     except (ProviderError, ValueError) as exc:
                         raise ProviderError(
                             str(exc),
@@ -440,8 +469,13 @@ class ChatClient:
                 f"Unexpected {self.config.provider} response shape"
             ) from exc
         if not isinstance(content, str) or not content.strip():
-            raise ProviderError(
-                f"{self.config.provider}/{self.config.model} returned empty content"
+            finish = choice.get("finish_reason")
+            detail = (" (finish_reason=length — el presupuesto de tokens se "
+                      "agotó en el razonamiento)") if finish == "length" else ""
+            raise _EmptyContent(
+                f"{self.config.provider}/{self.config.model} returned empty "
+                f"content{detail}",
+                finish_reason=finish,
             )
         usage = data.get("usage") or {}
         return {
