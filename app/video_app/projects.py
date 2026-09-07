@@ -2001,6 +2001,53 @@ class ProjectService:
         prefs = project.get("model_prefs")
         return prefs if isinstance(prefs, dict) else {}
 
+    def models_in_use(self, project_id: str) -> dict:
+        """Per stage: the model a completed run ACTUALLY used (from recorded
+        provenance — the concepts document, the analysis run manifests) and the
+        EFFECTIVE model the next run would use (pref or default). An ongoing
+        project can't retroactively change what already ran, so the UI shows
+        this read-only truth instead of hiding the picker silently."""
+        self.get_project(project_id)  # 404 unknown projects cleanly
+        out: dict[str, dict] = {}
+        for stage, spec in MODEL_STAGES.items():
+            provider, model = self._resolve_stage_model(
+                project_id, stage, None, None)
+            out[stage] = {"label": spec["label"],
+                          "next": {"provider": provider, "model": model},
+                          "used": None}
+        # Actually-used: concepts provenance (the generated stories document).
+        concepts_path = (self.settings.runtime / project_id
+                         / "analysis" / "concepts.json")
+        if concepts_path.is_file():
+            try:
+                prov = (load_json(concepts_path).get("provenance") or {})
+                if prov.get("model"):
+                    out["concepts"]["used"] = {
+                        "provider": prov.get("provider"),
+                        "model": prov.get("model"),
+                    }
+            except Exception:  # noqa: BLE001 - display-only, never block
+                pass
+        # Actually-used: the newest visual-analysis run manifest; ASR rides
+        # along as an informative extra (always local).
+        try:
+            for manifest in self._current_run_manifests(project_id):
+                prov = manifest.get("provider") or {}
+                if prov.get("adapter") == "owned-live-visual" and prov.get("model"):
+                    out["visual"]["used"] = {
+                        "provider": prov.get("id"), "model": prov.get("model")}
+            for manifest in self._semantic_run_manifests(project_id):
+                prov = manifest.get("provider") or {}
+                if prov.get("adapter") == "local-asr" and prov.get("model"):
+                    out["asr"] = {"label": "Habla (transcripción)",
+                                  "next": None,
+                                  "used": {"provider": "local",
+                                           "model": prov.get("model")}}
+                    break
+        except Exception:  # noqa: BLE001 - display-only, never block
+            pass
+        return {"stages": out}
+
     def set_model_pref(
         self, project_id: str, stage: str, provider: str, model: str
     ) -> dict:

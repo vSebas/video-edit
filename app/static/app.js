@@ -386,6 +386,7 @@ function storyWorkspace(project) {
       </form>
       <p class="muted stateless-hint">Cada petición es independiente (no es un chat):
       describe la idea completa en un solo mensaje.</p>
+      <div id="models-in-use"></div>
       <div id="style-section"></div>
     </section>
     ${needsCheckSection()}
@@ -697,6 +698,7 @@ function editWorkspace(project) {
       <div class="scene-strip">${sceneStrip(project)}</div>
       ${overlayLanes(project)}
     </section>
+    <div id="models-in-use"></div>
     <input type="file" id="vo-capture-input"
       accept=".m4a,.wav,.mp3,audio/mp4,audio/x-m4a,audio/wav,audio/mpeg" capture hidden />
     <input type="file" id="vo-file-input"
@@ -776,6 +778,38 @@ async function loadModelPicker() {
     });
   } catch (error) {
     slot.innerHTML = `<p class="notice error">No se pudieron cargar los modelos: ${escapeHtml(error.message)}</p>`;
+  }
+}
+
+/* Read-only "models in use" line for ONGOING projects: past stages can't be
+   re-run on a different model retroactively, so instead of hiding the picker
+   silently we show what each stage ACTUALLY used (recorded provenance) and flag
+   when the next run would use something different (changeable in Diagnóstico). */
+async function loadModelsInUse() {
+  const slot = $('#models-in-use');
+  if (!slot) return;
+  const projectId = state.activeProjectId;
+  try {
+    const { stages } = await api(`/api/projects/${projectId}/models-in-use`);
+    if (state.activeProjectId !== projectId) return;
+    const name = (m) => m ? (m.model || m.provider || '?') : null;
+    const parts = Object.values(stages).map((s) => {
+      const used = name(s.used);
+      const next = name(s.next);
+      if (used && next && used !== next) {
+        return `<span class="model-chip" title="Se usó ${escapeHtml(used)}; el próximo re-run usará ${escapeHtml(next)}">${escapeHtml(s.label)}: <strong>${escapeHtml(used)}</strong> → ${escapeHtml(next)}</span>`;
+      }
+      const shown = used || next;
+      if (!shown) return '';
+      const tag = used ? '' : ' <span class="muted">(aún sin usar)</span>';
+      return `<span class="model-chip" title="${used ? 'Modelo usado por esta etapa' : 'Modelo que usará esta etapa'}">${escapeHtml(s.label)}: <strong>${escapeHtml(shown)}</strong>${tag}</span>`;
+    }).filter(Boolean);
+    if (!parts.length) { slot.innerHTML = ''; return; }
+    slot.innerHTML = `<p class="muted models-in-use">🧠 Modelos — ${parts.join(' · ')}
+      <span class="muted">(cámbialos para futuros re-runs en Diagnóstico)</span></p>`;
+  } catch (error) {
+    if (state.activeProjectId !== projectId) return;
+    slot.innerHTML = '';   // display-only: never block the workspace on failure
   }
 }
 
@@ -2191,6 +2225,7 @@ function wireHandlers() {
   if ($('#style-section')) loadStyleSection();
   if ($('#step-times')) loadStepTimes();
   if ($('#model-picker')) loadModelPicker();
+  if ($('#models-in-use')) loadModelsInUse();
 
   // Edición — one assistant chat (discussion + voiceover + confirm-gated edits)
   $('#revision-toggle')?.addEventListener('click', toggleRevisionHistory);

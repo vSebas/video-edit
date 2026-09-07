@@ -887,6 +887,9 @@ input[type="file"] {
 
 /* Model picker */
 .model-picker-slot { display: flex; flex-direction: column; gap: 10px; }
+.models-in-use { font-size: 12.5px; line-height: 1.9; margin-top: 12px; }
+.model-chip { background: var(--panel-2, rgba(127,127,127,.12)); border-radius: 8px;
+  padding: 2px 8px; white-space: nowrap; }
 .model-row { display: flex; align-items: center; justify-content: space-between;
   gap: 12px; flex-wrap: wrap; }
 .model-row > span { color: var(--muted); font-size: 13px; font-weight: 600; }

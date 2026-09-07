@@ -612,6 +612,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 project_id, request.stage, request.provider, request.model)}
         )
 
+    @application.get("/api/projects/{project_id}/models-in-use")
+    def models_in_use(project_id: str):
+        return project_call(lambda: projects.models_in_use(project_id))
+
     @application.post("/api/projects/{project_id}/voiceover/analyze", status_code=202)
     def analyze_voiceover(project_id: str, event_id: str | None = None):
         """A0 preflight: transcribe the placed voiceover and classify each beat's
