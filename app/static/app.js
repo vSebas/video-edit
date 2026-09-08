@@ -1169,39 +1169,22 @@ async function chatDriveVoiceover(index) {
   }
 }
 
-/* Multi-part narration from Drive: place each selected note back-to-back, in
-   the order shown — part N+1 starts exactly where part N ended (read from the
-   refreshed plan after each placement). One render at the end. */
+/* Multi-part narration from Drive: place the selected notes in tick order.
+   Sequencing is SERVER-side (`sequence: true` appends each part after the
+   voiceover lane's current end), so the client sends the draft start and
+   nothing else — no local cursors, no per-part refetches. */
 async function placeVoiceoverPartsFromDrive(projectId, remotePaths, draft) {
   try {
-    // Start after EVERYTHING already on the voiceover lane, read FRESH from the
-    // server — the device's local snapshot can be stale (parts placed from
-    // another device, or an earlier interrupted run) and a stale cursor causes
-    // "Overlaps voiceover vo-02" (user report 2026-09-08, from the phone).
-    const fresh = await api(`/api/projects/${projectId}`);
-    if (state.activeProjectId !== projectId) return;
-    const ends = (fresh.plan?.tracks || [])
-      .filter((t) => t.role === 'voiceover')
-      .flatMap((t) => t.events || [])
-      .map((e) => e.timeline_start_seconds + e.duration_seconds);
-    let cursor = Math.max(draft.start_seconds, ...(ends.length ? ends : [0]));
     for (let i = 0; i < remotePaths.length; i += 1) {
       setBusy('Colocando la voz en off por partes',
         remotePaths.map((_, j) => `Parte ${j + 1}`), i, projectId);
       await api(`/api/projects/${projectId}/voiceover/place-from-drive`, {
         method: 'POST',
-        // sequence:true = the SERVER appends after the lane end if our cursor
-        // is stale — collisions become impossible regardless of client state.
-        body: JSON.stringify({ remote_path: remotePaths[i], start_seconds: cursor, sequence: true }),
+        body: JSON.stringify({ remote_path: remotePaths[i],
+                               start_seconds: draft.start_seconds,
+                               sequence: true }),
       });
       if (state.activeProjectId !== projectId) { clearBusyIfOwner(projectId); return; }
-      // the next part starts where the voiceover lane now ends
-      const project = await api(`/api/projects/${projectId}`);
-      const voEvents = (project.plan?.tracks || [])
-        .filter((t) => t.role === 'voiceover')
-        .flatMap((t) => t.events || []);
-      cursor = Math.max(cursor,
-        ...voEvents.map((e) => e.timeline_start_seconds + e.duration_seconds));
     }
     clearBusyIfOwner(projectId);
     if (state.activeProjectId !== projectId) return;

@@ -1118,6 +1118,55 @@ def test_import_drive_folder_updates_existing_project(tmp_path, monkeypatch):
     assert "nuevo.mp4" in names
 
 
+def test_drive_place_sequence_appends_after_the_lane(tmp_path, monkeypatch):
+    """sequence=True makes the SERVER append after the voiceover lane's current
+    end — clients send the draft start and stay dumb (the device-side cursors
+    this replaces kept colliding on stale state, 2026-09-08)."""
+    from video_app import projects as projects_mod
+    from video_app.config import Settings
+    from video_app.projects import ProjectService
+
+    root = tmp_path / "root"
+    runtime = root / "runtime"
+    pid = "vlog-seq"
+    (runtime / pid).mkdir(parents=True)
+    (root / "footage" / pid).mkdir(parents=True)
+    write_json(runtime / pid / "project.json", {
+        "schema_version": "video-app-project.v1", "project_id": pid,
+        "name": "S", "source_directory": f"footage/{pid}",
+        "plan": {"tracks": [{"kind": "audio", "role": "voiceover", "events": [
+            # the phantom-float lane: end sums to 10.600000000000001
+            {"event_id": "vo-01", "asset_id": "a", "timeline_start_seconds": 0.0,
+             "duration_seconds": 5.933333},
+            {"event_id": "vo-02", "asset_id": "b",
+             "timeline_start_seconds": 5.933333, "duration_seconds": 4.666667}]}]},
+        "inventory": {"assets": []}})
+    svc = ProjectService(Settings(root=root, runtime=runtime))
+    monkeypatch.setattr(svc, "drive_voice_files", lambda: [
+        {"path": "x/p3.m4a", "name": "p3.m4a", "bytes": 1, "modified": "z"}])
+
+    captured = {}
+
+    def fake_place(project_id, source_path, start, cap):
+        captured["start"] = start
+        return {"status": "plan_ready"}
+
+    def fake_run(cmd, **kwargs):
+        if cmd[:2] == ["rclone", "copyto"]:
+            Path(cmd[3]).write_bytes(b"v")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(svc, "place_voiceover", fake_place)
+    monkeypatch.setattr(projects_mod.subprocess, "run", fake_run)
+
+    # requested at 0.0, but the lane already ends at ~10.6 → server appends
+    svc.place_voiceover_from_drive(pid, "x/p3.m4a", 0.0, sequence=True)
+    assert captured["start"] >= 10.6
+    # without sequence, the requested start is honored verbatim
+    svc.place_voiceover_from_drive(pid, "x/p3.m4a", 0.0)
+    assert captured["start"] == 0.0
+
+
 def test_rename_project_changes_display_name_only(tmp_path):
     """Renaming changes the display name; the project_id (slug keying runtime,
     footage and OpenTake state) never moves. Blank/oversized names are refused."""
