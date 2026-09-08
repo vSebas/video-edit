@@ -326,7 +326,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         saved: list[Path] = []
         for upload in files:
             suffix = Path(upload.filename or "clip.mp4").suffix.lower()
-            if suffix not in {".mp4", ".mov", ".m4v", ".jpg", ".jpeg", ".png", ".m4a", ".wav", ".mp3"}:
+            # audio set includes what browser MediaRecorders emit: audio/mp4
+            # (.m4a on iOS) and audio/webm|ogg (Chrome/Firefox)
+            if suffix not in {".mp4", ".mov", ".m4v", ".jpg", ".jpeg", ".png",
+                              ".m4a", ".wav", ".mp3", ".webm", ".ogg", ".aac",
+                              ".flac"}:
                 continue
             safe_name = re.sub(
                 r"[^A-Za-z0-9._-]", "_", upload.filename or f"clip{len(saved)}{suffix}"

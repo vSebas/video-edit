@@ -892,6 +892,16 @@ input[type="file"] {
 /* Model picker */
 .model-picker-slot { display: flex; flex-direction: column; gap: 10px; }
 .models-in-use { font-size: 12.5px; line-height: 1.9; margin-top: 12px; }
+.vo-recorder-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.55);
+  display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.vo-recorder { background: var(--panel, #1c1c22); border-radius: 14px;
+  padding: 22px 26px; max-width: 420px; width: 90%; text-align: center;
+  box-shadow: 0 12px 40px rgba(0,0,0,.4); }
+.vo-recorder-title { font-weight: 700; margin-bottom: 6px; }
+.vo-recorder-timer { font-size: 34px; font-variant-numeric: tabular-nums;
+  margin: 10px 0; animation: vo-pulse 1.2s ease-in-out infinite; }
+.vo-recorder-actions { display: flex; gap: 10px; justify-content: center; }
+@keyframes vo-pulse { 50% { opacity: .55; } }
 .model-chip { background: var(--panel-2, rgba(127,127,127,.12)); border-radius: 8px;
   padding: 2px 8px; white-space: nowrap; }
 .model-row { display: flex; align-items: center; justify-content: space-between;

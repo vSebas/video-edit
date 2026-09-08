@@ -1018,9 +1018,79 @@ async function dismissChatProposal(index) {
    then place it as a voiceover at the drafted range — routed through the same
    confirm-gated add_voiceover op. */
 // Load the voice note three ways — all end at the same confirm-gated
-// add_voiceover placement: record on the phone mic, pick an existing audio file
-// from the phone, or copy one out of Drive.
-function chatRecordVoiceover(index) { chatPickVoiceover(index, '#vo-capture-input'); }
+// add_voiceover placement: record on the mic IN THE PAGE (a real voice-note
+// recorder — the old capture-attribute input opened the CAMERA on phones), pick
+// an existing audio file, or copy one out of Drive.
+function chatRecordVoiceover(index) {
+  const draft = state.chat?.messages?.[index]?.voiceover_draft;
+  if (!draft) return;
+  if (navigator.mediaDevices?.getUserMedia && window.MediaRecorder) {
+    recordVoiceNote({ ...draft, projectId: state.activeProjectId });
+    return;
+  }
+  // No in-page recording support: fall back to the OS capture input.
+  chatPickVoiceover(index, '#vo-capture-input');
+}
+
+/* Audio-only recorder overlay: mic permission → record with a live timer →
+   stop → place through the same flow as a picked file. Audio format follows
+   MediaRecorder support: audio/mp4 (.m4a, iOS/Safari) or audio/webm (Chrome/
+   Firefox — backend + ffmpeg accept both). */
+async function recordVoiceNote(draft) {
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch {
+    notice('No hay permiso de micrófono — usa 📁 Archivo o habilita el micrófono.', true);
+    return;
+  }
+  const pick = [['audio/mp4', 'm4a'], ['audio/webm;codecs=opus', 'webm'], ['audio/webm', 'webm']]
+    .find(([mime]) => MediaRecorder.isTypeSupported(mime)) || [undefined, 'webm'];
+  const recorder = new MediaRecorder(stream, pick[0] ? { mimeType: pick[0] } : undefined);
+  const chunks = [];
+  recorder.addEventListener('dataavailable', (e) => { if (e.data.size) chunks.push(e.data); });
+
+  const overlay = document.createElement('div');
+  overlay.className = 'vo-recorder-overlay';
+  overlay.innerHTML = `
+    <div class="vo-recorder">
+      <p class="vo-recorder-title">🎙️ Grabando voz en off</p>
+      <p class="muted">${escapeHtml(draft.text || '')}</p>
+      <p class="vo-recorder-timer" id="vo-rec-timer">0:00</p>
+      <div class="vo-recorder-actions">
+        <button class="primary" id="vo-rec-stop">■ Terminar y colocar</button>
+        <button class="ghost" id="vo-rec-cancel">Cancelar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const startedAt = Date.now();
+  const timer = setInterval(() => {
+    const s = Math.floor((Date.now() - startedAt) / 1000);
+    const el = overlay.querySelector('#vo-rec-timer');
+    if (el) el.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  }, 250);
+
+  const cleanup = () => {
+    clearInterval(timer);
+    stream.getTracks().forEach((t) => t.stop());
+    overlay.remove();
+  };
+  overlay.querySelector('#vo-rec-cancel').addEventListener('click', () => {
+    recorder.stop();   // discard: the stop handler checks the cancelled flag
+    overlay.dataset.cancelled = '1';
+  });
+  overlay.querySelector('#vo-rec-stop').addEventListener('click', () => recorder.stop());
+  recorder.addEventListener('stop', async () => {
+    const cancelled = overlay.dataset.cancelled === '1';
+    cleanup();
+    if (cancelled || !chunks.length) return;
+    const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
+    const file = new File(chunks, `voz-${stamp}.${pick[1]}`,
+      { type: pick[0] || 'audio/webm' });
+    await placeVoiceoverFile(file, draft);
+  });
+  recorder.start();
+}
 function chatFileVoiceover(index) { chatPickVoiceover(index, '#vo-file-input'); }
 
 function chatPickVoiceover(index, inputSelector) {
@@ -1094,6 +1164,10 @@ async function onVoiceoverFilePicked(event) {
   const draft = state.pendingVoiceover;
   state.pendingVoiceover = null;
   if (!file || !draft) return;
+  await placeVoiceoverFile(file, draft);
+}
+
+async function placeVoiceoverFile(file, draft) {
   if (draft.projectId !== state.activeProjectId) {
     notice('Cambiaste de proyecto — vuelve a pedir la voz en off.', true);
     return;
