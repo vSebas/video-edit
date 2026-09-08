@@ -5,7 +5,7 @@
  * responses — a cached cut/plan/render would show a stale review, exactly what
  * the design warns against. Those always hit the network.
  */
-const CACHE = 'vlog-shell-v2';
+const CACHE = 'vlog-shell-v3';
 
 self.addEventListener('install', (event) => {
   // Best-effort precache of the shell. cache.add() REJECTS on a non-2xx (e.g. a

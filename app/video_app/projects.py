@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import uuid
 from contextlib import contextmanager
 from copy import deepcopy
@@ -5063,11 +5064,24 @@ class ProjectService:
         """Audio files anywhere in the Drive inbox — so a voice note recorded on
         the phone and dropped in Drive can be placed as a voiceover WITHOUT being
         a whole project folder. Newest first; the returned `path` is the only
-        token the placement accepts (guards against traversal)."""
-        result = subprocess.run(
-            ["rclone", "lsjson", "-R", "--files-only", self.DRIVE_INBOX],
-            capture_output=True, text=True, timeout=60,
-        )
+        token the placement accepts (guards against traversal). Cached for a
+        short window: every part of a multi-part placement re-validates against
+        this list, and re-running rclone per part both crawls all of Drive and
+        can TIME OUT into a 500 (user report 2026-09-08)."""
+        cached = getattr(self, "_drive_voice_cache", None)
+        if cached and time.monotonic() - cached[0] < 45:
+            return cached[1]
+        try:
+            result = subprocess.run(
+                ["rclone", "lsjson", "-R", "--files-only", self.DRIVE_INBOX],
+                capture_output=True, text=True, timeout=60,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ProjectError(
+                "Drive tardó demasiado en responder — reintenta en unos "
+                "segundos") from exc
+        except OSError as exc:
+            raise ProjectError(f"Drive no disponible: {exc}") from exc
         if result.returncode:
             raise ProjectError(
                 f"Drive no disponible: {result.stderr.strip()[-200:]}")
@@ -5081,6 +5095,7 @@ class ProjectService:
                     "modified": entry.get("ModTime") or "",
                 })
         files.sort(key=lambda f: f["modified"], reverse=True)
+        self._drive_voice_cache = (time.monotonic(), files[:50])
         return files[:50]
 
     def place_voiceover_from_drive(
@@ -5116,10 +5131,16 @@ class ProjectService:
         """Folders waiting in the Drive VlogInbox, with import status,
         content size, and a receiving/ready signal so the phone can watch
         its own Drive upload arrive."""
-        result = subprocess.run(
-            ["rclone", "lsjson", "-R", "--files-only", self.DRIVE_INBOX],
-            capture_output=True, text=True, timeout=60,
-        )
+        try:
+            result = subprocess.run(
+                ["rclone", "lsjson", "-R", "--files-only", self.DRIVE_INBOX],
+                capture_output=True, text=True, timeout=60,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ProjectError(
+                "Drive tardó demasiado en responder — reintenta") from exc
+        except OSError as exc:
+            raise ProjectError(f"Drive inbox unavailable: {exc}") from exc
         if result.returncode:
             raise ProjectError(f"Drive inbox unavailable: {result.stderr.strip()[-200:]}")
         existing = {p["project_id"] for p in self.list_projects()}
