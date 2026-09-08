@@ -1829,6 +1829,7 @@ function mediaWorkspace(project) {
       <div class="section-header">
         <div><span class="eyebrow">Metraje</span><h2>${media.length} archivos en este vlog</h2></div>
       </div>
+      ${unanalyzedBanner(project)}
       ${project.footage_summary ? `
         <p class="footage-summary">🎬 ${escapeHtml(project.footage_summary)}</p>` : ''}
       <p class="muted folder-row">Carpeta:
@@ -2355,8 +2356,17 @@ async function addClipsToProject(event) {
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.detail || `La subida falló (${response.status})`);
-    notice(`${payload.added.length} archivo(s) agregados. Re-analiza (Diagnóstico) para usarlos en historias.`);
-    await loadProject(state.activeProjectId);
+    notice(`${payload.added.length} archivo(s) agregados.`);
+    const projectId = state.activeProjectId;
+    await loadProject(projectId);
+    // Same behavior as the Drive download: freshly added VISUAL clips chain the
+    // incremental analysis right away so they become usable without hunting for
+    // a button. Voice notes skip it (they're transcribed when placed).
+    const visual = (payload.added || []).some((name) =>
+      !/\.(m4a|mp3|wav|aac|ogg|opus|flac)$/i.test(name));
+    if (visual && state.activeProjectId === projectId) {
+      await analyzeNewClips(projectId);
+    }
   } catch (error) {
     notice(error.message, true);
   }
