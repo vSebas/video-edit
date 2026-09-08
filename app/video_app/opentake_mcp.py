@@ -60,7 +60,11 @@ class OpenTakeMcp:
                     ]
                     body = events[-1] if events else ""
         except OSError as exc:
-            raise OpenTakeMcpError(f"OpenTake MCP unreachable: {exc}") from exc
+            raise OpenTakeMcpError(
+                "OpenTake no está abierto (o su servidor MCP no responde) — "
+                "abre OpenTake con este proyecto y vuelve a intentarlo. "
+                f"[{type(exc).__name__}]"
+            ) from exc
         return json.loads(body) if body.strip() else None
 
     def _rpc(self, method: str, params: dict) -> dict:
