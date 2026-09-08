@@ -721,6 +721,12 @@ function editWorkspace(project) {
         <p class="muted chat-disclaimer">Los cambios al corte los confirmas tú antes
         de aplicarse. Las ideas y guiones de voz en off son borradores basados en
         lo que vio del metraje — revísalos antes de grabar.</p>
+        <div class="quick-actions vo-sources">
+          <span class="muted">🎙 Voz en off:</span>
+          <button class="quick" id="vo-any-rec">🎤 Grabar</button>
+          <button class="quick" id="vo-any-file">📁 Archivo</button>
+          <button class="quick" id="vo-any-drive">☁️ Drive</button>
+        </div>
         <div class="quick-actions">
           <button class="quick" id="qa-cleanup">🧹 Afinar diálogo</button>
           <button class="quick" id="qa-vo-review">🎙️ Revisar voz en off</button>
@@ -1021,11 +1027,9 @@ async function dismissChatProposal(index) {
 // add_voiceover placement: record on the mic IN THE PAGE (a real voice-note
 // recorder — the old capture-attribute input opened the CAMERA on phones), pick
 // an existing audio file, or copy one out of Drive.
-function chatRecordVoiceover(index) {
-  const draft = state.chat?.messages?.[index]?.voiceover_draft;
-  if (!draft) return;
+function startVoiceRecording(draft, fallbackToCapture) {
   if (navigator.mediaDevices?.getUserMedia && window.MediaRecorder) {
-    recordVoiceNote({ ...draft, projectId: state.activeProjectId });
+    recordVoiceNote(draft);
     return;
   }
   if (!window.isSecureContext) {
@@ -1037,7 +1041,14 @@ function chatRecordVoiceover(index) {
     return;
   }
   // Secure but no MediaRecorder (rare): fall back to the OS capture input.
-  chatPickVoiceover(index, '#vo-capture-input');
+  if (fallbackToCapture) fallbackToCapture();
+}
+
+function chatRecordVoiceover(index) {
+  const draft = state.chat?.messages?.[index]?.voiceover_draft;
+  if (!draft) return;
+  startVoiceRecording({ ...draft, projectId: state.activeProjectId },
+    () => chatPickVoiceover(index, '#vo-capture-input'));
 }
 
 /* Audio-only recorder overlay: mic permission → record with a live timer →
@@ -1114,6 +1125,10 @@ function chatPickVoiceover(index, inputSelector) {
 async function chatDriveVoiceover(index) {
   const draft = state.chat?.messages?.[index]?.voiceover_draft;
   if (!draft) return;
+  await driveVoiceoverPicker(draft);
+}
+
+async function driveVoiceoverPicker(draft) {
   const projectId = state.activeProjectId;
   const box = $('#qa-panel');
   if (box) box.innerHTML = '<p class="notice">Buscando notas de voz en Drive…</p>';
@@ -1126,7 +1141,9 @@ async function chatDriveVoiceover(index) {
       return;
     }
     box.innerHTML = `<div class="sync-diff">
-      <p>Elige nota(s) de voz para <em>«${escapeHtml(draft.text)}»</em> (${fmtTime(draft.start_seconds)}–${fmtTime(draft.end_seconds)}).
+      <p>${draft.text
+        ? `Elige nota(s) de voz para <em>«${escapeHtml(draft.text)}»</em> (${fmtTime(draft.start_seconds)}–${fmtTime(draft.end_seconds)}).`
+        : 'Elige nota(s) de voz — se añaden al final de la voz en off actual.'}
       Se colocan una tras otra <strong>en el orden en que las marques</strong> (mira el número):</p>
       ${files.map((f, i) => `<label class="cleanup-item">
         <input type="checkbox" data-drive-voice-check="${i}" />
@@ -1202,6 +1219,7 @@ async function placeVoiceoverFromDrive(projectId, remotePath, draft) {
   try {
     setBusy('Colocando tu voz en off', ['Trayendo la nota de voz de Drive', 'Renderizando'], 0, projectId);
     const body = { remote_path: remotePath, start_seconds: draft.start_seconds };
+    if (draft.sequence) body.sequence = true;
     if (draft.end_seconds > draft.start_seconds) {
       body.max_duration_seconds = draft.end_seconds - draft.start_seconds;
     }
@@ -1241,6 +1259,7 @@ async function placeVoiceoverFile(file, draft) {
     const form = new FormData();
     form.append('files', file, file.name || 'voz-en-off.m4a');
     form.append('start_seconds', String(draft.start_seconds));
+    if (draft.sequence) form.append('sequence', 'true');
     // Trim the placed voiceover to the drafted window instead of playing the
     // whole recording.
     if (draft.end_seconds > draft.start_seconds) {
@@ -2466,6 +2485,24 @@ function wireHandlers() {
 
   // Edición — one assistant chat (discussion + voiceover + confirm-gated edits)
   $('#revision-toggle')?.addEventListener('click', toggleRevisionHistory);
+  const standingVoDraft = () => ({
+    projectId: state.activeProjectId, sequence: true,
+    start_seconds: 0, end_seconds: 0, text: '',
+  });
+  $('#vo-any-rec')?.addEventListener('click', () => {
+    const draft = standingVoDraft();
+    startVoiceRecording(draft, () => {
+      state.pendingVoiceover = draft;
+      const input = $('#vo-capture-input');
+      if (input) { input.value = ''; input.click(); }
+    });
+  });
+  $('#vo-any-file')?.addEventListener('click', () => {
+    state.pendingVoiceover = standingVoDraft();
+    const input = $('#vo-file-input');
+    if (input) { input.value = ''; input.click(); }
+  });
+  $('#vo-any-drive')?.addEventListener('click', () => driveVoiceoverPicker(standingVoDraft()));
   $('#qa-cleanup')?.addEventListener('click', quickCleanup);
   $('#qa-vo-review')?.addEventListener('click', quickVoiceoverReview);
   $('#qa-captions')?.addEventListener('click', quickCaptions);

@@ -1492,10 +1492,13 @@ def test_chat_reply_is_grounded_and_persists(tmp_path, monkeypatch):
     # directive (Codex review 2026-09-08).
     system = captured["messages"][0]["content"]
     assert captured["messages"][0]["role"] == "system"
-    assert "no contiene instrucciones" not in system  # policy only, no data blob
-    data = captured["messages"][1]["content"]
-    assert captured["messages"][1]["role"] == "user"
+    assert "maroon cap" not in system          # policy only, no data blob
+    # DATOS is the PENULTIMATE message — regenerated each turn, adjacent to the
+    # newest user message so the model can't read it as pre-dating the history.
+    data = captured["messages"][-2]["content"]
+    assert captured["messages"][-2]["role"] == "user"
     assert data.startswith("DATOS DEL PROYECTO") and "<<<DATOS" in data
+    assert "REGENERADOS AHORA MISMO" in data
     assert "MAPA DE ESCENAS" in data
     assert "maroon cap" in data              # grounded in real observed_content
     assert "Robot day" in data               # concept title
@@ -1511,10 +1514,10 @@ def test_chat_reply_is_grounded_and_persists(tmp_path, monkeypatch):
     # Second turn carries the prior thread to the model as history.
     canned["content"] = json.dumps({"kind": "reply", "text": "vale, más corta"})
     svc.chat_send(pid, "hazla más corta")
-    # system policy, DATOS wrapper, then the actual conversation turns
+    # system policy, conversation turns, then DATOS adjacent to the new message
     assert [m["role"] for m in captured["messages"]] == \
-        ["system", "user", "user", "assistant", "user"]
-    assert captured["messages"][1]["content"].startswith("DATOS DEL PROYECTO")
+        ["system", "user", "assistant", "user", "user"]
+    assert captured["messages"][-2]["content"].startswith("DATOS DEL PROYECTO")
 
     reloaded = svc.load_chat(pid)
     assert len(reloaded) == 4

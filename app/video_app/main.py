@@ -450,6 +450,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         files: list[UploadFile] = File(...),
         start_seconds: float = Form(...),
         max_duration_seconds: float | None = Form(None),
+        sequence: bool = Form(False),
     ):
         """'Grabar y colocar': save a recorded voice note into the project and
         place it as a voiceover at the drafted start (trimmed to the drafted
@@ -476,7 +477,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         saved_source_path = str(saved[0].relative_to(current_settings.root))
         return project_call(
             lambda: projects.place_voiceover(
-                project_id, saved_source_path, start_seconds, max_duration_seconds)
+                project_id, saved_source_path, start_seconds,
+                max_duration_seconds, sequence=sequence)
         )
 
     @application.get("/api/projects/{project_id}/voiceover/drive-files")
