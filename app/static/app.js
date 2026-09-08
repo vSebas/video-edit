@@ -2827,7 +2827,10 @@ async function refreshDriveInbox() {
   let banner = $('#drive-inbox');
   try {
     const payload = await api('/api/drive/inbox');
-    const waiting = (payload.folders || []).filter((folder) => !folder.imported);
+    // Actionable: never-imported folders AND imported ones that GREW (new clips
+    // dropped into the same Drive folder after the project was created).
+    const waiting = (payload.folders || [])
+      .filter((folder) => !folder.imported || folder.new_files > 0);
     // a refresh must not forget an in-flight import: rebuild from the
     // server's running jobs (matched via the folder's slug)
     try {
@@ -2860,9 +2863,12 @@ async function refreshDriveInbox() {
     banner.innerHTML = `
       <span>☁️ Drive VlogInbox:</span>
       ${waiting.slice(0, 3).map((folder) => {
-        const size = folder.total_bytes >= 1e9
-          ? `${(folder.total_bytes / 1e9).toFixed(1)} GB`
-          : `${Math.max(1, Math.round(folder.total_bytes / 1e6))} MB`;
+        const isUpdate = folder.imported;
+        const bytes = isUpdate ? folder.new_bytes : folder.total_bytes;
+        const count = isUpdate ? folder.new_files : folder.file_count;
+        const size = bytes >= 1e9
+          ? `${(bytes / 1e9).toFixed(1)} GB`
+          : `${Math.max(1, Math.round(bytes / 1e6))} MB`;
         const status = folder.receiving
           ? '<span class="inbox-receiving">⬆ recibiendo…</span>'
           : '<span class="inbox-ready">listo</span>';
@@ -2870,16 +2876,18 @@ async function refreshDriveInbox() {
         return `
         <span class="inbox-folder">
           <strong>${escapeHtml(folder.name)}</strong>
-          <span class="muted">${folder.file_count} clip${folder.file_count === 1 ? '' : 's'} · ${size}</span>
+          <span class="muted">${count} clip${count === 1 ? '' : 's'}${isUpdate ? ' nuevo' + (count === 1 ? '' : 's') : ''} · ${size}</span>
           ${importing
             ? `<span class="inbox-receiving" data-import-progress="${escapeHtml(folder.name)}">⬇ importando…</span>
                <button class="secondary compact" data-drive-cancel="${escapeHtml(folder.name)}">Cancelar</button>`
             : `${status}
                <button class="primary compact" data-drive-import="${escapeHtml(folder.name)}"
                  ${folder.receiving ? 'disabled title="Espera a que Drive termine de recibir"' : ''}>
-                 ${folder.local_bytes > 0 && folder.local_bytes < folder.total_bytes
-                   ? `Reanudar (~${Math.min(99, Math.round(folder.local_bytes / folder.total_bytes * 100))}%)`
-                   : 'Importar'}
+                 ${isUpdate
+                   ? 'Descargar nuevos'
+                   : folder.local_bytes > 0 && folder.local_bytes < folder.total_bytes
+                     ? `Reanudar (~${Math.min(99, Math.round(folder.local_bytes / folder.total_bytes * 100))}%)`
+                     : 'Importar'}
                </button>`}
         </span>`;
       }).join('')}
@@ -2926,17 +2934,22 @@ async function importFromDrive(folder) {
   let progressTimer = null;
   try {
     const inbox = await api('/api/drive/inbox').catch(() => null);
-    const expected = inbox?.folders?.find((f) => f.name === folder)?.total_bytes || 0;
+    const entry = inbox?.folders?.find((f) => f.name === folder);
+    const expected = entry?.total_bytes || 0;
     activeImports.set(folder, { expected });
     refreshDriveInbox();
-    notice(`Importando «${folder}» como proyecto nuevo — puedes seguir trabajando.`);
+    notice(entry?.imported
+      ? `Descargando los clips nuevos de «${folder}» — puedes seguir trabajando.`
+      : `Importando «${folder}» como proyecto nuevo — puedes seguir trabajando.`);
     progressTimer = startImportProgressTimer(folder, expected);
     const job = await api('/api/drive/import', {
       method: 'POST',
       body: JSON.stringify({ folder }),
     });
     const done = await pollJob(job.job_id);
-    notice(`«${folder}» importado — abriendo el proyecto.`);
+    notice(done.result?.updated
+      ? `«${folder}»: ${(done.result.added || []).length} clip(s) nuevo(s) añadidos al proyecto.`
+      : `«${folder}» importado — abriendo el proyecto.`);
     await refreshProjects();
     if (done.result?.project_id) await loadProject(done.result.project_id);
   } catch (error) {
@@ -2971,7 +2984,9 @@ async function watchImportJob(folder, jobId) {
   const progressTimer = startImportProgressTimer(folder, expected);
   try {
     const done = await pollJob(jobId);
-    notice(`«${folder}» importado — abriendo el proyecto.`);
+    notice(done.result?.updated
+      ? `«${folder}»: ${(done.result.added || []).length} clip(s) nuevo(s) añadidos al proyecto.`
+      : `«${folder}» importado — abriendo el proyecto.`);
     await refreshProjects();
     if (done.result?.project_id) await loadProject(done.result.project_id);
   } catch (error) {

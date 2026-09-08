@@ -887,6 +887,91 @@ def test_contract_retime_requires_full_coverage_of_new_span(tmp_path, monkeypatc
     assert plan["project"]["duration_seconds"] == 10.0
 
 
+def test_drive_inbox_reports_new_files_for_imported_folders(tmp_path, monkeypatch):
+    """An imported folder that GREW on Drive (phone dropped new clips) must
+    surface new_files/new_bytes — not be hidden forever behind imported=True."""
+    from video_app import projects as projects_mod
+    from video_app.config import Settings
+    from video_app.projects import ProjectService
+
+    root = tmp_path / "root"
+    runtime = root / "runtime"
+    pid = "9-12-abril"
+    (runtime / pid).mkdir(parents=True)
+    write_json(runtime / pid / "project.json", {
+        "schema_version": "video-app-project.v1", "project_id": pid,
+        "name": "9-12 abril", "status": "plan_ready", "updated_at": "2026-09-06",
+        "created_at": "2026-09-01", "plan": {}, "inventory": {"assets": []}})
+    # locally present: old.mp4; remote also has nuevo.mp4 (uploaded later)
+    local = root / "footage" / pid
+    local.mkdir(parents=True)
+    (local / "old.mp4").write_bytes(b"x" * 10)
+
+    listing = json.dumps([
+        {"Path": "9-12 abril/old.mp4", "Size": 10, "ModTime": "2026-09-01T00:00:00Z"},
+        {"Path": "9-12 abril/nuevo.mp4", "Size": 500, "ModTime": "2026-09-01T00:00:00Z"},
+    ])
+
+    def fake_run(cmd, **kwargs):
+        assert cmd[:2] == ["rclone", "lsjson"]
+        return subprocess.CompletedProcess(cmd, 0, listing, "")
+
+    monkeypatch.setattr(projects_mod.subprocess, "run", fake_run)
+    svc = ProjectService(Settings(root=root, runtime=runtime))
+    folders = svc.drive_inbox()
+    (folder,) = folders
+    assert folder["imported"] is True
+    assert folder["new_files"] == 1 and folder["new_bytes"] == 500
+
+
+def test_import_drive_folder_updates_existing_project(tmp_path, monkeypatch):
+    """Importing a folder whose project already exists must SYNC the new clips
+    into it (rclone copy is incremental) instead of failing on 'already exists'."""
+    from video_app import projects as projects_mod
+    from video_app.config import Settings
+    from video_app.projects import ProjectService
+
+    root = tmp_path / "root"
+    runtime = root / "runtime"
+    pid = "9-12-abril"
+    (runtime / pid).mkdir(parents=True)
+    write_json(runtime / pid / "project.json", {
+        "schema_version": "video-app-project.v1", "project_id": pid,
+        "name": "9-12 abril", "source_directory": f"footage/{pid}",
+        "analysis": {}, "plan": {}, "inventory": {"assets": []}})
+    (root / "footage" / pid).mkdir(parents=True)
+
+    class FakeProc:
+        returncode = 0
+
+        def __init__(self, cmd, **kwargs):
+            # the incremental copy "downloads" the new clip
+            if cmd[:2] == ["rclone", "copy"]:
+                (root / "footage" / pid / "nuevo.mp4").write_bytes(b"v" * 40)
+
+        def communicate(self, timeout=None):
+            return "", ""
+
+        def kill(self):
+            pass
+
+    monkeypatch.setattr(projects_mod.subprocess, "Popen", FakeProc)
+    svc = ProjectService(Settings(root=root, runtime=runtime))
+    # probe/thumbnail need ffprobe — stub them for the fake video file
+    monkeypatch.setattr(svc, "_probe_asset", lambda aid, p: {
+        "asset_id": aid, "filename": p.name, "media_type": "video",
+        "source_path": str(p.relative_to(root)), "size_bytes": p.stat().st_size,
+        "duration_seconds": 3.0})
+    monkeypatch.setattr(svc, "_make_thumbnail", lambda *a: False)
+
+    result = svc.import_drive_folder("9-12 abril")
+    assert result["updated"] is True and result["project_id"] == pid
+    assert result["added"] == ["nuevo.mp4"]
+    names = [a["filename"] for a in
+             svc.get_project(pid)["inventory"]["assets"]]
+    assert "nuevo.mp4" in names
+
+
 def test_rename_project_changes_display_name_only(tmp_path):
     """Renaming changes the display name; the project_id (slug keying runtime,
     footage and OpenTake state) never moves. Blank/oversized names are refused."""

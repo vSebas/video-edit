@@ -4662,16 +4662,17 @@ class ProjectService:
         existing = {p["project_id"] for p in self.list_projects()}
         grouped: dict[str, dict] = {}
         for entry in json.loads(result.stdout or "[]"):
-            top, _, _ = entry["Path"].partition("/")
+            top, _, rel = entry["Path"].partition("/")
             if not top or "/" not in entry["Path"]:
                 # files loose in the inbox root belong to no vlog folder
                 continue
             folder = grouped.setdefault(
-                top, {"files": 0, "bytes": 0, "modified": ""}
+                top, {"files": 0, "bytes": 0, "modified": "", "entries": []}
             )
             folder["files"] += 1
             folder["bytes"] += int(entry.get("Size") or 0)
             folder["modified"] = max(folder["modified"], entry.get("ModTime") or "")
+            folder["entries"].append((rel, int(entry.get("Size") or 0)))
         now = dt.datetime.now(dt.timezone.utc)
         folders = []
         for name, info in grouped.items():
@@ -4703,6 +4704,17 @@ class ProjectService:
                             local_bytes += p.stat().st_size
                     except OSError:
                         continue  # racing an in-flight rclone rename
+            # Imported folders can GROW: the phone drops new clips into the same
+            # Drive folder after the project exists. Count remote files that are
+            # missing locally so the UI can offer "descargar los nuevos" instead
+            # of hiding the folder forever (user report 2026-09-07).
+            new_files = 0
+            new_bytes = 0
+            if imported:
+                for rel, size in info["entries"]:
+                    if rel and not (local / rel).exists():
+                        new_files += 1
+                        new_bytes += size
             folders.append(
                 {
                     "name": name,
@@ -4712,6 +4724,8 @@ class ProjectService:
                     "file_count": info["files"],
                     "total_bytes": info["bytes"],
                     "local_bytes": local_bytes,
+                    "new_files": new_files,
+                    "new_bytes": new_bytes,
                     "receiving": receiving,
                 }
             )
@@ -4855,6 +4869,14 @@ class ProjectService:
             with self._drive_imports_guard:
                 self._drive_imports.pop(slug, None)
                 self._drive_cancelled.discard(slug)
+        # UPDATE path: the folder was already imported as a project and the user
+        # dropped NEW clips into the same Drive folder (rclone copy above is
+        # incremental — existing files were skipped). Index the new arrivals into
+        # the EXISTING project instead of failing on "already exists"
+        # (user report 2026-09-07).
+        if (self.settings.runtime / slug / "project.json").is_file():
+            synced = self.sync_media(slug)
+            return {"project_id": slug, "updated": True, **synced}
         prompt = ""
         for note in sorted(target.glob("*.txt")):
             if note.stem.lower().startswith(("nota", "note")):
