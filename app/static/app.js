@@ -1174,15 +1174,17 @@ async function chatDriveVoiceover(index) {
    refreshed plan after each placement). One render at the end. */
 async function placeVoiceoverPartsFromDrive(projectId, remotePaths, draft) {
   try {
-    // Resume-friendly: start after whatever voiceover already sits at/after the
-    // draft start (a retried run must not collide with parts placed before an
-    // error stopped it).
-    const existing = (state.activeProject?.plan?.tracks || [])
+    // Start after EVERYTHING already on the voiceover lane, read FRESH from the
+    // server — the device's local snapshot can be stale (parts placed from
+    // another device, or an earlier interrupted run) and a stale cursor causes
+    // "Overlaps voiceover vo-02" (user report 2026-09-08, from the phone).
+    const fresh = await api(`/api/projects/${projectId}`);
+    if (state.activeProjectId !== projectId) return;
+    const ends = (fresh.plan?.tracks || [])
       .filter((t) => t.role === 'voiceover')
       .flatMap((t) => t.events || [])
-      .map((e) => e.timeline_start_seconds + e.duration_seconds)
-      .filter((end) => end > draft.start_seconds);
-    let cursor = Math.max(draft.start_seconds, ...(existing.length ? existing : [0]));
+      .map((e) => e.timeline_start_seconds + e.duration_seconds);
+    let cursor = Math.max(draft.start_seconds, ...(ends.length ? ends : [0]));
     for (let i = 0; i < remotePaths.length; i += 1) {
       setBusy('Colocando la voz en off por partes',
         remotePaths.map((_, j) => `Parte ${j + 1}`), i, projectId);
