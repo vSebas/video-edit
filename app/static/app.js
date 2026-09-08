@@ -2340,9 +2340,65 @@ function renderProject() {
   }
 
   $('#project-view').classList.remove('loading');
-  $('#project-view').innerHTML = main;
+  $('#project-view').innerHTML = remoteJobsBanner() + main;
   wireHandlers();
 }
+
+/* Cross-device visibility: `state.busy` only exists on the device that STARTED
+   the work — the phone saw nothing while the laptop analyzed (user report
+   2026-09-08). A light poller keeps `state.remoteJobs` filled with the active
+   project's queued/running server jobs; every device shows this passive banner
+   (unless it is the one displaying its own busy card for that work). */
+const REMOTE_JOB_LABELS = {
+  visual_analysis: 'Analizando el metraje',
+  speech_analysis: 'Transcribiendo el habla',
+  voiceover_analysis: 'Analizando la voz en off',
+  concept_generation: 'Escribiendo ideas de historia',
+  plan_revision: 'Revisando el plan',
+  render: 'Renderizando el corte',
+  editable_exports: 'Preparando archivos de editor',
+  style_analysis: 'Analizando estilo de referencia',
+  source_context_analysis: 'Leyendo contexto del metraje',
+  drive_import: 'Importando de Drive',
+};
+
+function remoteJobsBanner() {
+  const jobs = state.remoteJobs || [];
+  if (!jobs.length || state.busy) return '';
+  const labels = [...new Set(jobs.map((j) => REMOTE_JOB_LABELS[j.kind] || j.kind))];
+  return `<div class="banner remote-jobs-banner">
+    <span>⏳ Trabajando en este proyecto: ${labels.map(escapeHtml).join(' · ')}…
+    <span class="muted">(puede haberse iniciado en otro dispositivo; la vista se
+    actualizará al terminar)</span></span>
+  </div>`;
+}
+
+let remoteJobsTimer = null;
+async function pollRemoteJobs() {
+  if (document.visibilityState !== 'visible' || !state.activeProjectId) return;
+  const projectId = state.activeProjectId;
+  try {
+    const { jobs } = await api('/api/jobs');
+    if (state.activeProjectId !== projectId) return;
+    const active = jobs.filter((j) => j.project_id === projectId
+      && ['queued', 'running'].includes(j.status));
+    const before = new Set((state.remoteJobs || []).map((j) => j.job_id));
+    const finishedOne = [...before].some((id) => !active.some((j) => j.job_id === id));
+    const changed = active.length !== (state.remoteJobs || []).length
+      || active.some((j) => !before.has(j.job_id));
+    state.remoteJobs = active;
+    if (finishedOne && !state.busy) {
+      // work started elsewhere just completed — pull the fresh state in
+      await loadProject(projectId);
+    } else if (changed && !state.busy) {
+      renderProject();
+    }
+  } catch { /* transient — try again next tick */ }
+}
+remoteJobsTimer = setInterval(pollRemoteJobs, 8000);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') pollRemoteJobs();
+});
 
 function wireHandlers() {
   $('#create-vlog')?.addEventListener('click', createVlog);
