@@ -887,6 +887,127 @@ def test_contract_retime_requires_full_coverage_of_new_span(tmp_path, monkeypatc
     assert plan["project"]["duration_seconds"] == 10.0
 
 
+def test_visual_analysis_is_incremental_for_new_clips(tmp_path, monkeypatch):
+    """A grown project analyzes ONLY the uncovered clips; prior observations and
+    their review decisions (human ones included) carry into the new run with
+    stable evidence ids — so the chat/planner see old + new footage together
+    without paying to re-analyze everything (user ask 2026-09-07)."""
+    from video_app import projects as projects_mod
+    from video_app.config import Settings
+    from video_app.projects import ProjectService
+
+    root = tmp_path / "root"
+    runtime = root / "runtime"
+    pid = "vlog-inc"
+    pdir = runtime / pid
+    pdir.mkdir(parents=True)
+
+    def asset(aid, status="analyzed"):
+        return {"asset_id": aid, "media_type": "video", "filename": f"{aid}.mp4",
+                "source_path": f"footage/{pid}/{aid}.mp4", "sha256": aid,
+                "duration_seconds": 5.0, "analysis_status": status}
+
+    write_json(pdir / "project.json", {
+        "schema_version": "video-app-project.v1", "project_id": pid,
+        "name": "I", "status": "ready", "created_at": "x", "updated_at": "x",
+        "analysis": {}, "plan": {},
+        "inventory": {"assets": [asset("old1"), asset("old2"),
+                                 asset("nuevo", status="technical_only")]}})
+
+    # A prior visual run covering old1+old2, with a HUMAN review on one obs.
+    prior = pdir / "analysis" / "runs" / "gemini-live-prior"
+    (prior / "raw").mkdir(parents=True)
+    prior_obs = [
+        {"evidence_id": "ev-old1", "asset_id": "old1", "caption": "cafe",
+         "normalization_status": "accepted", "review_status": "pending",
+         "risk_flags": [], "model_confidence": 0.9, "evidence_type": "visual",
+         "start_seconds": 0.0, "end_seconds": 5.0},
+        {"evidence_id": "ev-old2", "asset_id": "old2", "caption": "park",
+         "normalization_status": "accepted", "review_status": "pending",
+         "risk_flags": [], "model_confidence": 0.9, "evidence_type": "visual",
+         "start_seconds": 0.0, "end_seconds": 5.0},
+    ]
+    write_json(prior / "normalized.json", {
+        "schema_version": "semantic-evidence.v1", "generated_at": "2026-09-01",
+        "project_id": pid, "run_id": "prior",
+        "provider": {"adapter": "owned-live-visual", "id": "gemini",
+                     "model": "gemini-3.6-flash"},
+        "review_status": "pending", "safe_for_edit_plan": False,
+        "summary": {"project_asset_count": 2, "provider_media_count": 2,
+                    "mapped_media_count": 2, "observation_count": 2,
+                    "accepted_range_count": 2, "rejected_count": 0,
+                    "clamped_count": 0, "risk_flagged_count": 0},
+        "unmapped_media": [], "warnings": [], "observations": prior_obs})
+    write_json(prior / "reviews.json", {
+        "schema_version": "semantic-reviews.v1", "project_id": pid,
+        "run_key": "gemini-live-prior", "updated_at": "2026-09-01",
+        "decisions": {"ev-old1": {"event_id": "h1", "evidence_id": "ev-old1",
+                                  "action": "approve", "caption": "cafe (humano)",
+                                  "note": "human", "reviewed_at": "2026-09-01"}},
+        "events": [{"event_id": "h1", "evidence_id": "ev-old1",
+                    "action": "approve", "caption": "cafe (humano)",
+                    "note": "human", "reviewed_at": "2026-09-01"}]})
+    write_json(prior / "manifest.json", {
+        "schema_version": "semantic-run-manifest.v1",
+        "run_key": "gemini-live-prior", "run_id": "prior", "project_id": pid,
+        "content_key": "prior-key",
+        "provider": {"adapter": "owned-live-visual", "id": "gemini",
+                     "model": "gemini-3.6-flash"},
+        "review_status": "pending", "safe_for_edit_plan": False,
+        "summary": {}, "warnings": [], "telemetry": {},
+        "imported_at": "2026-09-01", "detail_url": "x"})
+
+    analyzed_ids = []
+
+    def fake_analyze(client, target, media_root, project_id_, run_id, progress=None):
+        analyzed_ids.extend(a["asset_id"] for a in target)
+        doc = {"schema_version": "semantic-evidence.v1",
+               "generated_at": "2026-09-07", "project_id": pid, "run_id": run_id,
+               "provider": {"adapter": "owned-live-visual", "id": "gemini",
+                            "model": "gemini-3.6-flash"},
+               "review_status": "pending", "safe_for_edit_plan": False,
+               "summary": {"project_asset_count": len(target),
+                           "provider_media_count": len(target),
+                           "mapped_media_count": len(target),
+                           "observation_count": 1, "accepted_range_count": 1,
+                           "rejected_count": 0, "clamped_count": 0,
+                           "risk_flagged_count": 0},
+               "unmapped_media": [], "warnings": [],
+               "observations": [
+                   {"evidence_id": "ev-nuevo", "asset_id": "nuevo",
+                    "caption": "rocket display", "normalization_status": "accepted",
+                    "review_status": "pending", "risk_flags": [],
+                    "model_confidence": 0.95, "evidence_type": "visual",
+                    "start_seconds": 0.0, "end_seconds": 5.0}]}
+        return doc, [], {}
+
+    class _Cfg:
+        model = "gemini-3.6-flash"
+
+    class _Client:
+        config = _Cfg()
+
+    monkeypatch.setattr(projects_mod, "make_client", lambda p, m: _Client())
+    monkeypatch.setattr(projects_mod, "analyze_assets", fake_analyze)
+    monkeypatch.setattr(projects_mod, "validate_semantic_evidence",
+                        lambda doc, schema: None)
+    svc = ProjectService(Settings(root=root, runtime=runtime))
+    monkeypatch.setattr(svc, "_corroborate_speech_claims", lambda p: None)
+    monkeypatch.setattr(svc, "_mark_semantic_progress", lambda p, s: None)
+    monkeypatch.setattr(svc, "_detect_rotations", lambda p, c: None)
+
+    run = svc.analyze_visual(pid, "gemini", "gemini-3.6-flash")
+
+    assert analyzed_ids == ["nuevo"]              # ONLY the new clip was analyzed
+    obs = {o["evidence_id"]: o for o in run["observations"]}
+    assert set(obs) == {"ev-old1", "ev-old2", "ev-nuevo"}   # merged, ids stable
+    # the HUMAN decision on old1 survives (caption override applied at read)
+    assert obs["ev-old1"]["review_status"] == "reviewed"
+    assert obs["ev-old1"]["reviewed_caption"] == "cafe (humano)"
+    # the new observation was auto-approved by policy
+    assert obs["ev-nuevo"]["review_status"] == "reviewed"
+
+
 def test_drive_inbox_reports_new_files_for_imported_folders(tmp_path, monkeypatch):
     """An imported folder that GREW on Drive (phone dropped new clips) must
     surface new_files/new_bytes — not be hidden forever behind imported=True."""

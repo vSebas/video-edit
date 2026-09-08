@@ -477,15 +477,90 @@ class ProjectService:
                     # runs — a cache hit must not skip unchecked assets
                     self._detect_rotations(project_id, client)
                     return cached
+            # INCREMENTAL: a project that GREW (new Drive clips) must not pay to
+            # re-analyze everything. Analyze only the visual assets the latest
+            # run does not cover — or that changed on disk (sync marks those
+            # technical_only) — and carry the prior observations AND their review
+            # decisions verbatim into the new run, so existing evidence ids (and
+            # any plan lineage citing them) stay stable (user ask 2026-09-07).
+            prior_normalized = None
+            prior_decisions: dict = {}
+            prior_events: list = []
+            target_assets = assets
+            if not force:
+                prior_manifest = next(
+                    (m for m in self._current_run_manifests(project_id)
+                     if m["provider"]["adapter"] == "owned-live-visual"), None)
+                if prior_manifest is not None:
+                    try:
+                        ppath = self._semantic_run_path(
+                            project_id, prior_manifest["run_key"])
+                        prior_normalized = load_json(ppath)
+                        rpath = ppath.parent / "reviews.json"
+                        if rpath.is_file():
+                            prior = load_json(rpath)
+                            prior_decisions = prior.get("decisions") or {}
+                            prior_events = prior.get("events") or []
+                    except Exception:  # noqa: BLE001 - fall back to a full run
+                        prior_normalized = None
+            if prior_normalized is not None:
+                covered = {o["asset_id"]
+                           for o in prior_normalized.get("observations", [])}
+                needed = [a for a in assets
+                          if a.get("media_type") in ("video", "image")
+                          and (a["asset_id"] not in covered
+                               or a.get("analysis_status") == "technical_only")]
+                visual_total = [a for a in assets
+                                if a.get("media_type") in ("video", "image")]
+                if not needed:
+                    # nothing visual changed (e.g. only audio was added) — the
+                    # prior run still describes every clip.
+                    return self.semantic_run(
+                        project_id, prior_manifest["run_key"])
+                if len(needed) < len(visual_total):
+                    target_assets = needed
+                else:
+                    prior_normalized = None   # prior covers nothing → full run
             ANALYSIS_PROGRESS.pop(project_id, None)
             visual_progress = _progress_setter(project_id, "visual")
             try:
                 normalized, raw_records, telemetry = analyze_assets(
-                    client, assets, media_root, project_id, run_id,
+                    client, target_assets, media_root, project_id, run_id,
                     progress=visual_progress,
                 )
             finally:
                 visual_progress.clear()
+            # Auto-review policy applies to the NEW observations only; carried
+            # observations keep their PRIOR decisions (human review included).
+            reviews = auto_review_decisions(normalized)
+            if prior_normalized is not None and target_assets is not assets:
+                needed_ids = {a["asset_id"] for a in target_assets}
+                live_ids = {a["asset_id"] for a in assets}
+                carried = [o for o in prior_normalized.get("observations", [])
+                           if o["asset_id"] in live_ids
+                           and o["asset_id"] not in needed_ids]
+                normalized["observations"] = carried + normalized["observations"]
+                summary = normalized.get("summary") or {}
+                obs = normalized["observations"]
+                carried_assets = {o["asset_id"] for o in carried}
+                summary["project_asset_count"] = len(assets)
+                summary["provider_media_count"] = (
+                    summary.get("provider_media_count") or 0) + len(carried_assets)
+                summary["mapped_media_count"] = (
+                    summary.get("mapped_media_count") or 0) + len(carried_assets)
+                summary["observation_count"] = len(obs)
+                summary["accepted_range_count"] = sum(
+                    1 for o in obs if o.get("normalization_status") == "accepted")
+                summary["risk_flagged_count"] = sum(
+                    1 for o in obs if o.get("risk_flags"))
+                carried_ids = {o["evidence_id"] for o in carried}
+                merged = dict(reviews.get("decisions") or {})
+                merged.update({eid: d for eid, d in prior_decisions.items()
+                               if eid in carried_ids})
+                reviews["decisions"] = merged
+                reviews["events"] = ([e for e in prior_events
+                                      if e.get("evidence_id") in carried_ids]
+                                     + (reviews.get("events") or []))
             validate_semantic_evidence(
                 normalized,
                 SCHEMA_DIR / "semantic-evidence.schema.json",
@@ -499,7 +574,6 @@ class ProjectService:
                 "provider warnings: " + "; ".join(normalized["warnings"][:3])
             )
 
-        reviews = auto_review_decisions(normalized)
         reviews["run_key"] = run_key
         runs_dir = self.settings.runtime / project_id / "analysis" / "runs"
         runs_dir.mkdir(parents=True, exist_ok=True)
