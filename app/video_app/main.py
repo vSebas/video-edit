@@ -175,6 +175,10 @@ class VoiceoverDrivePlaceRequest(BaseModel):
     max_duration_seconds: float | None = None
 
 
+class RenameProjectRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+
+
 class ModelPrefRequest(BaseModel):
     stage: str = Field(pattern=r"^[a-z_]{1,32}$")
     provider: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
@@ -615,6 +619,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @application.get("/api/projects/{project_id}/models-in-use")
     def models_in_use(project_id: str):
         return project_call(lambda: projects.models_in_use(project_id))
+
+    @application.post("/api/projects/{project_id}/rename")
+    def rename_project(project_id: str, request: RenameProjectRequest):
+        return project_call(
+            lambda: projects.rename_project(project_id, request.name))
 
     @application.post("/api/projects/{project_id}/voiceover/analyze", status_code=202)
     def analyze_voiceover(project_id: str, event_id: str | None = None):

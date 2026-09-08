@@ -3106,6 +3106,34 @@ $('#upload-files')?.addEventListener('change', (event) => {
 $('#close-dialog').addEventListener('click', () => dialog.close());
 $('#cancel-dialog').addEventListener('click', () => dialog.close());
 $('#new-project-form').addEventListener('submit', createProject);
+$('#rename-project')?.addEventListener('click', async () => {
+  const project = state.activeProject;
+  if (!project) return;
+  const current = project.name || '';
+  const name = window.prompt('Nuevo nombre del proyecto:', current);
+  if (name === null) return;                        // cancelled
+  const trimmed = name.trim();
+  if (!trimmed || trimmed === current) return;
+  const projectId = state.activeProjectId;
+  try {
+    const res = await api(`/api/projects/${projectId}/rename`, {
+      method: 'POST', body: JSON.stringify({ name: trimmed }),
+    });
+    // Update the header + sidebar in place, guarding against a project switch
+    // that happened while the prompt/request was open.
+    const row = (state.projects || []).find((p) => p.project_id === projectId);
+    if (row) row.name = res.name;
+    if (state.activeProjectId === projectId && state.activeProject) {
+      state.activeProject.name = res.name;
+      $('#project-title').textContent = res.name;
+    }
+    renderProjectList();
+    notice('Nombre actualizado.');
+  } catch (error) {
+    notice(error.message, true);
+  }
+});
+
 $('#overflow-button').addEventListener('click', (event) => {
   event.stopPropagation();
   const menu = $('#overflow-menu');

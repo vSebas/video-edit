@@ -268,6 +268,10 @@ dialog form { padding: 24px; }
 .dialog-heading { display: flex; align-items: start; justify-content: space-between; margin-bottom: 22px; }
 .dialog-heading h2 { margin: 5px 0 0; font-size: 22px; }
 .icon-button { padding: 4px 10px; color: var(--muted); background: transparent; font-size: 25px; }
+.topbar-title { position: relative; }
+.rename-button { position: absolute; right: -38px; bottom: 2px; font-size: 15px;
+  opacity: .55; }
+.rename-button:hover { opacity: 1; }
 label { display: grid; gap: 7px; margin-top: 15px; color: #c5cbd3; font-size: 12.5px; font-weight: 700; }
 input, textarea { width: 100%; border: 1px solid var(--line); border-radius: 10px; padding: 11px 12px; color: var(--text); background: #0e1115; outline: none; }
 input:focus, textarea:focus { border-color: var(--accent); }

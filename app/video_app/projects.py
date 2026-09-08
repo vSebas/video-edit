@@ -139,7 +139,11 @@ _CHAT_SYSTEM = """\
 Eres el asistente de edición de Vlog Studio. Conversas en el idioma del vlog \
 (español; a veces inglés si el metraje lo es) para ayudar a mejorar el corte. \
 Conoces el metraje: abajo tienes el concepto, el MAPA DE ESCENAS (timecode · qué \
-se ve · intención) y las voces en off ya colocadas.
+se ve · intención), el MATERIAL DISPONIBLE SIN USAR (metraje verificado que \
+existe pero no está en este corte) y las voces en off ya colocadas. Cuando te \
+pregunten si hay metraje de algo, revisa TAMBIÉN el material sin usar — que algo \
+no esté en el corte no significa que no exista; si está en la lista, dilo y \
+ofrece añadirlo. Solo di que no hay metraje de algo si tampoco aparece ahí.
 
 Respondes SIEMPRE con un objeto JSON, una de dos formas:
 
@@ -1996,6 +2000,23 @@ class ProjectService:
             }
         return {"stages": stages}
 
+    def rename_project(self, project_id: str, name: str) -> dict:
+        """Change the project's DISPLAY name. The project_id (slug) stays as-is
+        on purpose: it keys the runtime dir, the footage folder, the OpenTake
+        bundle and every job/artifact — renaming those would break running state
+        for a cosmetic change."""
+        name = " ".join((name or "").split())
+        if not 1 <= len(name) <= 80:
+            raise ProjectError("El nombre debe tener entre 1 y 80 caracteres")
+        self.get_project(project_id)  # 404 unknown projects cleanly
+        with self._project_write(project_id):
+            path = self.settings.runtime / project_id / "project.json"
+            project = load_json(path)
+            project["name"] = name
+            project["updated_at"] = utc_now()
+            write_json(path, project)
+        return {"project_id": project_id, "name": name}
+
     def get_model_prefs(self, project_id: str) -> dict:
         project = self.get_project(project_id)
         prefs = project.get("model_prefs")
@@ -2198,6 +2219,50 @@ class ProjectService:
                 intent = " ".join((event.get("intent") or "").split())
                 tail = f" — {intent}" if intent else ""
                 out.append(f"[{mmss(start)}–{mmss(end)}] {observed}{tail}")
+
+        # AVAILABLE MATERIAL NOT IN THIS CUT: without this the model only sees
+        # the scene map and truthfully answers "no hay clips de X" about footage
+        # that exists but wasn't picked for the proposal (user report
+        # 2026-09-07). List approved visual evidence whose source range is not
+        # displayed by any video event, capped and with an honest remainder.
+        used: dict[str, list[tuple[float, float]]] = {}
+        for track in plan.get("tracks", []):
+            if track.get("kind") != "video":
+                continue
+            for event in track.get("events", []):
+                aid = event.get("asset_id")
+                if aid:
+                    used.setdefault(aid, []).append((
+                        float(event.get("source_start_seconds") or 0.0),
+                        float(event.get("source_end_seconds") or 0.0)))
+        try:
+            pool = self.approved_evidence(project.get("project_id", ""))
+        except Exception:  # noqa: BLE001 - context enrichment must never break chat
+            pool = []
+        unused = []
+        for rec in pool:
+            if rec.get("evidence_type") != "visual":
+                continue
+            spans = used.get(rec.get("asset_id")) or []
+            s0 = float(rec.get("start_seconds") or 0.0)
+            s1 = float(rec.get("end_seconds") or 0.0)
+            if not any(a < s1 and b > s0 for a, b in spans):
+                unused.append(rec)
+        if unused:
+            cap = 35
+            out.append("")
+            out.append(
+                "MATERIAL DISPONIBLE SIN USAR EN ESTE CORTE (metraje real y "
+                "verificado que podrías proponer añadir):")
+            for rec in unused[:cap]:
+                caption = " ".join((rec.get("caption") or "").split())
+                if len(caption) > 160:
+                    caption = caption[:157] + "…"
+                out.append(
+                    f"- {caption} ({rec.get('asset_id')}, "
+                    f"{mmss(rec.get('start_seconds'))}–{mmss(rec.get('end_seconds'))})")
+            if len(unused) > cap:
+                out.append(f"…y {len(unused) - cap} observaciones más sin usar.")
 
         placed = []
         for track in plan.get("tracks", []):

@@ -887,6 +887,74 @@ def test_contract_retime_requires_full_coverage_of_new_span(tmp_path, monkeypatc
     assert plan["project"]["duration_seconds"] == 10.0
 
 
+def test_rename_project_changes_display_name_only(tmp_path):
+    """Renaming changes the display name; the project_id (slug keying runtime,
+    footage and OpenTake state) never moves. Blank/oversized names are refused."""
+    from video_app import projects as projects_mod
+    from video_app.config import Settings
+    from video_app.projects import ProjectService
+
+    root = tmp_path / "root"
+    runtime = root / "runtime"
+    pid = "vlog-rn"
+    (runtime / pid).mkdir(parents=True)
+    write_json(runtime / pid / "project.json", {
+        "schema_version": "video-app-project.v1", "project_id": pid,
+        "name": "Viejo", "plan": {}, "inventory": {"assets": []}})
+    svc = ProjectService(Settings(root=root, runtime=runtime))
+
+    out = svc.rename_project(pid, "  Semana en Stanford  ")
+    assert out == {"project_id": pid, "name": "Semana en Stanford"}
+    assert svc.get_project(pid)["name"] == "Semana en Stanford"
+    assert svc.get_project(pid)["project_id"] == pid     # slug untouched
+
+    with pytest.raises(projects_mod.ProjectError):
+        svc.rename_project(pid, "   ")
+    with pytest.raises(projects_mod.ProjectError):
+        svc.rename_project(pid, "x" * 81)
+
+
+def test_chat_context_lists_unused_footage(tmp_path, monkeypatch):
+    """The chat brief must include approved footage NOT in the cut — otherwise
+    the model truthfully denies footage that exists but wasn't picked for the
+    proposal (user report 2026-09-07)."""
+    from video_app.config import Settings
+    from video_app.projects import ProjectService
+
+    root = tmp_path / "root"
+    runtime = root / "runtime"
+    pid = "vlog-ctx"
+    (runtime / pid).mkdir(parents=True)
+    plan = {"concept_id": "c1",
+            "project": {"duration_seconds": 6.0},
+            "tracks": [{"kind": "video", "events": [
+                {"event_id": "v01", "asset_id": "clip_cafe",
+                 "timeline_start_seconds": 0.0, "duration_seconds": 6.0,
+                 "source_start_seconds": 0.0, "source_end_seconds": 6.0,
+                 "observed_content": "Coffee at a cafe."}]}]}
+    project = {"schema_version": "video-app-project.v1", "project_id": pid,
+               "name": "Ctx", "plan": plan, "concepts": [],
+               "inventory": {"assets": []}}
+    write_json(runtime / pid / "project.json", project)
+    svc = ProjectService(Settings(root=root, runtime=runtime))
+    monkeypatch.setattr(svc, "approved_evidence", lambda p: [
+        # used: overlaps the placed clip_cafe range -> NOT listed
+        {"evidence_id": "e1", "asset_id": "clip_cafe", "caption": "coffee pour",
+         "start_seconds": 1.0, "end_seconds": 3.0, "evidence_type": "visual"},
+        # unused: a lake clip that exists but is not in the cut -> LISTED
+        {"evidence_id": "e2", "asset_id": "clip_lake", "caption": "a calm lake at sunset",
+         "start_seconds": 0.0, "end_seconds": 5.0, "evidence_type": "visual"},
+        # speech evidence is not part of the visual catalog
+        {"evidence_id": "e3", "asset_id": "clip_lake", "caption": "someone says hi",
+         "start_seconds": 0.0, "end_seconds": 5.0, "evidence_type": "speech"},
+    ])
+    ctx = svc._chat_context(project, plan)
+    assert "MATERIAL DISPONIBLE SIN USAR" in ctx
+    assert "a calm lake at sunset" in ctx
+    assert "coffee pour" not in ctx          # already displayed by the cut
+    assert "someone says hi" not in ctx      # speech is not footage
+
+
 def test_models_in_use_reports_used_and_next(tmp_path):
     """Ongoing projects can't retroactively change a completed stage's model, so
     the endpoint reports what each stage ACTUALLY used (recorded provenance) plus
