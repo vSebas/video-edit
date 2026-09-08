@@ -614,7 +614,19 @@ class TestVoiceoverOps:
             apply_op(placed, {"op": "cleanup_voiceover", "event_id": "vo-01",
                               "remove_ranges": [[1.0, 1.5]]}, self._inventory())
 
-    def test_voiceover_requires_audio_asset(self) -> None:
+    def test_voiceover_may_run_past_the_cut_and_grows_the_canvas(self) -> None:
+        # The narration is the spine: a part placed at/beyond the picture end is
+        # LEGAL — the canvas grows to the voiceover end and the retime/new
+        # scenes fill the picture later (multi-part flow, 2026-09-08).
+        plan = _plan()                       # 10s cut
+        placed, summary = apply_op(plan, {
+            "op": "add_voiceover", "asset_id": "memo",   # 3s recording
+            "timeline_start_seconds": 9.5}, self._inventory())
+        vo = next(t for t in placed["tracks"] if t.get("role") == "voiceover")
+        (event,) = vo["events"]
+        assert event["duration_seconds"] == 3.0          # NOT clipped to the cut
+        assert placed["project"]["duration_seconds"] == 12.5   # canvas follows
+        assert "creció" in summary
         with pytest.raises(PlanOpError, match="not an audio asset"):
             apply_op(_plan(), {
                 "op": "add_voiceover", "asset_id": "clip_b",

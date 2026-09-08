@@ -911,14 +911,17 @@ def _apply_add_voiceover(plan: dict, op: dict, assets: dict) -> str:
         )
     start = _grid(_op_number(op, "timeline_start_seconds"), plan["project"]["fps"])
     total = plan["project"]["duration_seconds"]
-    if not 0 <= start <= total - 0.5:
-        raise PlanOpError(
-            f"timeline_start_seconds must be within [0, {total - 0.5:.1f}]"
-        )
+    # The NARRATION is the spine: a voiceover (or a later part of one) may run
+    # PAST the current picture — the canvas grows with it and «⏱️ Ajustar la
+    # imagen» retimes the picture afterwards. Only reject nonsense starts, not
+    # starts beyond today's cut (user report 2026-09-08: multi-part placement
+    # died at "within [0, 51.1]").
+    if not 0 <= start <= max(total, 0) + 3600:
+        raise PlanOpError("timeline_start_seconds fuera de rango")
     available = float(asset.get("duration_seconds") or 0.0)
     if available < 0.5:
         raise PlanOpError(f"{op['asset_id']} is shorter than 0.5s")
-    span = min(available, total - start)
+    span = available   # no longer clipped by the cut — the cut follows the voice
     # Optional cap: trim the placed voiceover to a target window (e.g. the
     # drafted [start–end] range from the chat) instead of playing the whole
     # recording. Never below 0.5s and never past the recording/cut.
@@ -963,10 +966,20 @@ def _apply_add_voiceover(plan: dict, op: dict, assets: dict) -> str:
         "observed_content": None, "confidence": 1.0, "reframe": None,
         "transition_out": None, "text": None, "volume_db": None,
     })
+    grew = ""
+    vo_end = _grid(start + duration, plan["project"]["fps"])
+    if vo_end > total:
+        # The canvas follows the narration; the picture tail stays empty until
+        # the user extends/retimes it («⏱️ Ajustar la imagen» / nuevos clips).
+        plan["project"]["duration_seconds"] = vo_end
+        _refit_music_bed(plan)
+        grew = (f" El corte creció a {vo_end:.1f}s — la imagen aún no cubre el "
+                "final; usa «Ajustar la imagen» o añade escenas.")
     return (
         f"Voz en off {event_id} ({op['asset_id']}) desde "
         f"{start:.1f}s, {duration:.1f}s; el audio original baja -9dB "
-        "debajo en el render (OpenTake muestra el clip sin el ducking)"
+        "debajo en el render (OpenTake muestra el clip sin el ducking)."
+        + grew
     )
 
 
