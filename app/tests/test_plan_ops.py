@@ -614,6 +614,37 @@ class TestVoiceoverOps:
             apply_op(placed, {"op": "cleanup_voiceover", "event_id": "vo-01",
                               "remove_ranges": [[1.0, 1.5]]}, self._inventory())
 
+    def test_back_to_back_parts_never_phantom_overlap(self) -> None:
+        # 6-decimal storage makes float sums drift: 5.933333+4.666667 =
+        # 10.600000000000001, so placing the next part at the gridded 10.6
+        # falsely tripped "Overlaps voiceover" on EVERY device (2026-09-08).
+        plan = _plan()
+        vo = {"track_id": "vo1", "kind": "audio", "role": "voiceover", "events": [
+            {"event_id": "vo-01", "asset_id": "memo",
+             "source_start_seconds": 0.0, "source_end_seconds": 5.933333,
+             "timeline_start_seconds": 0.0, "duration_seconds": 5.933333,
+             "playback_rate": 1.0, "intent": "voiceover", "observed_content": None,
+             "confidence": 1.0, "reframe": None, "transition_out": None,
+             "text": None, "volume_db": None},
+            {"event_id": "vo-02", "asset_id": "memo",
+             "source_start_seconds": 0.0, "source_end_seconds": 4.666667,
+             "timeline_start_seconds": 5.933333, "duration_seconds": 4.666667,
+             "playback_rate": 1.0, "intent": "voiceover", "observed_content": None,
+             "confidence": 1.0, "reframe": None, "transition_out": None,
+             "text": None, "volume_db": None}]}
+        plan["tracks"].append(vo)
+        assert 5.933333 + 4.666667 > 10.6      # the float drift is real
+        placed, _ = apply_op(plan, {
+            "op": "add_voiceover", "asset_id": "memo",
+            "timeline_start_seconds": 10.6}, self._inventory())
+        events = next(t for t in placed["tracks"]
+                      if t.get("role") == "voiceover")["events"]
+        assert len(events) == 3                # placed, no phantom overlap
+        # a REAL overlap is still refused
+        with pytest.raises(PlanOpError, match="Overlaps"):
+            apply_op(plan, {"op": "add_voiceover", "asset_id": "memo",
+                            "timeline_start_seconds": 8.0}, self._inventory())
+
     def test_voiceover_may_run_past_the_cut_and_grows_the_canvas(self) -> None:
         # The narration is the spine: a part placed at/beyond the picture end is
         # LEGAL — the canvas grows to the voiceover end and the retime/new

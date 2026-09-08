@@ -950,11 +950,16 @@ def _apply_add_voiceover(plan: dict, op: dict, assets: dict) -> str:
     while f"vo-{number:02d}" in used:
         number += 1
     event_id = f"vo-{number:02d}"
+    # Half-frame tolerance: stored times carry 6-decimal rounding, so the float
+    # sum start+duration of a neighbour can land ~1e-6s past the next gridded
+    # start (5.933333 + 4.666667 = 10.600000000000001) — a PHANTOM overlap that
+    # blocked every back-to-back part placement (user reports 2026-09-08).
+    eps = 0.5 / float(plan["project"]["fps"] or 30)
     for existing in track["events"]:
         a, b = existing["timeline_start_seconds"], (
             existing["timeline_start_seconds"] + existing["duration_seconds"]
         )
-        if start < b and start + duration > a:
+        if start < b - eps and start + duration > a + eps:
             raise PlanOpError(
                 f"Overlaps voiceover {existing['event_id']} — remove it first"
             )
