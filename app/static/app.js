@@ -368,6 +368,7 @@ function storyWorkspace(project) {
   const keptCount = keptStoryIds().size;
   const currentId = project.plan?.concept_id;
   return `
+    ${unanalyzedBanner(project)}
     <section>
       <div class="section-header">
         <div><span class="eyebrow">Historias</span><h2>El editor propone, tú decides</h2></div>
@@ -631,6 +632,41 @@ function sceneStrip(project) {
   }).join('');
 }
 
+/* Clips downloaded/synced after the last analysis sit as technical_only —
+   invisible to the planner and chat until analyzed. Surface them with a
+   one-click INCREMENTAL analysis (only the new clips are sent to the model). */
+function unanalyzedBanner(project) {
+  const pending = (project.inventory?.assets || []).filter(
+    (a) => a.analysis_status === 'technical_only'
+      && (a.media_type === 'video' || a.media_type === 'image'));
+  if (!pending.length) return '';
+  return `
+    <div class="banner">
+      <span>🆕 ${pending.length} clip${pending.length === 1 ? '' : 's'} nuevo${pending.length === 1 ? '' : 's'} sin analizar — el editor y el chat aún no los ven.</span>
+      <button class="primary compact" id="analyze-new-clips">Analizar clips nuevos</button>
+    </div>
+  `;
+}
+
+async function analyzeNewClips(projectId) {
+  try {
+    setBusy('Analizando clips nuevos', ['Mirando el metraje nuevo', 'Escuchando el habla (local)'], 0, projectId);
+    await runStep('analysis/visual', {}, projectId);   // incremental — new clips only
+    if (state.activeProjectId !== projectId) { clearBusyIfOwner(projectId); return; }
+    setBusy('Analizando clips nuevos', ['Mirando el metraje nuevo', 'Escuchando el habla (local)'], 1, projectId);
+    await runStep('analysis/speech', {}, projectId);
+    clearBusyIfOwner(projectId);
+    if (state.activeProjectId !== projectId) return;
+    notice('Clips nuevos analizados — ya cuentan para el chat, las ideas y los arreglos.');
+    await loadProject(projectId);
+  } catch (error) {
+    clearBusyIfOwner(projectId);
+    if (state.activeProjectId !== projectId) return;
+    notice(error.message, true);
+    await loadProject(projectId);
+  }
+}
+
 function newIdeasBanner(project) {
   const planConcept = project.plan?.concept_id;
   if (!planConcept) return '';
@@ -651,6 +687,7 @@ function editWorkspace(project) {
   const duration = project.plan?.project?.duration_seconds;
   return `
     ${newIdeasBanner(project)}
+    ${unanalyzedBanner(project)}
     <section class="edit-grid">
       <article class="card video-stage">
         ${renderUrl
@@ -2217,6 +2254,7 @@ function wireHandlers() {
     renderProject();
   });
   $('#see-new-ideas')?.addEventListener('click', () => { state.workspace = 'story'; renderProject(); });
+  $('#analyze-new-clips')?.addEventListener('click', () => analyzeNewClips(state.activeProjectId));
   $('#copy-folder-path')?.addEventListener('click', async (event) => {
     const path = event.currentTarget.previousElementSibling?.textContent || '';
     try { await navigator.clipboard.writeText(path); notice('Ruta copiada.'); }
@@ -2952,6 +2990,12 @@ async function importFromDrive(folder) {
       : `«${folder}» importado — abriendo el proyecto.`);
     await refreshProjects();
     if (done.result?.project_id) await loadProject(done.result.project_id);
+    // Downloaded clips are invisible to the editor until analyzed — chain the
+    // INCREMENTAL analysis right away (only the new clips go to the model).
+    if (done.result?.updated && (done.result.added || []).length
+        && state.activeProjectId === done.result.project_id) {
+      await analyzeNewClips(done.result.project_id);
+    }
   } catch (error) {
     notice(error.message, true);
     await refreshProjects();
@@ -2989,6 +3033,10 @@ async function watchImportJob(folder, jobId) {
       : `«${folder}» importado — abriendo el proyecto.`);
     await refreshProjects();
     if (done.result?.project_id) await loadProject(done.result.project_id);
+    if (done.result?.updated && (done.result.added || []).length
+        && state.activeProjectId === done.result.project_id) {
+      await analyzeNewClips(done.result.project_id);
+    }
   } catch (error) {
     notice(error.message, true);
     await refreshProjects();
