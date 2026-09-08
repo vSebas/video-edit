@@ -1160,7 +1160,7 @@ async function placeVoiceoverPartsFromDrive(projectId, remotePaths, draft) {
     let cursor = draft.start_seconds;
     for (let i = 0; i < remotePaths.length; i += 1) {
       setBusy('Colocando la voz en off por partes',
-        remotePaths.map((_, j) => `Parte ${j + 1}`).concat(['Renderizando']), i, projectId);
+        remotePaths.map((_, j) => `Parte ${j + 1}`), i, projectId);
       await api(`/api/projects/${projectId}/voiceover/place-from-drive`, {
         method: 'POST',
         body: JSON.stringify({ remote_path: remotePaths[i], start_seconds: cursor }),
@@ -1174,13 +1174,9 @@ async function placeVoiceoverPartsFromDrive(projectId, remotePaths, draft) {
       cursor = Math.max(cursor,
         ...voEvents.map((e) => e.timeline_start_seconds + e.duration_seconds));
     }
-    setBusy('Colocando la voz en off por partes',
-      remotePaths.map((_, j) => `Parte ${j + 1}`).concat(['Renderizando']),
-      remotePaths.length, projectId);
-    await runStep('render', undefined, projectId);
     clearBusyIfOwner(projectId);
     if (state.activeProjectId !== projectId) return;
-    notice(`${remotePaths.length} parte(s) de voz en off colocadas en orden — nuevo corte arriba.`);
+    notice(`${remotePaths.length} parte(s) de voz en off colocadas en orden. Renderiza cuando termines de editar.`);
     await loadProject(projectId);
   } catch (error) {
     clearBusyIfOwner(projectId);
@@ -1200,12 +1196,9 @@ async function placeVoiceoverFromDrive(projectId, remotePath, draft) {
     await api(`/api/projects/${projectId}/voiceover/place-from-drive`, {
       method: 'POST', body: JSON.stringify(body),
     });
-    if (state.activeProjectId !== projectId) { clearBusyIfOwner(projectId); return; }
-    setBusy('Colocando tu voz en off', ['Trayendo la nota de voz de Drive', 'Renderizando'], 1, projectId);
-    await runStep('render', undefined, projectId);
     clearBusyIfOwner(projectId);
     if (state.activeProjectId !== projectId) return;
-    notice('Voz en off colocada desde Drive — nuevo corte arriba.');
+    notice('Voz en off colocada desde Drive. Renderiza cuando termines de editar.');
     await loadProject(projectId);
   } catch (error) {
     clearBusyIfOwner(projectId);
@@ -1243,10 +1236,8 @@ async function placeVoiceoverFile(file, draft) {
     }
     await fetch(`/api/projects/${projectId}/voiceover/place`, { method: 'POST', body: form })
       .then((r) => r.json().then((p) => { if (!r.ok) throw new Error(p.detail || 'No se pudo colocar la voz en off'); return p; }));
-    setBusy('Colocando tu voz en off', ['Subiendo y colocando la nota de voz', 'Renderizando'], 1);
-    await runStep('render', undefined, projectId);
     state.busy = null;
-    notice('Voz en off colocada — nuevo corte arriba.');
+    notice('Voz en off colocada. Renderiza cuando termines de editar («Renderizar el corte actual»).');
     await loadProject(projectId);
   } catch (error) {
     state.busy = null;
@@ -1435,16 +1426,13 @@ async function voiceoverRetimeFlow(projectId, panel) {
     </div>`;
     $('#vo-retime-apply')?.addEventListener('click', async () => {
       try {
-        setBusy('Ajustando la imagen', ['Reajustando el clip', 'Renderizando'], 0, projectId);
+        setBusy('Ajustando la imagen', ['Reajustando el clip'], 0, projectId);
         const applied = await api(`/api/projects/${projectId}/voiceover/retime/apply`, {
           method: 'POST', body: JSON.stringify({ base_revision: baseRevision }),
         });
-        if (state.activeProjectId !== projectId) { clearBusyIfOwner(projectId); return; }
-        setBusy('Ajustando la imagen', ['Reajustando el clip', 'Renderizando'], 1, projectId);
-        await runStep('render', undefined, projectId);
         clearBusyIfOwner(projectId);
         if (state.activeProjectId !== projectId) return;
-        notice(applied?.summary || 'Imagen ajustada a la voz en off.');
+        notice(`${applied?.summary || 'Imagen ajustada a la voz en off'}. Renderiza cuando termines de editar.`);
         await loadProject(projectId);
       } catch (error) {
         clearBusyIfOwner(projectId);
@@ -1494,17 +1482,14 @@ async function voiceoverRemediesFlow(projectId, eventId, panel) {
       btn.addEventListener('click', async () => {
         const remedyId = btn.dataset.remedyId;
         try {
-          setBusy('Reforzando la imagen', ['Colocando el recurso', 'Renderizando'], 0, projectId);
+          setBusy('Reforzando la imagen', ['Colocando el recurso'], 0, projectId);
           const applied = await api(`/api/projects/${projectId}/voiceover/remedies/apply`, {
             method: 'POST',
             body: JSON.stringify({ event_id: eventId, remedy_id: remedyId, base_revision: baseRevision }),
           });
-          if (state.activeProjectId !== projectId) { clearBusyIfOwner(projectId); return; }
-          setBusy('Reforzando la imagen', ['Colocando el recurso', 'Renderizando'], 1, projectId);
-          await runStep('render', undefined, projectId);
           clearBusyIfOwner(projectId);
           if (state.activeProjectId !== projectId) return;
-          notice(applied?.summary || 'Imagen reforzada y corte re-renderizado.');
+          notice(`${applied?.summary || 'Imagen reforzada'}. Renderiza cuando termines de editar.`);
           await loadProject(projectId);
         } catch (error) {
           clearBusyIfOwner(projectId);
@@ -1551,19 +1536,14 @@ async function voiceoverCleanupFlow(projectId, eventId, panel) {
         .filter((el) => el.checked).map((el) => el.dataset.voClean);
       if (!ids.length) { notice('Nada seleccionado.', true); return; }
       try {
-        setBusy('Limpiando la voz en off', ['Cortando el audio', 'Renderizando'], 0, projectId);
+        setBusy('Limpiando la voz en off', ['Cortando el audio'], 0, projectId);
         const applied = await api(`/api/projects/${projectId}/voiceover/cleanup/apply`, {
           method: 'POST',
           body: JSON.stringify({ event_id: eventId, candidate_ids: ids, base_revision: baseRevision }),
         });
-        // Busy is owner-tagged, so clearing it is safe even if the user navigated
-        // away; only surface UI (notice/nav) while still on this project.
-        if (state.activeProjectId !== projectId) { clearBusyIfOwner(projectId); return; }
-        setBusy('Limpiando la voz en off', ['Cortando el audio', 'Renderizando'], 1, projectId);
-        await runStep('render', undefined, projectId);
         clearBusyIfOwner(projectId);
-        if (state.activeProjectId !== projectId) return;   // navigated away mid-render
-        notice(`${applied?.summary || 'Voz en off limpiada'}. El ajuste de imagen por segmento llega en la fase siguiente.`);
+        if (state.activeProjectId !== projectId) return;
+        notice(`${applied?.summary || 'Voz en off limpiada'}. Renderiza cuando termines de editar.`);
         await loadProject(projectId);
       } catch (error) {
         clearBusyIfOwner(projectId);
@@ -1817,12 +1797,14 @@ async function applyPlanOp(op, label) {
     method: 'POST', body: JSON.stringify({ op }),
   });
   try {
-    setBusy(label, ['Aplicando el cambio', 'Renderizando'], 0);
+    // Apply WITHOUT auto-rendering: quick edits are often batched (quitar una
+    // voz, colocar partes, música…) and a render costs minutes. The stale-
+    // preview banner («Renderizar el corte actual») appears until the user
+    // decides to render (user ask 2026-09-08).
+    setBusy(label, ['Aplicando el cambio'], 0);
     await api(`/api/projects/${projectId}/plan/command/apply?proposal_id=${proposed.proposal_id}`, { method: 'POST' });
-    setBusy(label, ['Aplicando el cambio', 'Renderizando'], 1);
-    await runStep('render', undefined, projectId);
     state.busy = null;
-    notice('Listo — corte actualizado.');
+    notice('Cambio aplicado. La vista previa quedó desactualizada — pulsa «Renderizar el corte actual» cuando termines de editar.');
     await loadProject(projectId);
   } catch (error) {
     state.busy = null;
