@@ -1157,7 +1157,15 @@ async function chatDriveVoiceover(index) {
    refreshed plan after each placement). One render at the end. */
 async function placeVoiceoverPartsFromDrive(projectId, remotePaths, draft) {
   try {
-    let cursor = draft.start_seconds;
+    // Resume-friendly: start after whatever voiceover already sits at/after the
+    // draft start (a retried run must not collide with parts placed before an
+    // error stopped it).
+    const existing = (state.activeProject?.plan?.tracks || [])
+      .filter((t) => t.role === 'voiceover')
+      .flatMap((t) => t.events || [])
+      .map((e) => e.timeline_start_seconds + e.duration_seconds)
+      .filter((end) => end > draft.start_seconds);
+    let cursor = Math.max(draft.start_seconds, ...(existing.length ? existing : [0]));
     for (let i = 0; i < remotePaths.length; i += 1) {
       setBusy('Colocando la voz en off por partes',
         remotePaths.map((_, j) => `Parte ${j + 1}`), i, projectId);
