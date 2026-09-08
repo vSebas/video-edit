@@ -1028,7 +1028,15 @@ function chatRecordVoiceover(index) {
     recordVoiceNote({ ...draft, projectId: state.activeProjectId });
     return;
   }
-  // No in-page recording support: fall back to the OS capture input.
+  if (!window.isSecureContext) {
+    // Browsers only expose the microphone over HTTPS/localhost. Don't silently
+    // open the OS capture UI (phones route it to the CAMERA) — explain, and
+    // offer the path that does work everywhere.
+    notice('El micrófono requiere HTTPS. Abre Vlog Studio por la URL https (o '
+      + 'graba con la app de notas de voz del teléfono y usa 📁 Archivo).', true);
+    return;
+  }
+  // Secure but no MediaRecorder (rare): fall back to the OS capture input.
   chatPickVoiceover(index, '#vo-capture-input');
 }
 
