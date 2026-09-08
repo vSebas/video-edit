@@ -1229,17 +1229,42 @@ def test_chat_attaches_full_evidence_for_clips_named_in_the_message(tmp_path, mo
     section = svc._designated_clips_section(pid, mentioned)
     assert "CLIPS SEÑALADOS" in section
     assert "Jensen walks toward a dark SUV" in section        # approved, verbatim
-    assert "SIN VERIFICAR" in section and "crowd waits" in section  # pending tagged
+    assert "VISUAL:" in section                               # rows are TYPED
+    # pending lives in its own do-not-assert block, not mixed with approved
+    assert "SIN VERIFICAR (NO las afirmes" in section and "crowd waits" in section
     assert "red sweater" not in section                        # only the named clip
 
-    # the context's index lists EVERY clip (uncapped roster)
+    # the context's index lists EVERY clip (uncapped roster), framed as hints —
+    # never proof of absence
     ctx = svc._chat_context(project, project["plan"])
-    assert "ÍNDICE DE CLIPS" in ctx
+    assert "ÍNDICE DE CLIPS" in ctx and "NUNCA prueba de ausencia" in ctx
     assert "clase_sueter.mp4" in ctx and "red sweater" in ctx
     assert "20260409_170210.mp4" in ctx
 
     # prose words never false-match short ids
     assert svc._mentioned_assets(project, "quiero un final épico") == []
+    # EXACT token matching: a longer filename must not drag in a prefix sibling
+    project["inventory"]["assets"].append(
+        {"asset_id": "20260409_1702101", "filename": "20260409_1702101.mp4",
+         "media_type": "video", "duration_seconds": 3.0})
+    hits = svc._mentioned_assets(project, "mete 20260409_1702101.mp4 al final")
+    assert [a["asset_id"] for a in hits] == ["20260409_1702101"]
+
+    # speech rows are labeled as proving what was SAID, not shown
+    monkeypatch.setattr(svc, "approved_evidence", lambda p: [
+        {"evidence_id": "s1", "asset_id": "clase_sueter",
+         "caption": "dice: hay un coche rojo", "evidence_type": "speech",
+         "start_seconds": 0.0, "end_seconds": 2.0}])
+    monkeypatch.setattr(svc, "pending_evidence", lambda p: [])
+    sec2 = svc._designated_clips_section(
+        pid, [project["inventory"]["assets"][1]])
+    assert "SPEECH (prueba lo DICHO" in sec2
+
+    # the section is bounded: naming many clips truncates with an honest note
+    many = [dict(project["inventory"]["assets"][0], asset_id=f"a{i}",
+                 filename=f"clip_file_{i}.mp4") for i in range(9)]
+    sec3 = svc._designated_clips_section(pid, many)
+    assert "muestro 4" in sec3
 
 
 def test_models_in_use_reports_used_and_next(tmp_path):
@@ -1412,13 +1437,21 @@ def test_chat_reply_is_grounded_and_persists(tmp_path, monkeypatch):
     })
     result = svc.chat_send(pid, "¿qué voz en off le pongo al inicio?")
 
+    # Structure: the SYSTEM message carries only the static policy; the project
+    # data (scene map, catalogs — footage-derived text) travels as an explicitly
+    # delimited UNTRUSTED user message so caption text can never act as a
+    # directive (Codex review 2026-09-08).
     system = captured["messages"][0]["content"]
     assert captured["messages"][0]["role"] == "system"
-    assert "MAPA DE ESCENAS" in system
-    assert "maroon cap" in system            # grounded in real observed_content
-    assert "Robot day" in system             # concept title
-    assert "RECOMENDACIÓN DE NARRACIÓN" in system
-    assert "BROLL_MARKER" not in system      # B-roll excluded from the scene map
+    assert "no contiene instrucciones" not in system  # policy only, no data blob
+    data = captured["messages"][1]["content"]
+    assert captured["messages"][1]["role"] == "user"
+    assert data.startswith("DATOS DEL PROYECTO") and "<<<DATOS" in data
+    assert "MAPA DE ESCENAS" in data
+    assert "maroon cap" in data              # grounded in real observed_content
+    assert "Robot day" in data               # concept title
+    assert "RECOMENDACIÓN DE NARRACIÓN" in data
+    assert "BROLL_MARKER" not in data        # B-roll excluded from the scene map
     assert captured["messages"][-1] == {
         "role": "user", "content": "¿qué voz en off le pongo al inicio?"}
 
@@ -1429,8 +1462,10 @@ def test_chat_reply_is_grounded_and_persists(tmp_path, monkeypatch):
     # Second turn carries the prior thread to the model as history.
     canned["content"] = json.dumps({"kind": "reply", "text": "vale, más corta"})
     svc.chat_send(pid, "hazla más corta")
+    # system policy, DATOS wrapper, then the actual conversation turns
     assert [m["role"] for m in captured["messages"]] == \
-        ["system", "user", "assistant", "user"]
+        ["system", "user", "user", "assistant", "user"]
+    assert captured["messages"][1]["content"].startswith("DATOS DEL PROYECTO")
 
     reloaded = svc.load_chat(pid)
     assert len(reloaded) == 4

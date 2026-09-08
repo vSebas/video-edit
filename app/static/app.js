@@ -14,6 +14,7 @@ const state = {
   mediaFilter: 'all',
   loadGeneration: 0,     // stale loadProject responses are dropped
   chat: null,            // {projectId, messages, loaded, sending}
+  chatDrafts: {},        // unsent chat text per project — survives workspace re-renders
   pendingVoiceover: null,// draft awaiting a recorded note for "grabar y colocar"
 };
 
@@ -928,6 +929,7 @@ async function submitChat(event) {
   const message = textarea.value.trim();
   if (!message) return;
   textarea.value = '';
+  delete state.chatDrafts[chat.projectId];
   chat.messages = [...chat.messages, { role: 'user', content: message }];
   chat.writeSeq++;
   chat.sending = true;
@@ -940,6 +942,7 @@ async function submitChat(event) {
   } catch (error) {
     if (state.chat === chat) {
       textarea.value = message;  // let them retry without retyping
+      state.chatDrafts[chat.projectId] = message;
       chat.messages = [...chat.messages, { role: 'assistant', content: `⚠️ ${error.message}` }];
       chat.writeSeq++;
     }
@@ -1861,7 +1864,7 @@ function mediaWorkspace(project) {
                 <strong title="${escapeHtml(asset.filename)}">${escapeHtml(asset.filename)}</strong>
                 <span>${asset.duration_seconds ? `${Number(asset.duration_seconds).toFixed(0)}s` : 'foto'}
                   ${asset.media_url ? ` · <a href="${escapeHtml(asset.media_url)}" target="_blank" rel="noopener">ver archivo</a>` : ''}
-                  · <a href="#" data-chat-mention="${escapeHtml(asset.filename)}" title="Menciona este clip en el chat para pedir usarlo">💬 usar en el chat</a></span>
+                  ${project.plan ? ` · <a href="#" data-chat-mention="${escapeHtml(asset.filename)}" title="Menciona este clip en el chat para pedir usarlo">💬 usar en el chat</a>` : ''}</span>
                 ${(() => {
                   const moments = assetObservations(asset.asset_id);
                   if (!moments.length) return '';
@@ -2278,6 +2281,17 @@ function wireHandlers() {
   if (chatThread) {
     $('#chat-form')?.addEventListener('submit', submitChat);
     $('#chat-clear')?.addEventListener('click', clearChat);
+    // Workspace re-renders replace the textarea via innerHTML — keep the
+    // unsent draft per project so switching to Metraje and back (or a clip
+    // mention) never eats what was typed (Codex review 2026-09-08).
+    const chatBox = document.querySelector('#chat-form textarea');
+    if (chatBox) {
+      const saved = state.chatDrafts[state.activeProjectId];
+      if (saved && !chatBox.value) chatBox.value = saved;
+      chatBox.addEventListener('input', () => {
+        state.chatDrafts[state.activeProjectId] = chatBox.value;
+      });
+    }
     $('#vo-capture-input')?.addEventListener('change', onVoiceoverFilePicked);
     $('#vo-file-input')?.addEventListener('change', onVoiceoverFilePicked);
     // Delegated: proposal cards and voiceover buttons are re-rendered often.
@@ -2304,19 +2318,17 @@ function wireHandlers() {
   document.querySelectorAll('[data-chat-mention]').forEach((link) => {
     link.addEventListener('click', (event) => {
       event.preventDefault();
-      // Jump to the chat with the clip's filename pre-filled — the backend
-      // attaches that clip's full evidence when a message names it.
-      state.pendingChatMention = link.dataset.chatMention;
+      // Jump to the chat with the clip's filename appended to the (persisted)
+      // draft — the backend attaches that clip's full evidence when a message
+      // names it.
+      const name = link.dataset.chatMention;
+      const projectId = state.activeProjectId;
+      const draft = (state.chatDrafts[projectId] || '').trim();
+      state.chatDrafts[projectId] = draft
+        ? `${draft} ${name} ` : `Usa el clip ${name} para `;
       state.workspace = 'edit';
       renderProject();
-      const box = document.querySelector('#chat-form textarea');
-      if (box) {
-        box.value = box.value
-          ? `${box.value.trim()} ${state.pendingChatMention} `
-          : `Usa el clip ${state.pendingChatMention} para `;
-        box.focus();
-      }
-      state.pendingChatMention = null;
+      document.querySelector('#chat-form textarea')?.focus();
     });
   });
   document.querySelectorAll('[data-remove-asset]').forEach((button) => {
