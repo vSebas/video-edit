@@ -389,7 +389,11 @@ def test_source_context_never_enters_approved_or_pending_evidence(tmp_path: Path
                 "status": "semantic_ready",
                 "created_at": "2026-08-01T00:00:00Z",
                 "updated_at": "2026-08-01T00:00:00Z",
-                "inventory": {"assets": []},
+                # evidence reads are filtered to LIVE inventory assets, so the
+                # observed clip must exist here (Codex review 2026-09-08)
+                "inventory": {"assets": [
+                    {"asset_id": "clip", "filename": "clip.mp4",
+                     "media_type": "video", "duration_seconds": 10.0}]},
                 "concepts": [],
                 "plan": None,
                 "analysis": {},

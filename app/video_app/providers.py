@@ -23,9 +23,12 @@ class _EmptyContent(ProviderError):
     burned the whole max_tokens budget on reasoning_content and got cut off
     (finish_reason "length") before emitting the answer."""
 
-    def __init__(self, message: str, finish_reason: str | None = None) -> None:
+    def __init__(self, message: str, finish_reason: str | None = None,
+                 prompt_tokens: int = 0, completion_tokens: int = 0) -> None:
         super().__init__(message)
         self.finish_reason = finish_reason
+        self.prompt_tokens = prompt_tokens
+        self.completion_tokens = completion_tokens
 
 
 PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
@@ -188,11 +191,18 @@ class GeminiClient:
         )
         started = time.perf_counter()
         attempts_made = 0
+        # Same accumulated-cost telemetry as ChatClient: bytes per actual
+        # request; Gemini has no empty-content retry path, so the wasted-token
+        # counters stay 0 unless one is ever added.
+        bytes_sent = 0
+        wasted_prompt = 0
+        wasted_completion = 0
         url = f"{self.config.base_url}/models/{self.config.model}:generateContent"
         headers = {"x-goog-api-key": self.config.api_key}
         last_error = "unknown provider error"
         for attempt in range(1, self._max_attempts + 1):
             attempts_made = attempt
+            bytes_sent += request_size
             try:
                 response = httpx.post(
                     url, json=payload, headers=headers, timeout=self._timeout
@@ -207,18 +217,18 @@ class GeminiClient:
                         raise ProviderError(
                             "Gemini returned an invalid JSON response",
                             telemetry={
-                                "request_bytes": request_size * attempts_made,
+                                "request_bytes": bytes_sent,
                                 "wall_seconds": round(
                                     time.perf_counter() - started, 3
                                 ),
                                 "retries": attempts_made - 1,
-                                "prompt_tokens": 0,
-                                "completion_tokens": 0,
+                                "prompt_tokens": wasted_prompt,
+                                "completion_tokens": wasted_completion,
                             },
                         ) from exc
                     usage = body.get("usageMetadata") or {}
                     telemetry = {
-                        "request_bytes": request_size * attempts_made,
+                        "request_bytes": bytes_sent,
                         "wall_seconds": round(time.perf_counter() - started, 3),
                         "retries": attempts_made - 1,
                         "prompt_tokens": usage.get("promptTokenCount"),
@@ -249,11 +259,11 @@ class GeminiClient:
         raise ProviderError(
             f"{self.config.provider}/{self.config.model} request failed: {last_error}",
             telemetry={
-                "request_bytes": request_size * attempts_made,
+                "request_bytes": bytes_sent,
                 "wall_seconds": round(time.perf_counter() - started, 3),
                 "retries": max(attempts_made - 1, 0),
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
+                "prompt_tokens": wasted_prompt,
+                "completion_tokens": wasted_completion,
             },
         )
 
@@ -388,11 +398,19 @@ class ChatClient:
         )
         started = time.perf_counter()
         attempts_made = 0
+        # Cost honesty: bytes accumulate per ACTUAL request (the payload can grow
+        # on a length-retry) and billed-but-empty attempts' token usage is kept,
+        # not discarded (Codex review 2026-09-08).
+        bytes_sent = 0
+        wasted_prompt = 0
+        wasted_completion = 0
         url = f"{self.config.base_url}/chat/completions"
         headers = {"Authorization": f"Bearer {self.config.api_key}"}
         last_error = "unknown provider error"
         for attempt in range(1, self._max_attempts + 1):
             attempts_made = attempt
+            bytes_sent += len(json.dumps(
+                payload, separators=(",", ":"), ensure_ascii=False).encode())
             try:
                 response = httpx.post(
                     url, json=payload, headers=headers, timeout=self._timeout
@@ -409,14 +427,19 @@ class ChatClient:
                         # reasoning model (deepseek-v4-pro) whose max_tokens was
                         # consumed by reasoning_content before the answer. On
                         # "length", grow the budget 4x (capped) so the retry can
-                        # actually finish instead of failing identically.
+                        # actually finish instead of failing identically — but
+                        # NEVER below the current budget: a 24k caller must not
+                        # be retried at 16k (Codex review 2026-09-08).
                         last_error = str(exc)
+                        wasted_prompt += exc.prompt_tokens or 0
+                        wasted_completion += exc.completion_tokens or 0
                         if exc.finish_reason == "length":
                             cap_key = ("max_completion_tokens"
                                        if self.config.provider == "openai"
                                        else "max_tokens")
-                            current = payload.get(cap_key) or 4000
-                            payload[cap_key] = min(int(current) * 4, 16000)
+                            current = int(payload.get(cap_key) or 4000)
+                            payload[cap_key] = max(
+                                current, min(current * 4, 16000))
                         if attempt < self._max_attempts:
                             time.sleep(2**attempt)
                         continue
@@ -424,23 +447,23 @@ class ChatClient:
                         raise ProviderError(
                             str(exc),
                             telemetry={
-                                "request_bytes": request_size * attempts_made,
+                                "request_bytes": bytes_sent,
                                 "wall_seconds": round(
                                     time.perf_counter() - started, 3
                                 ),
                                 "retries": attempts_made - 1,
-                                "prompt_tokens": 0,
-                                "completion_tokens": 0,
+                                "prompt_tokens": wasted_prompt,
+                                "completion_tokens": wasted_completion,
                             },
                         ) from exc
                     result["telemetry"] = {
-                        "request_bytes": request_size * attempts_made,
+                        "request_bytes": bytes_sent,
                         "wall_seconds": round(time.perf_counter() - started, 3),
                         "retries": attempts_made - 1,
-                        "prompt_tokens": result["usage"].get("prompt_tokens"),
-                        "completion_tokens": result["usage"].get(
-                            "completion_tokens"
-                        ),
+                        "prompt_tokens": (result["usage"].get("prompt_tokens")
+                                          or 0) + wasted_prompt,
+                        "completion_tokens": (result["usage"].get(
+                            "completion_tokens") or 0) + wasted_completion,
                     }
                     return result
                 body = response.text[:400]
@@ -452,11 +475,11 @@ class ChatClient:
         raise ProviderError(
             f"{self.config.provider}/{self.config.model} request failed: {last_error}",
             telemetry={
-                "request_bytes": request_size * attempts_made,
+                "request_bytes": bytes_sent,
                 "wall_seconds": round(time.perf_counter() - started, 3),
                 "retries": max(attempts_made - 1, 0),
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
+                "prompt_tokens": wasted_prompt,
+                "completion_tokens": wasted_completion,
             },
         )
 
@@ -472,10 +495,13 @@ class ChatClient:
             finish = choice.get("finish_reason")
             detail = (" (finish_reason=length — el presupuesto de tokens se "
                       "agotó en el razonamiento)") if finish == "length" else ""
+            usage = data.get("usage") or {}
             raise _EmptyContent(
                 f"{self.config.provider}/{self.config.model} returned empty "
                 f"content{detail}",
                 finish_reason=finish,
+                prompt_tokens=usage.get("prompt_tokens") or 0,
+                completion_tokens=usage.get("completion_tokens") or 0,
             )
         usage = data.get("usage") or {}
         return {

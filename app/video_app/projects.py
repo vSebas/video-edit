@@ -489,46 +489,72 @@ class ProjectService:
             prior_covered: set = set()
             target_assets = assets
             if not force:
+                resolved_model = getattr(client.config, "model", model)
                 prior_manifest = next(
                     (m for m in self._current_run_manifests(project_id)
-                     if m["provider"]["adapter"] == "owned-live-visual"), None)
+                     if m["provider"]["adapter"] == "owned-live-visual"
+                     # ANALYZER IDENTITY must match: carrying observations from a
+                     # different provider/model/prompt would publish mixed
+                     # provenance stamped as the new analyzer (Codex review
+                     # 2026-09-08). Legacy manifests without prompt_version are
+                     # accepted on a provider+model match.
+                     and m["provider"].get("id") == provider
+                     and m["provider"].get("model") == resolved_model
+                     and m.get("prompt_version", VISUAL_PROMPT_VERSION)
+                     == VISUAL_PROMPT_VERSION), None)
                 if prior_manifest is not None:
                     try:
                         ppath = self._semantic_run_path(
                             project_id, prior_manifest["run_key"])
                         prior_normalized = load_json(ppath)
+                        if not isinstance(prior_normalized, dict) or not \
+                                isinstance(prior_normalized.get("observations"),
+                                           list):
+                            raise ValueError("prior run malformed")
                         rpath = ppath.parent / "reviews.json"
                         if rpath.is_file():
                             prior = load_json(rpath)
+                            if not isinstance(prior, dict):
+                                raise ValueError("prior reviews malformed")
                             prior_decisions = prior.get("decisions") or {}
                             prior_events = prior.get("events") or []
                     except Exception:  # noqa: BLE001 - fall back to a full run
                         prior_normalized = None
+                        prior_decisions, prior_events = {}, []
             if prior_normalized is not None:
                 # Coverage: the manifest's analyzed_asset_ids (records assets the
                 # run ATTEMPTED, including zero-observation ones) when present;
                 # legacy runs fall back to observation-derived coverage. A
-                # replaced file (same id, new bytes) is detected by comparing the
-                # sha snapshot the run stored — NOT by analysis_status, which
-                # historically was never maintained and sat at technical_only
-                # forever (user report 2026-09-07: banner claimed 54 unanalyzed).
+                # replaced file (same id, new bytes) is detected by the sha
+                # snapshot the run stored; when a legacy run has NO snapshot for
+                # an asset, sync_media's technical_only flag is the fail-closed
+                # replacement signal (post-reconciliation the field is
+                # meaningful) — Codex review 2026-09-08.
                 covered = set(prior_manifest.get("analyzed_asset_ids") or [])
                 if not covered:
                     covered = {o["asset_id"]
                                for o in prior_normalized.get("observations", [])}
                 prior_covered = covered
                 prior_shas = prior_manifest.get("asset_shas") or {}
+
+                def _needs(a: dict) -> bool:
+                    aid = a["asset_id"]
+                    if aid not in covered:
+                        return True
+                    if aid in prior_shas:
+                        return prior_shas[aid] != a.get("sha256", "")
+                    return a.get("analysis_status") == "technical_only"
+
                 needed = [a for a in assets
                           if a.get("media_type") in ("video", "image")
-                          and (a["asset_id"] not in covered
-                               or (a["asset_id"] in prior_shas
-                                   and prior_shas[a["asset_id"]]
-                                   != a.get("sha256", "")))]
+                          and _needs(a)]
                 visual_total = [a for a in assets
                                 if a.get("media_type") in ("video", "image")]
                 if not needed:
                     # nothing visual changed (e.g. only audio was added) — the
-                    # prior run still describes every clip.
+                    # prior run still describes every clip. Keep the rotation
+                    # sweep a normal cache hit would run.
+                    self._detect_rotations(project_id, client)
                     return self.semantic_run(
                         project_id, prior_manifest["run_key"])
                 if len(needed) < len(visual_total):
@@ -604,8 +630,14 @@ class ProjectService:
             # detect a replaced file. This is THE source of truth the next
             # incremental run and the "clips sin analizar" banner key off.
             live_asset_ids = {a["asset_id"] for a in assets}
+            # A target counts as covered only if the model actually RESPONDED for
+            # it (a raw record or an observation) — a clip whose every shot call
+            # failed must stay technical_only and be retried, not silently marked
+            # analyzed (Codex review 2026-09-08).
+            responded = {r.get("filename") for r in raw_records}
             coverage = {a["asset_id"] for a in target_assets
-                        if a.get("media_type") in ("video", "image")}
+                        if a.get("media_type") in ("video", "image")
+                        and a.get("filename") in responded}
             coverage |= {o["asset_id"] for o in normalized["observations"]}
             if target_assets is not assets:
                 # prior attempted-but-zero-observation assets stay covered
@@ -624,6 +656,7 @@ class ProjectService:
                 "warnings": normalized["warnings"],
                 "telemetry": telemetry,
                 "imported_at": normalized["generated_at"],
+                "prompt_version": VISUAL_PROMPT_VERSION,
                 "analyzed_asset_ids": analyzed_ids,
                 "asset_shas": {a["asset_id"]: a.get("sha256", "")
                                for a in assets},
@@ -1255,12 +1288,20 @@ class ProjectService:
 
     def approved_evidence(self, project_id: str) -> list[dict]:
         """Approved observations from the current evidence runs, with
-        reviewed wording taking precedence over the provider caption."""
+        reviewed wording taking precedence over the provider caption. Filtered
+        to LIVE inventory assets: a removed clip's observations can linger in a
+        carried run, and evidence for footage that no longer exists must never
+        ground anything (Codex review 2026-09-08)."""
+        live = {a["asset_id"]
+                for a in self.get_project(project_id)
+                .get("inventory", {}).get("assets", [])}
         items: list[dict] = []
         for manifest in self._current_run_manifests(project_id):
             run = self.semantic_run(project_id, manifest["run_key"])
             for observation in run["observations"]:
                 if observation["normalization_status"] != "accepted":
+                    continue
+                if observation["asset_id"] not in live:
                     continue
                 if observation.get("review_status") != "reviewed":
                     continue
@@ -1283,11 +1324,16 @@ class ProjectService:
         """Flagged-but-unreviewed observations. The planner may cite them,
         but the compiler will not use a range supported only by unverified
         claims unless the user confirms it."""
+        live = {a["asset_id"]
+                for a in self.get_project(project_id)
+                .get("inventory", {}).get("assets", [])}
         items: list[dict] = []
         for manifest in self._current_run_manifests(project_id):
             run = self.semantic_run(project_id, manifest["run_key"])
             for observation in run["observations"]:
                 if observation["normalization_status"] != "accepted":
+                    continue
+                if observation["asset_id"] not in live:
                     continue
                 if observation.get("review_status") != "pending":
                     continue
@@ -2202,14 +2248,22 @@ class ProjectService:
                 if prov.get("adapter") == "owned-live-visual" and prov.get("model"):
                     out["visual"]["used"] = {
                         "provider": prov.get("id"), "model": prov.get("model")}
+            newest_asr = None
             for manifest in self._semantic_run_manifests(project_id):
                 prov = manifest.get("provider") or {}
-                if prov.get("adapter") == "local-asr" and prov.get("model"):
-                    out["asr"] = {"label": "Habla (transcripción)",
-                                  "next": None,
-                                  "used": {"provider": "local",
-                                           "model": prov.get("model")}}
-                    break
+                if prov.get("adapter") != "local-asr" or not prov.get("model"):
+                    continue
+                # run dirs carry random ids — recency comes from imported_at,
+                # never the path sort (Codex review 2026-09-08)
+                if newest_asr is None or manifest.get("imported_at", "") \
+                        > newest_asr.get("imported_at", ""):
+                    newest_asr = manifest
+            if newest_asr is not None:
+                out["asr"] = {"label": "Habla (transcripción)",
+                              "next": None,
+                              "used": {"provider": "local",
+                                       "model": (newest_asr.get("provider")
+                                                 or {}).get("model")}}
         except Exception:  # noqa: BLE001 - display-only, never block
             pass
         return {"stages": out}
@@ -2407,7 +2461,13 @@ class ProjectService:
                     f"- {caption} ({rec.get('asset_id')}, "
                     f"{mmss(rec.get('start_seconds'))}–{mmss(rec.get('end_seconds'))})")
             if len(unused) > cap:
-                out.append(f"…y {len(unused) - cap} observaciones más sin usar.")
+                # An incomplete list must not license absence claims: with the
+                # relevant clip at entry 36, "no aparece en la lista" would read
+                # as "no existe" (Codex review 2026-09-08).
+                out.append(
+                    f"…y {len(unused) - cap} observaciones más sin usar (LISTA "
+                    "INCOMPLETA: NO afirmes que un metraje no existe — di que "
+                    "puede haber más material y ofrece revisarlo).")
 
         placed = []
         for track in plan.get("tracks", []):

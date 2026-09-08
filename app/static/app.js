@@ -2995,15 +2995,22 @@ async function importFromDrive(folder) {
       body: JSON.stringify({ folder }),
     });
     const done = await pollJob(job.job_id);
-    notice(done.result?.updated
+    await refreshProjects();
+    // Respect where the user IS: an update to a project they navigated away
+    // from must neither yank them back nor start analysis behind their back —
+    // the 🆕 banner offers it when they return (Codex review 2026-09-08). A
+    // FIRST import still opens its new project (the click asked for that).
+    const updated = done.result?.updated;
+    const onIt = state.activeProjectId === done.result?.project_id;
+    notice(updated
       ? `«${folder}»: ${(done.result.added || []).length} clip(s) nuevo(s) añadidos al proyecto.`
       : `«${folder}» importado — abriendo el proyecto.`);
-    await refreshProjects();
-    if (done.result?.project_id) await loadProject(done.result.project_id);
-    // Downloaded clips are invisible to the editor until analyzed — chain the
-    // INCREMENTAL analysis right away (only the new clips go to the model).
-    if (done.result?.updated && (done.result.added || []).length
-        && state.activeProjectId === done.result.project_id) {
+    if (done.result?.project_id && (!updated || onIt)) {
+      await loadProject(done.result.project_id);
+    }
+    // Downloaded clips are invisible until analyzed — chain the INCREMENTAL
+    // analysis (new clips only) when the user is on the project they updated.
+    if (updated && (done.result.added || []).length && onIt) {
       await analyzeNewClips(done.result.project_id);
     }
   } catch (error) {
@@ -3038,13 +3045,16 @@ async function watchImportJob(folder, jobId) {
   const progressTimer = startImportProgressTimer(folder, expected);
   try {
     const done = await pollJob(jobId);
-    notice(done.result?.updated
+    await refreshProjects();
+    const updated = done.result?.updated;
+    const onIt = state.activeProjectId === done.result?.project_id;
+    notice(updated
       ? `«${folder}»: ${(done.result.added || []).length} clip(s) nuevo(s) añadidos al proyecto.`
       : `«${folder}» importado — abriendo el proyecto.`);
-    await refreshProjects();
-    if (done.result?.project_id) await loadProject(done.result.project_id);
-    if (done.result?.updated && (done.result.added || []).length
-        && state.activeProjectId === done.result.project_id) {
+    if (done.result?.project_id && (!updated || onIt)) {
+      await loadProject(done.result.project_id);
+    }
+    if (updated && (done.result.added || []).length && onIt) {
       await analyzeNewClips(done.result.project_id);
     }
   } catch (error) {
