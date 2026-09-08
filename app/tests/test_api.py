@@ -1007,6 +1007,31 @@ def test_visual_analysis_is_incremental_for_new_clips(tmp_path, monkeypatch):
     # the new observation was auto-approved by policy
     assert obs["ev-nuevo"]["review_status"] == "reviewed"
 
+    # The merged run records its coverage + sha snapshot, and the inventory's
+    # analysis_status is finally MAINTAINED (it used to sit at technical_only
+    # forever, making every clip look unanalyzed — user report 2026-09-07).
+    manifests = [m for m in svc._current_run_manifests(pid)
+                 if m["provider"]["adapter"] == "owned-live-visual"]
+    (m2,) = manifests
+    assert set(m2["analyzed_asset_ids"]) == {"old1", "old2", "nuevo"}
+    assert m2["asset_shas"]["nuevo"] == "nuevo"
+    statuses = {a["asset_id"]: a["analysis_status"]
+                for a in svc.get_project(pid)["inventory"]["assets"]}
+    assert statuses == {"old1": "analyzed", "old2": "analyzed",
+                        "nuevo": "analyzed"}
+
+    # A REPLACED file (same id, new sha) is re-analyzed on the next run even
+    # though it is "covered" — detected via the stored sha snapshot.
+    path = runtime / pid / "project.json"
+    doc = json.loads(path.read_text())
+    for a in doc["inventory"]["assets"]:
+        if a["asset_id"] == "old2":
+            a["sha256"] = "old2-changed"
+    path.write_text(json.dumps(doc))
+    analyzed_ids.clear()
+    svc.analyze_visual(pid, "gemini", "gemini-3.6-flash")
+    assert analyzed_ids == ["old2"]
+
 
 def test_drive_inbox_reports_new_files_for_imported_folders(tmp_path, monkeypatch):
     """An imported folder that GREW on Drive (phone dropped new clips) must

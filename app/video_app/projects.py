@@ -486,6 +486,7 @@ class ProjectService:
             prior_normalized = None
             prior_decisions: dict = {}
             prior_events: list = []
+            prior_covered: set = set()
             target_assets = assets
             if not force:
                 prior_manifest = next(
@@ -504,12 +505,25 @@ class ProjectService:
                     except Exception:  # noqa: BLE001 - fall back to a full run
                         prior_normalized = None
             if prior_normalized is not None:
-                covered = {o["asset_id"]
-                           for o in prior_normalized.get("observations", [])}
+                # Coverage: the manifest's analyzed_asset_ids (records assets the
+                # run ATTEMPTED, including zero-observation ones) when present;
+                # legacy runs fall back to observation-derived coverage. A
+                # replaced file (same id, new bytes) is detected by comparing the
+                # sha snapshot the run stored — NOT by analysis_status, which
+                # historically was never maintained and sat at technical_only
+                # forever (user report 2026-09-07: banner claimed 54 unanalyzed).
+                covered = set(prior_manifest.get("analyzed_asset_ids") or [])
+                if not covered:
+                    covered = {o["asset_id"]
+                               for o in prior_normalized.get("observations", [])}
+                prior_covered = covered
+                prior_shas = prior_manifest.get("asset_shas") or {}
                 needed = [a for a in assets
                           if a.get("media_type") in ("video", "image")
                           and (a["asset_id"] not in covered
-                               or a.get("analysis_status") == "technical_only")]
+                               or (a["asset_id"] in prior_shas
+                                   and prior_shas[a["asset_id"]]
+                                   != a.get("sha256", "")))]
                 visual_total = [a for a in assets
                                 if a.get("media_type") in ("video", "image")]
                 if not needed:
@@ -584,6 +598,19 @@ class ProjectService:
             write_json(raw_dir / "live-responses.json", {"responses": raw_records})
             write_json(staging / "normalized.json", normalized)
             write_json(staging / "reviews.json", reviews)
+            # Attempted-coverage record: every visual asset this run analyzed
+            # (targets — including zero-observation ones) plus the coverage
+            # carried from the prior run; with a sha snapshot so a later run can
+            # detect a replaced file. This is THE source of truth the next
+            # incremental run and the "clips sin analizar" banner key off.
+            live_asset_ids = {a["asset_id"] for a in assets}
+            coverage = {a["asset_id"] for a in target_assets
+                        if a.get("media_type") in ("video", "image")}
+            coverage |= {o["asset_id"] for o in normalized["observations"]}
+            if target_assets is not assets:
+                # prior attempted-but-zero-observation assets stay covered
+                coverage |= prior_covered
+            analyzed_ids = sorted(coverage & live_asset_ids)
             manifest = {
                 "schema_version": "semantic-run-manifest.v1",
                 "run_key": run_key,
@@ -597,6 +624,9 @@ class ProjectService:
                 "warnings": normalized["warnings"],
                 "telemetry": telemetry,
                 "imported_at": normalized["generated_at"],
+                "analyzed_asset_ids": analyzed_ids,
+                "asset_shas": {a["asset_id"]: a.get("sha256", "")
+                               for a in assets},
                 "detail_url": f"/api/projects/{project_id}/analysis/runs/{run_key}",
             }
             write_json(staging / "manifest.json", manifest)
@@ -604,6 +634,22 @@ class ProjectService:
         except Exception:
             shutil.rmtree(staging, ignore_errors=True)
             raise
+
+        # Maintain the inventory's analysis_status (it was historically write-
+        # once at probe time and sat at technical_only forever, breaking any UI
+        # or logic that read it). Analyzed assets flip to "analyzed"; sync_media
+        # resets a replaced file back to technical_only.
+        with self._project_write(project_id):
+            path = self.settings.runtime / project_id / "project.json"
+            stored = load_json(path)
+            changed = False
+            for a in stored.get("inventory", {}).get("assets", []):
+                if a["asset_id"] in analyzed_ids \
+                        and a.get("analysis_status") != "analyzed":
+                    a["analysis_status"] = "analyzed"
+                    changed = True
+            if changed:
+                write_json(path, stored)
 
         self._corroborate_speech_claims(project_id)
         self._mark_semantic_progress(project_id, "visual")
