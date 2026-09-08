@@ -1190,7 +1190,9 @@ async function placeVoiceoverPartsFromDrive(projectId, remotePaths, draft) {
         remotePaths.map((_, j) => `Parte ${j + 1}`), i, projectId);
       await api(`/api/projects/${projectId}/voiceover/place-from-drive`, {
         method: 'POST',
-        body: JSON.stringify({ remote_path: remotePaths[i], start_seconds: cursor }),
+        // sequence:true = the SERVER appends after the lane end if our cursor
+        // is stale — collisions become impossible regardless of client state.
+        body: JSON.stringify({ remote_path: remotePaths[i], start_seconds: cursor, sequence: true }),
       });
       if (state.activeProjectId !== projectId) { clearBusyIfOwner(projectId); return; }
       // the next part starts where the voiceover lane now ends

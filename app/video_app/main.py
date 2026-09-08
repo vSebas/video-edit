@@ -176,6 +176,8 @@ class VoiceoverDrivePlaceRequest(BaseModel):
     remote_path: str = Field(min_length=1, max_length=1024)
     start_seconds: float
     max_duration_seconds: float | None = None
+    # server-side sequencing: append after the voiceover lane's current end
+    sequence: bool = False
 
 
 class RenameProjectRequest(BaseModel):
@@ -489,7 +491,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return project_call(
             lambda: projects.place_voiceover_from_drive(
                 project_id, request.remote_path, request.start_seconds,
-                request.max_duration_seconds)
+                request.max_duration_seconds, sequence=request.sequence)
         )
 
     @application.post("/api/projects/{project_id}/sync-media")

@@ -5101,12 +5101,23 @@ class ProjectService:
     def place_voiceover_from_drive(
         self, project_id: str, remote_path: str,
         start_seconds: float, max_duration_seconds: float | None = None,
+        sequence: bool = False,
     ) -> dict:
         """Copy ONE audio file out of the Drive inbox into the project and place
         it as a voiceover — the same confirm-gated add_voiceover path as an
         uploaded recording. `remote_path` must be one the listing returned (no
-        arbitrary Drive paths / traversal)."""
+        arbitrary Drive paths / traversal). With `sequence=True` the SERVER
+        appends after the current end of the voiceover lane when that is later
+        than the requested start — device-side cursors proved unreliable (stale
+        snapshots kept producing "Overlaps voiceover vo-02", 2026-09-08)."""
         project = self.get_project(project_id)
+        if sequence:
+            lane_end = max(
+                (float(e.get("timeline_start_seconds") or 0.0)
+                 + float(e.get("duration_seconds") or 0.0)
+                 for e in self._voiceover_events(project.get("plan") or {})),
+                default=0.0)
+            start_seconds = max(float(start_seconds), lane_end)
         allowed = {f["path"] for f in self.drive_voice_files()}
         if remote_path not in allowed:
             raise ProjectError("Ese archivo de voz ya no está en Drive")
