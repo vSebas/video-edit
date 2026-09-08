@@ -126,6 +126,9 @@ class PlanCommandRequest(BaseModel):
 _DIRECT_UI_OPS = {
     "set_music_bed", "set_music_recommendation", "remove_music",
     "edit_caption", "remove_caption", "set_transition", "set_fades",
+    # lane-chip ✕ buttons; both are already model-callable, so this exposes no
+    # new capability — just a click instead of a chat instruction
+    "remove_voiceover", "remove_broll",
 }
 
 

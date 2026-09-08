@@ -1260,14 +1260,17 @@ function overlayLanes(project) {
   const broll = tracks.find((t) => t.kind === 'video' && t.role === 'broll')?.events || [];
   const voiceover = tracks.find((t) => t.kind === 'audio' && t.role === 'voiceover')?.events || [];
   if (!broll.length && !voiceover.length) return '';
-  const chip = (event, icon) => `
+  const chip = (event, icon, removeOp) => `
     <span class="lane-chip">${icon} ${escapeHtml(event.event_id)} ·
     ${event.timeline_start_seconds.toFixed(1)}–${(event.timeline_start_seconds + event.duration_seconds).toFixed(1)}s
-    (${escapeHtml(event.asset_id || '')})</span>`;
+    (${escapeHtml(event.asset_id || '')})
+    <button class="lane-chip-remove" data-lane-remove="${removeOp}"
+      data-lane-event="${escapeHtml(event.event_id)}"
+      title="Quitar del corte (el archivo no se borra)">✕</button></span>`;
   return `
     <div class="overlay-lanes">
-      ${broll.length ? `<div><span class="eyebrow">B-roll</span> ${broll.map((e) => chip(e, '🎞')).join('')}</div>` : ''}
-      ${voiceover.length ? `<div><span class="eyebrow">Voz en off</span> ${voiceover.map((e) => chip(e, '🎙')).join('')}</div>` : ''}
+      ${broll.length ? `<div><span class="eyebrow">B-roll</span> ${broll.map((e) => chip(e, '🎞', 'remove_broll')).join('')}</div>` : ''}
+      ${voiceover.length ? `<div><span class="eyebrow">Voz en off</span> ${voiceover.map((e) => chip(e, '🎙', 'remove_voiceover')).join('')}</div>` : ''}
     </div>`;
 }
 
@@ -2390,6 +2393,17 @@ function wireHandlers() {
   });
   $('#see-new-ideas')?.addEventListener('click', () => { state.workspace = 'story'; renderProject(); });
   $('#analyze-new-clips')?.addEventListener('click', () => analyzeNewClips(state.activeProjectId));
+  document.querySelectorAll('[data-lane-remove]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const kind = btn.dataset.laneRemove === 'remove_voiceover' ? 'voz en off' : 'B-roll';
+      if (!window.confirm(`¿Quitar ${kind} ${btn.dataset.laneEvent} del corte? (El archivo de audio/video no se borra.)`)) return;
+      try {
+        await applyPlanOp(
+          { op: btn.dataset.laneRemove, event_id: btn.dataset.laneEvent },
+          `Quitando ${kind}`);
+      } catch (error) { notice(error.message, true); }
+    });
+  });
   $('#copy-folder-path')?.addEventListener('click', async (event) => {
     const path = event.currentTarget.previousElementSibling?.textContent || '';
     try { await navigator.clipboard.writeText(path); notice('Ruta copiada.'); }

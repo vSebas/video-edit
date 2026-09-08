@@ -769,6 +769,9 @@ input[type="file"] {
 /* Overlay lanes (storyboard) */
 .overlay-lanes { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
 .overlay-lanes > div { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.lane-chip-remove { background: transparent; border: none; color: var(--muted);
+  cursor: pointer; padding: 0 2px; font-size: 12px; }
+.lane-chip-remove:hover { color: #e05555; }
 .lane-chip {
   font-size: 12px; padding: 3px 9px; border-radius: 999px;
   border: 1px solid var(--line); background: var(--panel-2); color: var(--muted);
