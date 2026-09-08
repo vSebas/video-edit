@@ -1126,19 +1126,67 @@ async function chatDriveVoiceover(index) {
       return;
     }
     box.innerHTML = `<div class="sync-diff">
-      <p>Elige la nota de voz para <em>«${escapeHtml(draft.text)}»</em> (${fmtTime(draft.start_seconds)}–${fmtTime(draft.end_seconds)}):</p>
-      ${files.map((f) => `<div class="cleanup-item">
+      <p>Elige nota(s) de voz para <em>«${escapeHtml(draft.text)}»</em> (${fmtTime(draft.start_seconds)}–${fmtTime(draft.end_seconds)}).
+      Con varias, se colocan EN ORDEN una tras otra desde ${fmtTime(draft.start_seconds)}:</p>
+      ${files.map((f, i) => `<label class="cleanup-item">
+        <input type="checkbox" data-drive-voice-check="${i}" />
         <span>☁️ ${escapeHtml(f.name)} <span class="muted">(${(f.bytes / 1e6).toFixed(1)} MB)</span></span>
-        <button class="primary compact" data-drive-voice="${escapeHtml(f.path)}">Colocar</button>
-      </div>`).join('')}
+        <button class="primary compact" data-drive-voice="${escapeHtml(f.path)}">Colocar solo esta</button>
+      </label>`).join('')}
+      <button class="primary compact" id="drive-voice-multi">Colocar seleccionadas en orden</button>
     </div>`;
     box.querySelectorAll('[data-drive-voice]').forEach((btn) => {
       btn.addEventListener('click', () => placeVoiceoverFromDrive(
         projectId, btn.dataset.driveVoice, draft));
     });
+    $('#drive-voice-multi')?.addEventListener('click', () => {
+      const picked = [...box.querySelectorAll('[data-drive-voice-check]')]
+        .filter((el) => el.checked)
+        .map((el) => files[Number(el.dataset.driveVoiceCheck)].path);
+      if (!picked.length) { notice('Marca al menos una nota de voz.', true); return; }
+      placeVoiceoverPartsFromDrive(projectId, picked, draft);
+    });
   } catch (error) {
     if (state.activeProjectId !== projectId) return;
     if (box) box.innerHTML = `<p class="notice error">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+/* Multi-part narration from Drive: place each selected note back-to-back, in
+   the order shown — part N+1 starts exactly where part N ended (read from the
+   refreshed plan after each placement). One render at the end. */
+async function placeVoiceoverPartsFromDrive(projectId, remotePaths, draft) {
+  try {
+    let cursor = draft.start_seconds;
+    for (let i = 0; i < remotePaths.length; i += 1) {
+      setBusy('Colocando la voz en off por partes',
+        remotePaths.map((_, j) => `Parte ${j + 1}`).concat(['Renderizando']), i, projectId);
+      await api(`/api/projects/${projectId}/voiceover/place-from-drive`, {
+        method: 'POST',
+        body: JSON.stringify({ remote_path: remotePaths[i], start_seconds: cursor }),
+      });
+      if (state.activeProjectId !== projectId) { clearBusyIfOwner(projectId); return; }
+      // the next part starts where the voiceover lane now ends
+      const project = await api(`/api/projects/${projectId}`);
+      const voEvents = (project.plan?.tracks || [])
+        .filter((t) => t.role === 'voiceover')
+        .flatMap((t) => t.events || []);
+      cursor = Math.max(cursor,
+        ...voEvents.map((e) => e.timeline_start_seconds + e.duration_seconds));
+    }
+    setBusy('Colocando la voz en off por partes',
+      remotePaths.map((_, j) => `Parte ${j + 1}`).concat(['Renderizando']),
+      remotePaths.length, projectId);
+    await runStep('render', undefined, projectId);
+    clearBusyIfOwner(projectId);
+    if (state.activeProjectId !== projectId) return;
+    notice(`${remotePaths.length} parte(s) de voz en off colocadas en orden — nuevo corte arriba.`);
+    await loadProject(projectId);
+  } catch (error) {
+    clearBusyIfOwner(projectId);
+    if (state.activeProjectId !== projectId) return;
+    notice(error.message, true);
+    await loadProject(projectId);
   }
 }
 

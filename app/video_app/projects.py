@@ -895,17 +895,100 @@ class ProjectService:
             cached = self._existing_run_for(project_id, content_key)
             if cached is not None:
                 return cached
+        # INCREMENTAL, like the visual path: a re-run must NOT re-mint evidence
+        # ids for unchanged assets — plans cite speech evidence by id, and a
+        # superseding run with fresh ids breaks their lineage ("aún sin
+        # confirmar" on scenes that were fine; user report 2026-09-08). Carry
+        # prior observations + review decisions verbatim for covered assets and
+        # transcribe only the new/changed ones.
+        prior_normalized = None
+        prior_decisions: dict = {}
+        prior_events: list = []
+        prior_covered: set = set()
+        target_assets = assets
+        if not force:
+            prior_manifest = next(
+                (m for m in self._current_run_manifests(project_id)
+                 if m["provider"]["adapter"] == "local-asr"
+                 and m.get("prompt_version", SPEECH_PROMPT_VERSION)
+                 == SPEECH_PROMPT_VERSION
+                 # an explicit different model size is a deliberate redo
+                 and (model_size is None
+                      or model_size in str(m["provider"].get("model") or ""))),
+                None)
+            if prior_manifest is not None:
+                try:
+                    ppath = self._semantic_run_path(
+                        project_id, prior_manifest["run_key"])
+                    prior_normalized = load_json(ppath)
+                    if not isinstance(prior_normalized, dict) or not \
+                            isinstance(prior_normalized.get("observations"),
+                                       list):
+                        raise ValueError("prior run malformed")
+                    rpath = ppath.parent / "reviews.json"
+                    if rpath.is_file():
+                        prior = load_json(rpath)
+                        if not isinstance(prior, dict):
+                            raise ValueError("prior reviews malformed")
+                        prior_decisions = prior.get("decisions") or {}
+                        prior_events = prior.get("events") or []
+                except Exception:  # noqa: BLE001 - fall back to a full run
+                    prior_normalized = None
+                    prior_decisions, prior_events = {}, []
+        if prior_normalized is not None:
+            covered = set(prior_manifest.get("analyzed_asset_ids") or [])
+            if not covered:
+                covered = {o["asset_id"]
+                           for o in prior_normalized.get("observations", [])}
+            prior_covered = covered
+            prior_shas = prior_manifest.get("asset_shas") or {}
+
+            def _needs(a: dict) -> bool:
+                aid = a["asset_id"]
+                if aid not in covered:
+                    return True
+                if aid in prior_shas:
+                    return prior_shas[aid] != a.get("sha256", "")
+                return a.get("analysis_status") == "technical_only"
+
+            audible = [a for a in assets
+                       if a.get("media_type") in ("video", "audio")]
+            needed = [a for a in audible if _needs(a)]
+            if not needed:
+                return self.semantic_run(
+                    project_id, prior_manifest["run_key"])
+            if len(needed) < len(audible):
+                target_assets = needed
+            else:
+                prior_normalized = None
         run_id = uuid.uuid4().hex[:12]
         run_key = f"asr-live-{run_id}"
         try:
             speech_progress = _progress_setter(project_id, "speech")
             try:
                 normalized, raw_records = analyze_speech(
-                    assets, media_root, project_id, run_id, model_size,
+                    target_assets, media_root, project_id, run_id, model_size,
                     progress=speech_progress,
                 )
             finally:
                 speech_progress.clear()
+            reviews = auto_review_decisions(normalized)
+            if prior_normalized is not None and target_assets is not assets:
+                needed_ids = {a["asset_id"] for a in target_assets}
+                live_ids = {a["asset_id"] for a in assets}
+                carried = [o for o in prior_normalized.get("observations", [])
+                           if o["asset_id"] in live_ids
+                           and o["asset_id"] not in needed_ids]
+                normalized["observations"] = (
+                    carried + normalized["observations"])
+                carried_ids = {o["evidence_id"] for o in carried}
+                merged = dict(reviews.get("decisions") or {})
+                merged.update({eid: d for eid, d in prior_decisions.items()
+                               if eid in carried_ids})
+                reviews["decisions"] = merged
+                reviews["events"] = ([e for e in prior_events
+                                      if e.get("evidence_id") in carried_ids]
+                                     + (reviews.get("events") or []))
             validate_semantic_evidence(
                 normalized,
                 SCHEMA_DIR / "semantic-evidence.schema.json",
@@ -913,7 +996,6 @@ class ProjectService:
         except (SpeechAnalysisError, SemanticEvidenceError) as exc:
             raise ProjectError(f"Speech analysis failed: {exc}") from exc
 
-        reviews = auto_review_decisions(normalized)
         reviews["run_key"] = run_key
         runs_dir = self.settings.runtime / project_id / "analysis" / "runs"
         runs_dir.mkdir(parents=True, exist_ok=True)
@@ -924,6 +1006,18 @@ class ProjectService:
             write_json(raw_dir / "transcripts.json", {"transcripts": raw_records})
             write_json(staging / "normalized.json", normalized)
             write_json(staging / "reviews.json", reviews)
+            # Attempted-coverage record (same contract as the visual runs): the
+            # ASSETS this run transcribed — via their raw transcript records, so
+            # a silent clip still counts as covered — plus carried coverage, and
+            # a sha snapshot for replaced-file detection.
+            live_asset_ids = {a["asset_id"] for a in assets}
+            responded = {r.get("asset_id") for r in raw_records}
+            coverage = {a["asset_id"] for a in target_assets
+                        if a.get("media_type") in ("video", "audio")
+                        and a["asset_id"] in responded}
+            coverage |= {o["asset_id"] for o in normalized["observations"]}
+            if target_assets is not assets:
+                coverage |= prior_covered
             manifest = {
                 "schema_version": "semantic-run-manifest.v1",
                 "run_key": run_key,
@@ -936,6 +1030,10 @@ class ProjectService:
                 "summary": normalized["summary"],
                 "warnings": normalized["warnings"],
                 "imported_at": normalized["generated_at"],
+                "prompt_version": SPEECH_PROMPT_VERSION,
+                "analyzed_asset_ids": sorted(coverage & live_asset_ids),
+                "asset_shas": {a["asset_id"]: a.get("sha256", "")
+                               for a in assets},
                 "detail_url": f"/api/projects/{project_id}/analysis/runs/{run_key}",
             }
             write_json(staging / "manifest.json", manifest)
