@@ -648,6 +648,31 @@ class ProjectService:
                         and a.get("analysis_status") != "analyzed":
                     a["analysis_status"] = "analyzed"
                     changed = True
+            # The sync-time "N nuevos — analízalos" summary is now satisfied;
+            # refresh it so a stale re-analyze hint doesn't outlive the analysis
+            # it asked for (user report 2026-09-08).
+            pending_visual = sum(
+                1 for a in stored.get("inventory", {}).get("assets", [])
+                if a.get("media_type") in ("video", "image")
+                and a.get("analysis_status") == "technical_only")
+            summary_text = stored.get("footage_summary") or ""
+            if not pending_visual and ("análisis" in summary_text
+                                       or "analysis" in summary_text):
+                # Prefer restoring the NARRATIVE summary (the concepts document
+                # keeps it) that the sync hint overwrote; else a plain state line.
+                narrative = ""
+                concepts_path = (self.settings.runtime / project_id
+                                 / "analysis" / "concepts.json")
+                if concepts_path.is_file():
+                    try:
+                        narrative = (load_json(concepts_path)
+                                     .get("footage_summary") or "")
+                    except Exception:  # noqa: BLE001
+                        narrative = ""
+                total = len(stored.get("inventory", {}).get("assets", []))
+                stored["footage_summary"] = narrative or (
+                    f"{total} archivo(s) de metraje; análisis al día.")
+                changed = True
             if changed:
                 write_json(path, stored)
 
@@ -4656,8 +4681,9 @@ class ProjectService:
             if added or replaced:
                 changed = len(added) + len(replaced)
                 stored["footage_summary"] = (
-                    f"{len(kept)} media file(s); {changed} new or changed since the "
-                    "last analysis — re-analyze to include them in stories."
+                    f"{len(kept)} archivo(s) de metraje; {changed} nuevo(s) o "
+                    "cambiado(s) desde el último análisis — analízalos para "
+                    "usarlos en historias."
                 )
             if replaced:
                 stored["analysis"]["warning"] = (
