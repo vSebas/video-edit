@@ -140,10 +140,14 @@ Eres el asistente de edición de Vlog Studio. Conversas en el idioma del vlog \
 (español; a veces inglés si el metraje lo es) para ayudar a mejorar el corte. \
 Conoces el metraje: abajo tienes el concepto, el MAPA DE ESCENAS (timecode · qué \
 se ve · intención), el MATERIAL DISPONIBLE SIN USAR (metraje verificado que \
-existe pero no está en este corte) y las voces en off ya colocadas. Cuando te \
-pregunten si hay metraje de algo, revisa TAMBIÉN el material sin usar — que algo \
-no esté en el corte no significa que no exista; si está en la lista, dilo y \
-ofrece añadirlo. Solo di que no hay metraje de algo si tampoco aparece ahí.
+existe pero no está en este corte), el ÍNDICE DE CLIPS (TODOS los clips, uno por \
+línea) y las voces en off ya colocadas. Cuando te pregunten si hay metraje de \
+algo, revisa el material sin usar Y el índice — que algo no esté en el corte no \
+significa que no exista; si está, dilo y ofrece añadirlo. Solo di que no hay \
+metraje de algo si tampoco aparece en el índice. El creador puede SEÑALARTE \
+clips por nombre de archivo o describiéndolos («el instructor del suéter \
+rojo»); si el mensaje trae una sección CLIPS SEÑALADOS, esa evidencia manda: \
+úsala/propónla con prioridad y ancla el guion a lo que describe.
 
 Respondes SIEMPRE con un objeto JSON, una de dos formas:
 
@@ -2364,6 +2368,58 @@ class ProjectService:
             write_json(self._chat_path(project_id), {"messages": []})
         return []
 
+    def _mentioned_assets(self, project: dict, message: str) -> list[dict]:
+        """Inventory assets the message names directly — by filename (with or
+        without extension) or asset id, case-insensitive. Order follows the
+        inventory; duplicates collapse."""
+        text = (message or "").lower()
+        found = []
+        for a in project.get("inventory", {}).get("assets", []):
+            filename = str(a.get("filename") or "").lower()
+            stem = filename.rsplit(".", 1)[0] if "." in filename else filename
+            candidates = {c for c in (filename, stem,
+                                      str(a.get("asset_id") or "").lower())
+                          if len(c) >= 6}   # short names would false-match prose
+            if any(c in text for c in candidates):
+                found.append(a)
+        return found
+
+    def _designated_clips_section(
+        self, project_id: str, mentioned: list[dict]
+    ) -> str:
+        """Full evidence for clips the creator explicitly named — approved
+        observations verbatim and pending ones tagged, so the assistant can use
+        exactly the footage the human pointed at (and flag what still needs
+        review) instead of denying it exists."""
+        approved: dict[str, list] = {}
+        for rec in self.approved_evidence(project_id):
+            approved.setdefault(rec["asset_id"], []).append(rec)
+        pending: dict[str, list] = {}
+        for rec in self.pending_evidence(project_id):
+            pending.setdefault(rec["asset_id"], []).append(rec)
+        out = ["CLIPS SEÑALADOS POR EL CREADOR EN ESTE MENSAJE (evidencia "
+               "completa — úsalos/propónlos con prioridad):"]
+        for a in mentioned:
+            aid = a.get("asset_id")
+            dur = a.get("duration_seconds")
+            out.append(f"■ {a.get('filename')} ({aid}"
+                       f"{f', {float(dur):.0f}s' if dur else ''}):")
+            rows = approved.get(aid) or []
+            for rec in rows:
+                out.append(
+                    f"  - [{rec['start_seconds']:.0f}–{rec['end_seconds']:.0f}s] "
+                    f"{' '.join(str(rec.get('caption') or '').split())[:200]}")
+            for rec in pending.get(aid) or []:
+                out.append(
+                    f"  - [{rec['start_seconds']:.0f}–{rec['end_seconds']:.0f}s] "
+                    f"(SIN VERIFICAR — pide confirmarla en Diagnóstico antes de "
+                    f"basar afirmaciones) "
+                    f"{' '.join(str(rec.get('caption') or '').split())[:200]}")
+            if not rows and not pending.get(aid):
+                out.append("  - (aún sin análisis — sugiere «Analizar clips "
+                           "nuevos» para poder usarlo)")
+        return "\n".join(out)
+
     def _chat_context(self, project: dict, plan: dict) -> str:
         """The grounded brief handed to the model: concept, a timecoded scene
         map (what is shown + intent), voiceovers already placed, and the
@@ -2468,6 +2524,29 @@ class ProjectService:
                     f"…y {len(unused) - cap} observaciones más sin usar (LISTA "
                     "INCOMPLETA: NO afirmes que un metraje no existe — di que "
                     "puede haber más material y ofrece revisarlo).")
+
+        # Complete one-line-per-clip INDEX (never capped): lets the creator refer
+        # to clips by name OR description ("el instructor del suéter rojo") and
+        # lets the model resolve those references — the catalogs above are
+        # detail views, this is the roster (user ask 2026-09-08).
+        first_caption: dict[str, str] = {}
+        for rec in pool:
+            if rec.get("evidence_type") == "visual":
+                first_caption.setdefault(
+                    rec["asset_id"],
+                    " ".join(str(rec.get("caption") or "").split()))
+        visual_assets = [a for a in project.get("inventory", {}).get("assets", [])
+                         if a.get("media_type") in ("video", "image")]
+        if visual_assets:
+            out.append("")
+            out.append("ÍNDICE DE CLIPS (todos; pide el que necesites por "
+                       "nombre):")
+            for a in visual_assets:
+                cap_txt = first_caption.get(a["asset_id"], "(sin análisis)")
+                dur = a.get("duration_seconds")
+                out.append(
+                    f"- {a.get('filename')}"
+                    f"{f' · {float(dur):.0f}s' if dur else ''}: {cap_txt[:110]}")
 
         placed = []
         for track in plan.get("tracks", []):
@@ -3636,6 +3715,14 @@ class ProjectService:
 
         history = self._read_chat_messages(project_id)
         context = self._chat_context(project, plan)
+        # Clips the creator NAMED in this message (filename or asset id) get
+        # their FULL evidence attached, uncapped — so "usa 20260409_170210.mp4"
+        # works exactly as typed instead of hoping the clip survived the
+        # unused-material cap (user ask 2026-09-08).
+        mentioned = self._mentioned_assets(project, message)
+        if mentioned:
+            context += "\n\n" + self._designated_clips_section(
+                project_id, mentioned)
         conversation: list[dict] = [
             {"role": "system", "content": _CHAT_SYSTEM + "\n\n" + context}
         ]

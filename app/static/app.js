@@ -1860,7 +1860,8 @@ function mediaWorkspace(project) {
               <div class="media-info">
                 <strong title="${escapeHtml(asset.filename)}">${escapeHtml(asset.filename)}</strong>
                 <span>${asset.duration_seconds ? `${Number(asset.duration_seconds).toFixed(0)}s` : 'foto'}
-                  ${asset.media_url ? ` · <a href="${escapeHtml(asset.media_url)}" target="_blank" rel="noopener">ver archivo</a>` : ''}</span>
+                  ${asset.media_url ? ` · <a href="${escapeHtml(asset.media_url)}" target="_blank" rel="noopener">ver archivo</a>` : ''}
+                  · <a href="#" data-chat-mention="${escapeHtml(asset.filename)}" title="Menciona este clip en el chat para pedir usarlo">💬 usar en el chat</a></span>
                 ${(() => {
                   const moments = assetObservations(asset.asset_id);
                   if (!moments.length) return '';
@@ -2300,6 +2301,24 @@ function wireHandlers() {
     button.addEventListener('click', () => { state.mediaFilter = button.dataset.mediaFilter; renderProject(); });
   });
   $('#add-clips-input')?.addEventListener('change', addClipsToProject);
+  document.querySelectorAll('[data-chat-mention]').forEach((link) => {
+    link.addEventListener('click', (event) => {
+      event.preventDefault();
+      // Jump to the chat with the clip's filename pre-filled — the backend
+      // attaches that clip's full evidence when a message names it.
+      state.pendingChatMention = link.dataset.chatMention;
+      state.workspace = 'edit';
+      renderProject();
+      const box = document.querySelector('#chat-form textarea');
+      if (box) {
+        box.value = box.value
+          ? `${box.value.trim()} ${state.pendingChatMention} `
+          : `Usa el clip ${state.pendingChatMention} para `;
+        box.focus();
+      }
+      state.pendingChatMention = null;
+    });
+  });
   document.querySelectorAll('[data-remove-asset]').forEach((button) => {
     button.addEventListener('click', (event) => {
       event.stopPropagation();

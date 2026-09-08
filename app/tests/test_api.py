@@ -1186,6 +1186,62 @@ def test_chat_context_lists_unused_footage(tmp_path, monkeypatch):
     assert "someone says hi" not in ctx      # speech is not footage
 
 
+def test_chat_attaches_full_evidence_for_clips_named_in_the_message(tmp_path, monkeypatch):
+    """When the creator names a clip (filename or asset id) in a chat message,
+    its FULL evidence — approved and pending-tagged — is attached to the context
+    uncapped, and the index lists every clip so descriptive references can be
+    resolved (user ask 2026-09-08)."""
+    from video_app.config import Settings
+    from video_app.projects import ProjectService
+
+    root = tmp_path / "root"
+    runtime = root / "runtime"
+    pid = "vlog-mention"
+    (runtime / pid).mkdir(parents=True)
+    project = {
+        "schema_version": "video-app-project.v1", "project_id": pid,
+        "name": "M", "plan": {"concept_id": "c1",
+                              "project": {"duration_seconds": 6.0}, "tracks": []},
+        "concepts": [],
+        "inventory": {"assets": [
+            {"asset_id": "20260409_170210", "filename": "20260409_170210.mp4",
+             "media_type": "video", "duration_seconds": 5.0},
+            {"asset_id": "clase_sueter", "filename": "clase_sueter.mp4",
+             "media_type": "video", "duration_seconds": 8.0}]},
+    }
+    write_json(runtime / pid / "project.json", project)
+    svc = ProjectService(Settings(root=root, runtime=runtime))
+    monkeypatch.setattr(svc, "approved_evidence", lambda p: [
+        {"evidence_id": "e1", "asset_id": "20260409_170210",
+         "caption": "Jensen walks toward a dark SUV outside", "evidence_type": "visual",
+         "start_seconds": 0.0, "end_seconds": 5.0},
+        {"evidence_id": "e2", "asset_id": "clase_sueter",
+         "caption": "instructor in a red sweater at a whiteboard",
+         "evidence_type": "visual", "start_seconds": 0.0, "end_seconds": 8.0}])
+    monkeypatch.setattr(svc, "pending_evidence", lambda p: [
+        {"evidence_id": "p1", "asset_id": "20260409_170210",
+         "caption": "crowd waits by the exit", "evidence_type": "visual",
+         "start_seconds": 2.0, "end_seconds": 4.0}])
+
+    # message names one clip by FILENAME — matched case-insensitively
+    mentioned = svc._mentioned_assets(project, "usa el clip 20260409_170210.MP4 al final")
+    assert [a["asset_id"] for a in mentioned] == ["20260409_170210"]
+    section = svc._designated_clips_section(pid, mentioned)
+    assert "CLIPS SEÑALADOS" in section
+    assert "Jensen walks toward a dark SUV" in section        # approved, verbatim
+    assert "SIN VERIFICAR" in section and "crowd waits" in section  # pending tagged
+    assert "red sweater" not in section                        # only the named clip
+
+    # the context's index lists EVERY clip (uncapped roster)
+    ctx = svc._chat_context(project, project["plan"])
+    assert "ÍNDICE DE CLIPS" in ctx
+    assert "clase_sueter.mp4" in ctx and "red sweater" in ctx
+    assert "20260409_170210.mp4" in ctx
+
+    # prose words never false-match short ids
+    assert svc._mentioned_assets(project, "quiero un final épico") == []
+
+
 def test_models_in_use_reports_used_and_next(tmp_path):
     """Ongoing projects can't retroactively change a completed stage's model, so
     the endpoint reports what each stage ACTUALLY used (recorded provenance) plus
