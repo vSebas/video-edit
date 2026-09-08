@@ -1127,9 +1127,10 @@ async function chatDriveVoiceover(index) {
     }
     box.innerHTML = `<div class="sync-diff">
       <p>Elige nota(s) de voz para <em>«${escapeHtml(draft.text)}»</em> (${fmtTime(draft.start_seconds)}–${fmtTime(draft.end_seconds)}).
-      Con varias, se colocan EN ORDEN una tras otra desde ${fmtTime(draft.start_seconds)}:</p>
+      Se colocan una tras otra <strong>en el orden en que las marques</strong> (mira el número):</p>
       ${files.map((f, i) => `<label class="cleanup-item">
         <input type="checkbox" data-drive-voice-check="${i}" />
+        <span class="pick-order" data-pick-order="${i}"></span>
         <span>☁️ ${escapeHtml(f.name)} <span class="muted">(${(f.bytes / 1e6).toFixed(1)} MB)</span></span>
         <button class="primary compact" data-drive-voice="${escapeHtml(f.path)}">Colocar solo esta</button>
       </label>`).join('')}
@@ -1139,12 +1140,28 @@ async function chatDriveVoiceover(index) {
       btn.addEventListener('click', () => placeVoiceoverFromDrive(
         projectId, btn.dataset.driveVoice, draft));
     });
+    // Placement order = the order the user TICKED the boxes; each checked row
+    // shows its position (1, 2, 3…). Unticking renumbers the rest.
+    const pickOrder = [];
+    const renumber = () => {
+      box.querySelectorAll('[data-pick-order]').forEach((el) => {
+        const pos = pickOrder.indexOf(Number(el.dataset.pickOrder));
+        el.textContent = pos >= 0 ? `${pos + 1}º` : '';
+      });
+    };
+    box.querySelectorAll('[data-drive-voice-check]').forEach((el) => {
+      el.addEventListener('change', () => {
+        const i = Number(el.dataset.driveVoiceCheck);
+        const at = pickOrder.indexOf(i);
+        if (el.checked && at < 0) pickOrder.push(i);
+        if (!el.checked && at >= 0) pickOrder.splice(at, 1);
+        renumber();
+      });
+    });
     $('#drive-voice-multi')?.addEventListener('click', () => {
-      const picked = [...box.querySelectorAll('[data-drive-voice-check]')]
-        .filter((el) => el.checked)
-        .map((el) => files[Number(el.dataset.driveVoiceCheck)].path);
-      if (!picked.length) { notice('Marca al menos una nota de voz.', true); return; }
-      placeVoiceoverPartsFromDrive(projectId, picked, draft);
+      if (!pickOrder.length) { notice('Marca al menos una nota de voz.', true); return; }
+      placeVoiceoverPartsFromDrive(
+        projectId, pickOrder.map((i) => files[i].path), draft);
     });
   } catch (error) {
     if (state.activeProjectId !== projectId) return;

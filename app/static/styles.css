@@ -913,3 +913,5 @@ input[type="file"] {
 .model-row select { flex: 1; min-width: 220px; max-width: 420px; padding: 8px 10px;
   border-radius: 10px; border: 1px solid var(--line); background: var(--panel-2);
   color: var(--text); font-size: 13px; }
+
+.pick-order { min-width: 26px; font-weight: 700; color: var(--accent, #7aa2ff); }
